@@ -144,15 +144,19 @@ export default function ClientDetailPage() {
     load();
   }
 
+  const mainChannels = channels.filter((c) => !c.parentId);
   const subChannels = channels.filter((c) => c.parentId);
+  const channelIdSet = new Set(channels.map((c) => c.id));
 
   function startEdit() {
     if (!client) return;
+    // Sweep stale channel IDs that no longer exist
+    const validChannelIds = client.channelIds.filter((cid) => channelIdSet.has(cid));
     setEditForm({
       name: client.name,
       vendorNumbers: client.vendorNumbers.join(", "),
       camId: client.camId ?? "",
-      channelIds: [...client.channelIds],
+      channelIds: validChannelIds,
       notes: client.notes ?? "",
     });
     setEditing(true);
@@ -220,10 +224,18 @@ export default function ClientDetailPage() {
             <div><span className="text-[var(--color-text-muted)]">Status</span><div className="font-medium">{client.active ? "Active" : "Inactive"}</div></div>
             <div>
               <span className="text-[var(--color-text-muted)]">Channels</span>
-              <div className="mt-1 flex flex-wrap gap-1">{client.channelIds.map((cid) => {
+              <div className="mt-1 flex flex-wrap gap-1">{client.channelIds.filter((cid) => channelIdSet.has(cid)).map((cid) => {
                 const ch = channels.find((x) => x.id === cid);
                 return <span key={cid} className="rounded-full bg-blue-50 px-2 py-0.5 text-xs text-blue-700">{ch?.name ?? cid}</span>;
-              })}</div>
+              })}
+              {client.channelIds.filter((cid) => !channelIdSet.has(cid)).length > 0 && (
+                <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-700">
+                  {client.channelIds.filter((cid) => !channelIdSet.has(cid)).length} stale — click Edit to clean up
+                </span>
+              )}
+              {client.channelIds.filter((cid) => channelIdSet.has(cid)).length === 0 && client.channelIds.filter((cid) => !channelIdSet.has(cid)).length === 0 && (
+                <span className="text-xs text-[var(--color-text-muted)]">None assigned</span>
+              )}</div>
             </div>
             <div>
               <span className="text-[var(--color-text-muted)]">Linked Clients</span>
@@ -259,13 +271,28 @@ export default function ClientDetailPage() {
             </div>
             <div>
               <label className="mb-2 block text-sm font-medium text-[var(--color-text)]">Channels</label>
-              <div className="flex flex-wrap gap-2">
-                {subChannels.map((ch) => (
-                  <button key={ch.id} type="button" onClick={() => toggleEditChannel(ch.id)}
-                    className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${editForm.channelIds.includes(ch.id) ? "border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-zinc-400"}`}>
-                    {ch.name}
-                  </button>
-                ))}
+              <div className="space-y-3">
+                {mainChannels.map((main) => {
+                  const children = subChannels.filter((s) => s.parentId === main.id);
+                  return (
+                    <div key={main.id}>
+                      <span className="mb-1 block text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">{main.name}</span>
+                      <div className="flex flex-wrap gap-2">
+                        {children.length > 0 ? children.map((ch) => (
+                          <button key={ch.id} type="button" onClick={() => toggleEditChannel(ch.id)}
+                            className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${editForm.channelIds.includes(ch.id) ? "border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-zinc-400"}`}>
+                            {ch.name}
+                          </button>
+                        )) : (
+                          <button type="button" onClick={() => toggleEditChannel(main.id)}
+                            className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${editForm.channelIds.includes(main.id) ? "border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-zinc-400"}`}>
+                            {main.name}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
             <div>
