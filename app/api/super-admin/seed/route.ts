@@ -21,7 +21,6 @@ export async function POST(req: NextRequest) {
     return Response.json({ success: true, id: user.id, reset: false }, { status: 201, headers: noCacheHeaders() });
   } catch (err) {
     console.error("Seed error:", err);
-    const message = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: message, hasToken: !!process.env.BLOB_READ_WRITE_TOKEN }, { status: 500, headers: noCacheHeaders() });
+    return Response.json({ error: "Internal server error" }, { status: 500, headers: noCacheHeaders() });
   }
 }
