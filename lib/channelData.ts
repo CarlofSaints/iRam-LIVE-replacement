@@ -60,13 +60,25 @@ export async function createChannel(data: {
 
 export async function updateChannel(
   id: string,
-  updates: Partial<Pick<Channel, "name" | "parentId" | "active">>
+  updates: Record<string, unknown>
 ): Promise<Channel> {
   const channels = await getChannels();
   const idx = channels.findIndex((c) => c.id === id);
   if (idx === -1) throw new Error("Channel not found");
-  if (updates.name) updates.name = updates.name.trim().toUpperCase();
-  channels[idx] = { ...channels[idx], ...updates };
+  if (typeof updates.name === "string") {
+    channels[idx].name = updates.name.trim().toUpperCase();
+  }
+  if (typeof updates.active === "boolean") {
+    channels[idx].active = updates.active;
+  }
+  // parentId: null or "" = convert to main channel, string = set parent
+  if ("parentId" in updates) {
+    if (!updates.parentId) {
+      delete channels[idx].parentId;
+    } else {
+      channels[idx].parentId = updates.parentId as string;
+    }
+  }
   await writeJson(KEY, channels);
   return channels[idx];
 }

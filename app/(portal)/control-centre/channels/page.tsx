@@ -29,7 +29,7 @@ export default function ChannelsPage() {
     setError("");
     const method = editId ? "PUT" : "POST";
     const body = editId
-      ? { id: editId, name: form.name, parentId: form.parentId || undefined }
+      ? { id: editId, name: form.name, parentId: form.parentId || null }
       : { name: form.name, parentId: form.parentId || undefined };
     const url = editId ? `/api/channels/${editId}` : "/api/channels";
     const res = await authFetch(url, { method, body: JSON.stringify(body) });
