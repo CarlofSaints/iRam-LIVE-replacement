@@ -232,6 +232,26 @@ export interface SalesLedgerMeta {
   lastMergedAt: string; // ISO timestamp
 }
 
+// ── Product Master ──
+
+export interface ProductFieldMapping {
+  article: string;       // which PMF column = Article number (join key to DISPO)
+  brand?: string;        // which PMF column = Brand
+  category?: string;     // which PMF column = Category
+  status?: string;       // which PMF column = Product Status (Active/Discontinued)
+  description?: string;  // which PMF column = Product Description
+  barcode?: string;      // which PMF column = Barcode/EAN
+}
+
+export interface ProductMaster {
+  article: string;       // Article number (join key)
+  brand?: string;
+  category?: string;
+  status?: string;
+  description?: string;
+  barcode?: string;
+}
+
 // ── Activity Log ──
 
 export interface LogEntry {

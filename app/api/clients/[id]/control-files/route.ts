@@ -9,6 +9,7 @@ import {
   parseCustomSitesSheet,
   parsePromotionsSheet,
 } from "@/lib/controlFileData";
+import { getProductMapping, buildProductMaster } from "@/lib/productMasterData";
 import { requirePermission, noCacheHeaders, handleAuthError } from "@/lib/auth";
 import { addLog } from "@/lib/activityLog";
 import type { ControlFileType } from "@/lib/types";
@@ -62,7 +63,17 @@ export async function POST(
       status: "success",
     });
 
-    return Response.json({ success: true, rowCount: parsed.length }, { headers: noCacheHeaders() });
+    // Auto-rebuild product master when PMF is re-uploaded (if a mapping exists)
+    let productMasterCount: number | undefined;
+    if (type === "pmf") {
+      const mapping = await getProductMapping(id);
+      if (mapping && mapping.article) {
+        const result = await buildProductMaster(id);
+        productMasterCount = result.count;
+      }
+    }
+
+    return Response.json({ success: true, rowCount: parsed.length, productMasterCount }, { headers: noCacheHeaders() });
   } catch (err) {
     return handleAuthError(err);
   }

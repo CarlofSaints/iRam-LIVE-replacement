@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { authFetch } from "@/lib/useAuth";
 import UploadZone from "@/components/UploadZone";
-import type { Client, Channel, CAM, ControlFileType, UploadMeta } from "@/lib/types";
+import type { Client, Channel, CAM, ControlFileType, UploadMeta, ProductFieldMapping } from "@/lib/types";
 
 const CF_LABELS: Record<ControlFileType, string> = {
   pmf: "PMF (Product Management File)",
@@ -31,6 +31,14 @@ export default function ClientDetailPage() {
     name: "", vendorNumbers: "", camId: "", channelIds: [] as string[], notes: "",
   });
 
+  // Product mapping state
+  const [pmfHeaders, setPmfHeaders] = useState<string[]>([]);
+  const [mapping, setMapping] = useState<Partial<ProductFieldMapping>>({});
+  const [autoMatched, setAutoMatched] = useState<Partial<ProductFieldMapping>>({});
+  const [productCount, setProductCount] = useState<number | null>(null);
+  const [mappingLoading, setMappingLoading] = useState(false);
+  const [mappingSaving, setMappingSaving] = useState(false);
+
   async function load() {
     const [cRes, chRes, camRes, uRes] = await Promise.all([
       authFetch(`/api/clients/${id}`),
@@ -47,6 +55,14 @@ export default function ClientDetailPage() {
 
   useEffect(() => { load(); }, [id]);
 
+  // Load product mapping data when client is loaded and has PMF
+  useEffect(() => {
+    if (client?.controlFiles?.pmf) {
+      loadProductMapping();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [client?.controlFiles?.pmf?.uploadedAt]);
+
   async function handleControlFileUpload(type: ControlFileType, file: File) {
     setUploading(type);
     const formData = new FormData();
@@ -59,11 +75,67 @@ export default function ClientDetailPage() {
       headers: {},
     });
     if (res.ok) {
+      const json = await res.json();
       setToast(`${CF_LABELS[type]} uploaded`);
       setTimeout(() => setToast(""), 3000);
       load();
+      // Refresh mapping data after PMF upload
+      if (type === "pmf") {
+        loadProductMapping();
+        if (json.productMasterCount != null) {
+          setProductCount(json.productMasterCount);
+        }
+      }
     }
     setUploading(null);
+  }
+
+  // ── Product Mapping ──
+
+  async function loadProductMapping() {
+    setMappingLoading(true);
+    try {
+      const res = await authFetch(`/api/clients/${id}/product-mapping`);
+      if (res.ok) {
+        const data = await res.json();
+        setPmfHeaders(data.headers ?? []);
+        setAutoMatched(data.autoMatched ?? {});
+        // Use saved mapping if exists, otherwise use auto-matched
+        setMapping(data.mapping ?? data.autoMatched ?? {});
+      }
+      // Also load product master count
+      const masterRes = await authFetch(`/api/clients/${id}/product-master`);
+      if (masterRes.ok) {
+        const masterData = await masterRes.json();
+        setProductCount(masterData.count ?? 0);
+      }
+    } catch {
+      // ignore
+    }
+    setMappingLoading(false);
+  }
+
+  async function saveProductMapping() {
+    if (!mapping.article) {
+      setToast("Article field mapping is required");
+      setTimeout(() => setToast(""), 3000);
+      return;
+    }
+    setMappingSaving(true);
+    const res = await authFetch(`/api/clients/${id}/product-mapping`, {
+      method: "PUT",
+      body: JSON.stringify({ mapping }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      setProductCount(data.count ?? 0);
+      setToast(`Product master built — ${data.count} products mapped`);
+      setTimeout(() => setToast(""), 4000);
+    } else {
+      setToast("Failed to save mapping");
+      setTimeout(() => setToast(""), 3000);
+    }
+    setMappingSaving(false);
   }
 
   async function handleControlFileDelete(type: ControlFileType) {
@@ -245,6 +317,75 @@ export default function ClientDetailPage() {
               </div>
             );
           })}
+
+          {/* ── Product Mapping Section (visible when PMF uploaded) ── */}
+          {client.controlFiles.pmf && (
+            <div className="rounded-xl border border-[var(--color-border)] bg-white p-5">
+              <div className="mb-4 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <h3 className="text-sm font-semibold text-[var(--color-text)]">Product Mapping</h3>
+                  {productCount != null && productCount > 0 ? (
+                    <span className="rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700">{productCount} products</span>
+                  ) : (
+                    <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700">Not mapped</span>
+                  )}
+                </div>
+              </div>
+
+              {mappingLoading ? (
+                <p className="text-sm text-[var(--color-text-muted)]">Loading mapping...</p>
+              ) : pmfHeaders.length === 0 ? (
+                <p className="text-sm text-[var(--color-text-muted)]">No headers detected in PMF. Re-upload the PMF file.</p>
+              ) : (
+                <>
+                  <p className="mb-4 text-xs text-[var(--color-text-muted)]">
+                    Map PMF columns to standard product fields. Article is required. {autoMatched.article && "(Auto-matched suggestions applied)"}
+                  </p>
+                  <div className="grid grid-cols-2 gap-4">
+                    {([
+                      { field: "article" as const, label: "Article *", required: true },
+                      { field: "brand" as const, label: "Brand", required: false },
+                      { field: "category" as const, label: "Category", required: false },
+                      { field: "status" as const, label: "Status", required: false },
+                      { field: "description" as const, label: "Description", required: false },
+                      { field: "barcode" as const, label: "Barcode / EAN", required: false },
+                    ]).map(({ field, label, required }) => (
+                      <div key={field}>
+                        <label className="mb-1 block text-xs font-medium text-[var(--color-text)]">{label}</label>
+                        <select
+                          value={mapping[field] ?? ""}
+                          onChange={(e) => setMapping((prev) => ({ ...prev, [field]: e.target.value || undefined }))}
+                          className={`w-full rounded-lg border px-3 py-2 text-sm ${required && !mapping[field] ? "border-amber-300" : "border-[var(--color-border)]"}`}
+                        >
+                          <option value="">— Not mapped —</option>
+                          {pmfHeaders.map((h) => (
+                            <option key={h} value={h}>{h}</option>
+                          ))}
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-4 flex items-center gap-3">
+                    <button
+                      onClick={saveProductMapping}
+                      disabled={mappingSaving || !mapping.article}
+                      className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)] disabled:opacity-50"
+                    >
+                      {mappingSaving ? "Saving..." : "Save & Build"}
+                    </button>
+                    {autoMatched.article && (
+                      <button
+                        onClick={() => setMapping({ ...autoMatched })}
+                        className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs font-medium text-[var(--color-text-muted)] hover:bg-zinc-50"
+                      >
+                        Reset to Auto-Match
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
       )}
 
