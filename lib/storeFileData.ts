@@ -55,12 +55,12 @@ export async function getMergedStores(): Promise<StoreRecord[]> {
 }
 
 /**
- * Rebuilds the merged store master from the latest file per sub-channel.
- * For each sub-channel, the most recently uploaded file wins.
+ * Rebuilds the merged store master from the latest file per main channel.
+ * For each main channel, the most recently uploaded file wins.
  */
 async function rebuildMerged(index: StoreControlFile[]): Promise<void> {
-  // Find the latest file for each sub-channel
-  const latestBySubChannel = new Map<string, StoreControlFile>();
+  // Find the latest file for each main channel
+  const latestByMainChannel = new Map<string, StoreControlFile>();
 
   // Sort by uploadedAt ascending so later entries overwrite earlier ones
   const sorted = [...index].sort(
@@ -68,14 +68,14 @@ async function rebuildMerged(index: StoreControlFile[]): Promise<void> {
   );
 
   for (const file of sorted) {
-    for (const subId of file.subChannelIds) {
-      latestBySubChannel.set(subId, file);
+    for (const mainId of file.mainChannelIds) {
+      latestByMainChannel.set(mainId, file);
     }
   }
 
   // Collect unique file IDs to load
   const fileIds = new Set<string>();
-  for (const file of latestBySubChannel.values()) {
+  for (const file of latestByMainChannel.values()) {
     fileIds.add(file.id);
   }
 

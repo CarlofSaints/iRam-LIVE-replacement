@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
 export async function PUT(req: NextRequest) {
   try {
     const session = await requirePermission(req, "manage_users");
-    const { id, ...updates } = await req.json();
+    const { id, password: _pw, ...updates } = await req.json();
     if (!id) return Response.json({ error: "ID required" }, { status: 400, headers: noCacheHeaders() });
     const user = await updateUser(id, updates);
     await addLog({ userId: session.userId, userName: session.name, action: "update_user", details: `Updated user ${user.email}`, status: "success" });

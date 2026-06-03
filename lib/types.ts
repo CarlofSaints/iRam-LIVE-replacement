@@ -94,6 +94,7 @@ export interface User {
   createdAt: string; // ISO
   lastLoginAt?: string; // ISO
   profilePicUrl?: string;
+  receiveStoreAlerts?: boolean;
 }
 
 export interface SessionPayload {
@@ -141,7 +142,7 @@ export interface CAM {
 export interface StoreControlFile {
   id: string;
   fileName: string;
-  subChannelIds: string[];
+  mainChannelIds: string[];
   uploadedAt: string;
   uploadedBy: string;
   rowCount: number;

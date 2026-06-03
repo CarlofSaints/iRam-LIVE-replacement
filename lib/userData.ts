@@ -60,6 +60,7 @@ export async function updateUser(
       | "forcePasswordChange"
       | "lastLoginAt"
       | "profilePicUrl"
+      | "receiveStoreAlerts"
     >
   >
 ): Promise<User> {

@@ -65,6 +65,104 @@ export async function sendWelcomeEmail(params: {
   });
 }
 
+export async function sendMissingProductsEmail(params: {
+  to: string[];
+  clientName: string;
+  channelName: string;
+  missingArticles: string[];
+  uploaderName: string;
+}): Promise<void> {
+  if (params.to.length === 0 || params.missingArticles.length === 0) return;
+  const resend = getResend();
+  const max = 50;
+  const shown = params.missingArticles.slice(0, max);
+  const remaining = params.missingArticles.length - max;
+  const list = shown.map((a) => `<li style="padding:2px 0;font-size:13px;color:#2D3748;">${a}</li>`).join("");
+  const moreNote = remaining > 0 ? `<p style="font-size:13px;color:#718096;margin:8px 0 0;">+ ${remaining} more</p>` : "";
+
+  await resend.emails.send({
+    from: FROM,
+    to: params.to,
+    subject: `Missing Products \u2014 ${params.clientName} DISPO Upload`,
+    html: `
+      <div style="font-family:Arial,Helvetica,sans-serif;max-width:600px;margin:0 auto;background:#ffffff;">
+        <div style="background:#7CC042;padding:28px 32px;text-align:center;border-radius:8px 8px 0 0;">
+          <h1 style="color:#ffffff;font-size:22px;margin:0;font-weight:700;">iRam LIVE</h1>
+          <p style="color:rgba(255,255,255,0.85);font-size:14px;margin:8px 0 0;">Missing Products Alert</p>
+        </div>
+        <div style="padding:32px;border:1px solid #E2E8F0;border-top:none;border-radius:0 0 8px 8px;">
+          <p style="font-size:14px;color:#4A5568;margin:0 0 16px;line-height:1.6;">
+            <strong>${params.uploaderName}</strong> attempted to upload a DISPO for
+            <strong>${params.clientName}</strong> / <strong>${params.channelName}</strong>.
+          </p>
+          <p style="font-size:14px;color:#C53030;margin:0 0 12px;font-weight:600;">
+            The following ${params.missingArticles.length} article(s) in the DISPO are not in the LINKS file:
+          </p>
+          <div style="background:#FFF5F5;border:1px solid #FED7D7;border-radius:8px;padding:12px 16px;margin-bottom:16px;">
+            <ul style="margin:0;padding-left:18px;list-style:disc;">${list}</ul>
+            ${moreNote}
+          </div>
+          <p style="font-size:13px;color:#718096;margin:0;">
+            The upload was blocked. Please update the LINKS file and try again.
+          </p>
+          <div style="margin-top:32px;padding-top:20px;border-top:1px solid #E2E8F0;text-align:center;">
+            <p style="font-size:12px;color:#A0AEC0;margin:0;">Powered by <strong style="color:#718096;">OuterJoin</strong></p>
+          </div>
+        </div>
+      </div>
+    `,
+  });
+}
+
+export async function sendMissingStoresEmail(params: {
+  to: string[];
+  clientName: string;
+  channelName: string;
+  missingSites: string[];
+  uploaderName: string;
+}): Promise<void> {
+  if (params.to.length === 0 || params.missingSites.length === 0) return;
+  const resend = getResend();
+  const max = 50;
+  const shown = params.missingSites.slice(0, max);
+  const remaining = params.missingSites.length - max;
+  const list = shown.map((s) => `<li style="padding:2px 0;font-size:13px;color:#2D3748;">${s}</li>`).join("");
+  const moreNote = remaining > 0 ? `<p style="font-size:13px;color:#718096;margin:8px 0 0;">+ ${remaining} more</p>` : "";
+
+  await resend.emails.send({
+    from: FROM,
+    to: params.to,
+    subject: `Missing Stores \u2014 ${params.clientName} DISPO Upload`,
+    html: `
+      <div style="font-family:Arial,Helvetica,sans-serif;max-width:600px;margin:0 auto;background:#ffffff;">
+        <div style="background:#7CC042;padding:28px 32px;text-align:center;border-radius:8px 8px 0 0;">
+          <h1 style="color:#ffffff;font-size:22px;margin:0;font-weight:700;">iRam LIVE</h1>
+          <p style="color:rgba(255,255,255,0.85);font-size:14px;margin:8px 0 0;">Missing Stores Alert</p>
+        </div>
+        <div style="padding:32px;border:1px solid #E2E8F0;border-top:none;border-radius:0 0 8px 8px;">
+          <p style="font-size:14px;color:#4A5568;margin:0 0 16px;line-height:1.6;">
+            <strong>${params.uploaderName}</strong> attempted to upload a DISPO for
+            <strong>${params.clientName}</strong> / <strong>${params.channelName}</strong>.
+          </p>
+          <p style="font-size:14px;color:#C53030;margin:0 0 12px;font-weight:600;">
+            The following ${params.missingSites.length} site(s) in the DISPO are not in the store master:
+          </p>
+          <div style="background:#FFF5F5;border:1px solid #FED7D7;border-radius:8px;padding:12px 16px;margin-bottom:16px;">
+            <ul style="margin:0;padding-left:18px;list-style:disc;">${list}</ul>
+            ${moreNote}
+          </div>
+          <p style="font-size:13px;color:#718096;margin:0;">
+            The upload was blocked. Please update the store master and try again.
+          </p>
+          <div style="margin-top:32px;padding-top:20px;border-top:1px solid #E2E8F0;text-align:center;">
+            <p style="font-size:12px;color:#A0AEC0;margin:0;">Powered by <strong style="color:#718096;">OuterJoin</strong></p>
+          </div>
+        </div>
+      </div>
+    `,
+  });
+}
+
 export async function sendPasswordResetEmail(params: {
   to: string;
   name: string;

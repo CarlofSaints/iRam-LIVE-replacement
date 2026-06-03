@@ -11,13 +11,8 @@ export default function StoreFilesPage() {
   const [stores, setStores] = useState<{ channel: string; count: number }[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
-  const [selectedMainChannel, setSelectedMainChannel] = useState("");
-  const [selectedSubChannels, setSelectedSubChannels] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
-
-  const mainChannels = channels.filter((c) => !c.parentId);
-  const subChannels = channels.filter((c) => c.parentId && c.parentId === selectedMainChannel);
 
   async function load() {
     const [filesRes, chRes, storesRes] = await Promise.all([
@@ -29,7 +24,6 @@ export default function StoreFilesPage() {
     if (chRes.ok) setChannels(await chRes.json());
     if (storesRes.ok) {
       const data: { channel: string; subChannel: string; status: string }[] = await storesRes.json();
-      // Count per sub-channel
       const counts = new Map<string, number>();
       for (const s of data) {
         const key = s.subChannel || s.channel;
@@ -42,23 +36,12 @@ export default function StoreFilesPage() {
 
   useEffect(() => { load(); }, []);
 
-  function toggleSubChannel(id: string) {
-    setSelectedSubChannels((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    );
-  }
-
   async function handleUpload(file: File) {
-    if (selectedSubChannels.length === 0) {
-      setError("Select at least one sub-channel this file covers");
-      return;
-    }
     setError("");
     setUploading(true);
 
     const formData = new FormData();
     formData.append("file", file);
-    formData.append("subChannelIds", JSON.stringify(selectedSubChannels));
 
     try {
       const res = await authFetch("/api/store-files", {
@@ -72,7 +55,6 @@ export default function StoreFilesPage() {
         setError(d.error || "Upload failed");
       } else {
         setToast("Store file uploaded successfully");
-        setSelectedSubChannels([]);
         setTimeout(() => setToast(""), 3000);
         load();
       }
@@ -83,11 +65,20 @@ export default function StoreFilesPage() {
     }
   }
 
+  function resolveChannelNames(ids: string[]): string[] {
+    return ids.map((id) => channels.find((c) => c.id === id)?.name ?? id);
+  }
+
   return (
     <div className="p-8">
       <h1 className="mb-6 text-2xl font-bold text-[var(--color-text)]">
         Store Control Files
       </h1>
+
+      {/* Info banner */}
+      <div className="mb-6 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
+        Channels and sub-channels are auto-detected from the file&apos;s <strong>Channel</strong> and <strong>Sub_Channel</strong> columns.
+      </div>
 
       {/* Store count cards */}
       {stores.length > 0 && (
@@ -107,43 +98,6 @@ export default function StoreFilesPage() {
       {/* Upload section */}
       <div className="mb-8 rounded-xl border border-[var(--color-border)] bg-white p-6">
         <h2 className="mb-4 text-sm font-semibold text-[var(--color-text)]">Upload Store File</h2>
-
-        <div className="mb-4">
-          <label className="mb-2 block text-sm font-medium text-[var(--color-text)]">Main Channel</label>
-          <select value={selectedMainChannel} onChange={(e) => { setSelectedMainChannel(e.target.value); setSelectedSubChannels([]); }}
-            className="w-full max-w-xs rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm">
-            <option value="">Select a main channel...</option>
-            {mainChannels.map((ch) => <option key={ch.id} value={ch.id}>{ch.name}</option>)}
-          </select>
-        </div>
-
-        {selectedMainChannel && subChannels.length > 0 && (
-          <div className="mb-4">
-            <label className="mb-2 block text-sm font-medium text-[var(--color-text)]">
-              Which sub-channels does this file cover?
-            </label>
-            <div className="flex flex-wrap gap-2">
-              {subChannels.map((ch) => (
-                <button
-                  key={ch.id}
-                  onClick={() => toggleSubChannel(ch.id)}
-                  className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${
-                    selectedSubChannels.includes(ch.id)
-                      ? "border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)]"
-                      : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-zinc-300"
-                  }`}
-                >
-                  {ch.name}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {selectedMainChannel && subChannels.length === 0 && (
-          <div className="mb-4 text-sm text-[var(--color-text-muted)]">No sub-channels for this main channel.</div>
-        )}
-
         <UploadZone
           onFile={handleUpload}
           accept=".xlsx,.xls,.xlsm"
@@ -166,7 +120,7 @@ export default function StoreFilesPage() {
             <thead>
               <tr className="border-b border-[var(--color-border)] text-left text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
                 <th className="px-6 py-3">File Name</th>
-                <th className="px-6 py-3">Sub-Channels</th>
+                <th className="px-6 py-3">Channels</th>
                 <th className="px-6 py-3">Rows</th>
                 <th className="px-6 py-3">Uploaded</th>
                 <th className="px-6 py-3">Actions</th>
@@ -178,14 +132,11 @@ export default function StoreFilesPage() {
                   <td className="px-6 py-3 font-medium text-[var(--color-text)]">{f.fileName}</td>
                   <td className="px-6 py-3">
                     <div className="flex flex-wrap gap-1">
-                      {f.subChannelIds.map((id) => {
-                        const ch = channels.find((c) => c.id === id);
-                        return (
-                          <span key={id} className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
-                            {ch?.name ?? id}
-                          </span>
-                        );
-                      })}
+                      {resolveChannelNames(f.mainChannelIds).map((name) => (
+                        <span key={name} className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
+                          {name}
+                        </span>
+                      ))}
                     </div>
                   </td>
                   <td className="px-6 py-3 text-[var(--color-text-muted)]">{f.rowCount}</td>

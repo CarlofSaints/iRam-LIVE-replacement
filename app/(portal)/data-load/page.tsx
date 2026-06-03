@@ -14,16 +14,17 @@ export default function DataLoadPage() {
 
   const [step, setStep] = useState<Step>("select");
   const [clientId, setClientId] = useState("");
-  const [channelIds, setChannelIds] = useState<string[]>([]);
+  const [channelId, setChannelId] = useState("");
   const [fileType, setFileType] = useState<FileType>("dispo");
   const [uploading, setUploading] = useState(false);
-  const [results, setResults] = useState<{
-    channelName: string;
+  const [result, setResult] = useState<{
     ok: boolean;
     message: string;
     rowCount?: number;
     merge?: { inserted: number; updated: number; unchanged: number };
-  }[]>([]);
+    missingArticles?: string[];
+    missingSites?: string[];
+  } | null>(null);
 
   async function load() {
     const [cRes, chRes] = await Promise.all([
@@ -38,64 +39,58 @@ export default function DataLoadPage() {
   useEffect(() => { load(); }, []);
 
   const selectedClient = clients.find((c) => c.id === clientId);
-  const subChannels = channels.filter((c) => c.parentId);
-  const availableChannels = selectedClient
-    ? subChannels.filter((ch) => selectedClient.channelIds.includes(ch.id))
-    : subChannels;
 
-  function toggleChannel(id: string) {
-    setChannelIds((prev) =>
-      prev.includes(id) ? prev.filter((c) => c !== id) : [...prev, id]
-    );
-  }
+  // Show main channels only, filtered to those assigned to the selected client
+  const mainChannels = channels.filter((c) => !c.parentId);
+  const availableChannels = selectedClient
+    ? mainChannels.filter((ch) => selectedClient.channelIds.includes(ch.id))
+    : [];
 
   async function handleUpload(file: File) {
-    if (!clientId || channelIds.length === 0) return;
+    if (!clientId || !channelId) return;
     setUploading(true);
-    setResults([]);
+    setResult(null);
 
-    const uploadResults: typeof results = [];
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("clientId", clientId);
+    formData.append("channelId", channelId);
+    formData.append("fileType", fileType);
 
-    for (const chId of channelIds) {
-      const chName = channels.find((c) => c.id === chId)?.name ?? chId;
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("clientId", clientId);
-      formData.append("channelId", chId);
-      formData.append("fileType", fileType);
-
-      try {
-        const res = await authFetch("/api/uploads", {
-          method: "POST",
-          body: formData,
-          rawBody: true,
-          headers: {},
+    try {
+      const res = await authFetch("/api/uploads", {
+        method: "POST",
+        body: formData,
+        rawBody: true,
+        headers: {},
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setResult({
+          ok: true,
+          message: `${data.rowCount} rows processed`,
+          rowCount: data.rowCount,
+          merge: data.merge,
         });
-        const data = await res.json();
-        if (res.ok) {
-          uploadResults.push({
-            channelName: chName,
-            ok: true,
-            message: `${data.rowCount} rows processed`,
-            rowCount: data.rowCount,
-            merge: data.merge,
-          });
-        } else {
-          uploadResults.push({ channelName: chName, ok: false, message: data.error || "Upload failed" });
-        }
-      } catch {
-        uploadResults.push({ channelName: chName, ok: false, message: "Network error" });
+      } else {
+        setResult({
+          ok: false,
+          message: data.error || "Upload failed",
+          missingArticles: data.missingArticles,
+          missingSites: data.missingSites,
+        });
       }
+    } catch {
+      setResult({ ok: false, message: "Network error" });
     }
 
-    setResults(uploadResults);
     setStep("result");
     setUploading(false);
   }
 
   function reset() {
     setStep("select");
-    setResults([]);
+    setResult(null);
   }
 
   if (loading) return <div className="p-8 text-sm text-[var(--color-text-muted)]">Loading...</div>;
@@ -126,23 +121,23 @@ export default function DataLoadPage() {
           <div className="space-y-4">
             <div>
               <label className="mb-1 block text-sm font-medium text-[var(--color-text)]">Client</label>
-              <select value={clientId} onChange={(e) => { setClientId(e.target.value); setChannelIds([]); }}
+              <select value={clientId} onChange={(e) => { setClientId(e.target.value); setChannelId(""); }}
                 className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm">
                 <option value="">Select a client...</option>
                 {clients.map((c) => <option key={c.id} value={c.id}>{c.name} ({c.vendorNumbers.join(", ")})</option>)}
               </select>
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium text-[var(--color-text)]">Channels</label>
+              <label className="mb-1 block text-sm font-medium text-[var(--color-text)]">Channel</label>
               {!clientId ? (
                 <p className="text-sm text-[var(--color-text-muted)]">Select a client first</p>
               ) : availableChannels.length === 0 ? (
-                <p className="text-sm text-[var(--color-text-muted)]">No channels assigned to this client</p>
+                <p className="text-sm text-[var(--color-text-muted)]">No main channels assigned to this client</p>
               ) : (
                 <div className="flex flex-wrap gap-2">
                   {availableChannels.map((ch) => (
-                    <button key={ch.id} type="button" onClick={() => toggleChannel(ch.id)}
-                      className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${channelIds.includes(ch.id) ? "border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-zinc-400"}`}>
+                    <button key={ch.id} type="button" onClick={() => setChannelId(ch.id === channelId ? "" : ch.id)}
+                      className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${channelId === ch.id ? "border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-zinc-400"}`}>
                       {ch.name}
                     </button>
                   ))}
@@ -162,7 +157,7 @@ export default function DataLoadPage() {
                 </button>
               </div>
             </div>
-            <button onClick={() => setStep("upload")} disabled={!clientId || channelIds.length === 0}
+            <button onClick={() => setStep("upload")} disabled={!clientId || !channelId}
               className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)] disabled:opacity-50">
               Next
             </button>
@@ -175,7 +170,7 @@ export default function DataLoadPage() {
           <div className="mb-4 rounded-lg border border-[var(--color-border)] bg-white px-4 py-3">
             <div className="text-sm">
               <strong>Client:</strong> {selectedClient?.name} &middot;{" "}
-              <strong>Channels:</strong> {channelIds.map((id) => channels.find((c) => c.id === id)?.name).join(", ")} &middot;{" "}
+              <strong>Channel:</strong> {channels.find((c) => c.id === channelId)?.name} &middot;{" "}
               <strong>Type:</strong> {fileType === "dispo" ? "DISPO" : "Aged Stock"}
             </div>
           </div>
@@ -190,33 +185,74 @@ export default function DataLoadPage() {
         </div>
       )}
 
-      {step === "result" && results.length > 0 && (
+      {step === "result" && result && (
         <div className="max-w-lg">
-          <div className="space-y-3">
-            {results.map((r, i) => (
-              <div key={i} className={`rounded-xl border p-4 ${r.ok ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}`}>
-                <div className={`mb-1 text-sm font-bold ${r.ok ? "text-green-700" : "text-red-700"}`}>
-                  {r.channelName} — {r.ok ? "Success" : "Failed"}
-                </div>
-                <p className={`text-sm ${r.ok ? "text-green-600" : "text-red-600"}`}>
-                  {r.message}
-                </p>
-                {r.ok && r.merge && (
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <span className="inline-flex items-center rounded-md bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
-                      {r.merge.inserted} new
-                    </span>
-                    <span className="inline-flex items-center rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
-                      {r.merge.updated} updated
-                    </span>
-                    <span className="inline-flex items-center rounded-md bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600">
-                      {r.merge.unchanged} unchanged
-                    </span>
-                  </div>
-                )}
+          <div className={`rounded-xl border p-4 ${result.ok ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}`}>
+            <div className={`mb-1 text-sm font-bold ${result.ok ? "text-green-700" : "text-red-700"}`}>
+              {result.ok ? "Success" : "Upload Blocked"}
+            </div>
+            <p className={`text-sm ${result.ok ? "text-green-600" : "text-red-600"}`}>
+              {result.message}
+            </p>
+            {result.ok && result.merge && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                <span className="inline-flex items-center rounded-md bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
+                  {result.merge.inserted} new
+                </span>
+                <span className="inline-flex items-center rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+                  {result.merge.updated} updated
+                </span>
+                <span className="inline-flex items-center rounded-md bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600">
+                  {result.merge.unchanged} unchanged
+                </span>
               </div>
-            ))}
+            )}
           </div>
+
+          {/* Missing articles card */}
+          {result.missingArticles && result.missingArticles.length > 0 && (
+            <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4">
+              <div className="mb-2 text-sm font-bold text-red-700">
+                Missing Articles ({result.missingArticles.length})
+              </div>
+              <p className="mb-2 text-xs text-red-600">
+                These articles are in the DISPO but not in the LINKS file. Update the LINKS file and re-upload.
+              </p>
+              <div className="max-h-48 overflow-y-auto rounded-lg border border-red-200 bg-white p-3">
+                <ul className="space-y-0.5 text-xs text-red-700">
+                  {result.missingArticles.slice(0, 50).map((a) => (
+                    <li key={a}>{a}</li>
+                  ))}
+                  {result.missingArticles.length > 50 && (
+                    <li className="text-red-500">+ {result.missingArticles.length - 50} more</li>
+                  )}
+                </ul>
+              </div>
+            </div>
+          )}
+
+          {/* Missing sites card */}
+          {result.missingSites && result.missingSites.length > 0 && (
+            <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4">
+              <div className="mb-2 text-sm font-bold text-red-700">
+                Missing Stores ({result.missingSites.length})
+              </div>
+              <p className="mb-2 text-xs text-red-600">
+                These sites are in the DISPO but not in the store master. Upload an updated store file first.
+              </p>
+              <div className="max-h-48 overflow-y-auto rounded-lg border border-red-200 bg-white p-3">
+                <ul className="space-y-0.5 text-xs text-red-700">
+                  {result.missingSites.slice(0, 50).map((s) => (
+                    <li key={s}>{s}</li>
+                  ))}
+                  {result.missingSites.length > 50 && (
+                    <li className="text-red-500">+ {result.missingSites.length - 50} more</li>
+                  )}
+                </ul>
+              </div>
+            </div>
+          )}
+
           <button onClick={reset} className="mt-4 rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)]">
             Upload Another
           </button>

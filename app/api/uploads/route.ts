@@ -4,6 +4,11 @@ import { getClientById } from "@/lib/clientData";
 import { getChannelById } from "@/lib/channelData";
 import { parseDispo } from "@/lib/dispoParser";
 import { mergeDispo } from "@/lib/salesData";
+import { getLinksLookup } from "@/lib/linksLookup";
+import { getMergedStores } from "@/lib/storeFileData";
+import { getCamById } from "@/lib/camData";
+import { getUsers } from "@/lib/userData";
+import { sendMissingProductsEmail, sendMissingStoresEmail } from "@/lib/email";
 import { requireLogin, requirePermission, noCacheHeaders, handleAuthError } from "@/lib/auth";
 import { addLog } from "@/lib/activityLog";
 import type { FileType } from "@/lib/types";
@@ -56,25 +61,117 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // Find parent channel for main channel name
-      let mainChannelName = channel.name;
-      let subChannelId: string | undefined;
-      let subChannelName: string | undefined;
-      if (channel.parentId) {
-        const parent = await getChannelById(channel.parentId);
-        mainChannelName = parent?.name ?? channel.name;
-        subChannelId = channel.id;
-        subChannelName = channel.name;
+      // Resolve main channel (channelId should already be a main channel)
+      const mainChannelId = channel.parentId ?? channel.id;
+      const mainChannelName = channel.parentId
+        ? (await getChannelById(channel.parentId))?.name ?? channel.name
+        : channel.name;
+
+      // ── Validate articles against LINKS ──
+      const linksLookup = await getLinksLookup(clientId);
+      const missingArticles: string[] = [];
+
+      if (linksLookup.size > 0) {
+        const seenArticles = new Set<string>();
+        for (const row of result.rows) {
+          const article = String(row["Article"] ?? "").trim();
+          if (article && !seenArticles.has(article.toLowerCase())) {
+            seenArticles.add(article.toLowerCase());
+            if (!linksLookup.has(article.toLowerCase())) {
+              missingArticles.push(article);
+            }
+          }
+        }
       }
 
+      // ── Validate sites against store master ──
+      const mergedStores = await getMergedStores();
+      const channelStores = mergedStores.filter(
+        (s) => s.channel.trim().toUpperCase() === mainChannelName.toUpperCase()
+      );
+      const knownSites = new Set(
+        channelStores.map((s) => s.siteNum.trim().toLowerCase())
+      );
+
+      const missingSites: string[] = [];
+      const seenSites = new Set<string>();
+      for (const row of result.rows) {
+        const site = String(row["Site"] ?? "").trim();
+        if (site && !seenSites.has(site.toLowerCase())) {
+          seenSites.add(site.toLowerCase());
+          if (knownSites.size > 0 && !knownSites.has(site.toLowerCase())) {
+            missingSites.push(site);
+          }
+        }
+      }
+
+      // ── Block upload if validation fails ──
+      if (missingArticles.length > 0 || missingSites.length > 0) {
+        // Fire-and-forget email alerts
+        const emailPromises: Promise<unknown>[] = [];
+
+        if (missingArticles.length > 0) {
+          const recipients = [session.email];
+          if (client.camId) {
+            const cam = await getCamById(client.camId);
+            if (cam?.email && !recipients.includes(cam.email)) {
+              recipients.push(cam.email);
+            }
+          }
+          emailPromises.push(
+            sendMissingProductsEmail({
+              to: recipients,
+              clientName: client.name,
+              channelName: mainChannelName,
+              missingArticles,
+              uploaderName: session.name,
+            })
+          );
+        }
+
+        if (missingSites.length > 0) {
+          const recipients = [session.email];
+          const users = await getUsers();
+          for (const u of users) {
+            if (u.receiveStoreAlerts && u.email && !recipients.includes(u.email)) {
+              recipients.push(u.email);
+            }
+          }
+          emailPromises.push(
+            sendMissingStoresEmail({
+              to: recipients,
+              clientName: client.name,
+              channelName: mainChannelName,
+              missingSites,
+              uploaderName: session.name,
+            })
+          );
+        }
+
+        // Don't let email failures affect the 400 response
+        Promise.allSettled(emailPromises).catch(() => {});
+
+        const parts: string[] = [];
+        if (missingArticles.length > 0) parts.push(`${missingArticles.length} unrecognized article(s)`);
+        if (missingSites.length > 0) parts.push(`${missingSites.length} unknown store(s)`);
+
+        return Response.json(
+          {
+            error: `Upload blocked: ${parts.join(" and ")} found.`,
+            missingArticles,
+            missingSites,
+          },
+          { status: 400, headers: noCacheHeaders() },
+        );
+      }
+
+      // ── Proceed with upload (main channel only) ──
       const upload = await addUpload(
         {
           clientId,
           clientName: client.name,
-          channelId: channel.parentId ?? channel.id,
+          channelId: mainChannelId,
           channelName: mainChannelName,
-          subChannelId,
-          subChannelName,
           fileType: "dispo",
           fileName: file.name,
           uploadDate: new Date().toISOString(),
@@ -89,15 +186,12 @@ export async function POST(req: NextRequest) {
         result.rows
       );
 
-      // Merge into sales ledger (use sub-channel ID if present, otherwise main channel)
-      const ledgerChannelId = subChannelId ?? (channel.parentId ?? channel.id);
-      const ledgerChannelName = subChannelName ?? mainChannelName;
-
+      // Merge into sales ledger using main channel ID
       const merge = await mergeDispo({
         clientId,
         clientName: client.name,
-        channelId: ledgerChannelId,
-        channelName: ledgerChannelName,
+        channelId: mainChannelId,
+        channelName: mainChannelName,
         vendorNumber: result.vendorNumber,
         rows: result.rows,
         dateColumns: result.dateColumns,
@@ -108,7 +202,7 @@ export async function POST(req: NextRequest) {
         userId: session.userId,
         userName: session.name,
         action: "upload_dispo",
-        details: `Uploaded DISPO for ${client.name} / ${channel.name} (${result.totalRows} rows, vendor ${result.vendorNumber}). Ledger merge: ${merge.inserted} new, ${merge.updated} updated, ${merge.unchanged} unchanged.`,
+        details: `Uploaded DISPO for ${client.name} / ${mainChannelName} (${result.totalRows} rows, vendor ${result.vendorNumber}). Ledger merge: ${merge.inserted} new, ${merge.updated} updated, ${merge.unchanged} unchanged.`,
         status: "success",
       });
 

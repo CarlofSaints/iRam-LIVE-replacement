@@ -83,6 +83,35 @@ export async function updateChannel(
   return channels[idx];
 }
 
+/**
+ * Ensure sub-channels exist under a main channel.
+ * Creates any that are missing (case-insensitive match).
+ * Returns all sub-channels (existing + newly created).
+ */
+export async function ensureSubChannels(
+  mainChannelId: string,
+  subChannelNames: string[]
+): Promise<Channel[]> {
+  const channels = await getChannels();
+  const existing = channels.filter(
+    (c) => c.parentId === mainChannelId
+  );
+
+  const result: Channel[] = [...existing];
+
+  for (const name of subChannelNames) {
+    const upper = name.trim().toUpperCase();
+    if (!upper) continue;
+    const found = existing.find((c) => c.name.toUpperCase() === upper);
+    if (!found) {
+      const created = await createChannel({ name, parentId: mainChannelId });
+      result.push(created);
+    }
+  }
+
+  return result;
+}
+
 export async function deleteChannel(id: string): Promise<void> {
   const channels = await getChannels();
   // Check for sub-channels
