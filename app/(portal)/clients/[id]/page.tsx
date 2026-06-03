@@ -40,9 +40,10 @@ export default function ClientDetailPage() {
   const [mappingSaving, setMappingSaving] = useState(false);
 
   async function load() {
+    const t = Date.now();
     const [cRes, chRes, camRes, uRes] = await Promise.all([
-      authFetch(`/api/clients/${id}`),
-      authFetch("/api/channels"),
+      authFetch(`/api/clients/${id}?t=${t}`),
+      authFetch(`/api/channels?t=${t}`),
       authFetch("/api/cams"),
       authFetch(`/api/uploads?clientId=${id}`),
     ]);
@@ -140,7 +141,15 @@ export default function ClientDetailPage() {
 
   async function handleControlFileDelete(type: ControlFileType) {
     if (!confirm(`Delete ${CF_LABELS[type]}?`)) return;
-    await authFetch(`/api/clients/${id}/control-files/${type}`, { method: "DELETE" });
+    const res = await authFetch(`/api/clients/${id}/control-files/${type}`, { method: "DELETE" });
+    if (res.ok) {
+      setToast(`${CF_LABELS[type]} removed`);
+      setTimeout(() => setToast(""), 3000);
+    } else {
+      const err = await res.text().catch(() => "Unknown error");
+      setToast(`Failed to delete: ${err}`);
+      setTimeout(() => setToast(""), 5000);
+    }
     load();
   }
 
