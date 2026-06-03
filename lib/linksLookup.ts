@@ -7,78 +7,98 @@
    channel, each with a different Article.
    ────────────────────────────────────────────────────────────── */
 
-import { getControlFileData } from "./controlFileData";
+import { readJson, writeJson } from "./blob";
+import { getRawLinksData } from "./controlFileData";
+import type { LinksFieldMapping } from "./types";
 
-/**
- * Common column name aliases for auto-detecting the
- * Client Product ID column in LINKS data (case-insensitive).
- */
-const CPID_ALIASES = [
-  "client product id",
-  "product id",
-  "cpid",
-  "client prod id",
-  "sku",
-  "product code",
-  "item code",
-];
+// ── Blob key ─────────────────────────────────────────────────
 
-/**
- * Common column name aliases for auto-detecting the
- * Article column in LINKS data (case-insensitive).
- */
-const ARTICLE_ALIASES = [
-  "article",
-  "article number",
-  "art no",
-  "article no",
-  "article code",
-];
-
-/**
- * Find a column name in a row by checking common aliases.
- * Returns the original (case-preserved) key, or null if not found.
- */
-function findColumn(
-  row: Record<string, unknown>,
-  aliases: string[]
-): string | null {
-  const keys = Object.keys(row);
-  const lowerKeys = keys.map((k) => k.toLowerCase().trim());
-  for (const alias of aliases) {
-    const idx = lowerKeys.indexOf(alias);
-    if (idx !== -1) return keys[idx];
-  }
-  return null;
+function mappingKey(clientId: string) {
+  return `clients/${clientId}/links-mapping.json`;
 }
 
+// ── CRUD ─────────────────────────────────────────────────────
+
+export async function getLinksMapping(
+  clientId: string
+): Promise<LinksFieldMapping | null> {
+  return readJson<LinksFieldMapping | null>(mappingKey(clientId), null);
+}
+
+export async function saveLinksMapping(
+  clientId: string,
+  mapping: LinksFieldMapping
+): Promise<void> {
+  await writeJson(mappingKey(clientId), mapping);
+}
+
+// ── Auto-Match ───────────────────────────────────────────────
+
+export const LINKS_AUTO_MATCH: Record<keyof LinksFieldMapping, string[]> = {
+  article: [
+    "article",
+    "article number",
+    "art no",
+    "article no",
+    "article code",
+  ],
+  clientProductId: [
+    "client product id",
+    "product id",
+    "cpid",
+    "client prod id",
+    "sku",
+    "product code",
+    "item code",
+  ],
+};
+
+export function autoMatchLinksHeaders(
+  headers: string[]
+): Partial<LinksFieldMapping> {
+  const lowerHeaders = headers.map((h) => h.toLowerCase().trim());
+  const result: Partial<LinksFieldMapping> = {};
+
+  for (const [field, aliases] of Object.entries(LINKS_AUTO_MATCH) as [
+    keyof LinksFieldMapping,
+    string[],
+  ][]) {
+    for (const alias of aliases) {
+      const idx = lowerHeaders.indexOf(alias);
+      if (idx !== -1) {
+        result[field] = headers[idx]; // Use original casing
+        break;
+      }
+    }
+  }
+
+  return result;
+}
+
+// ── Lookup ───────────────────────────────────────────────────
+
 /**
- * Load LINKS control file data and build a Map:
+ * Load LINKS raw data + saved mapping, build a Map:
  *   article (lowercased, trimmed) → clientProductId (original casing, trimmed)
  *
- * Auto-detects column names using common aliases.
- * Returns an empty Map if LINKS data is missing or columns can't be detected.
+ * Returns empty Map if no mapping saved or no LINKS data.
  */
 export async function getLinksLookup(
   clientId: string
 ): Promise<Map<string, string>> {
-  const rows = await getControlFileData<Record<string, unknown>>(
-    clientId,
-    "links"
-  );
   const lookup = new Map<string, string>();
 
+  const mapping = await getLinksMapping(clientId);
+  if (!mapping || !mapping.article || !mapping.clientProductId) {
+    return lookup;
+  }
+
+  const rows = await getRawLinksData(clientId);
   if (rows.length === 0) return lookup;
 
-  // Auto-detect column names from the first row
-  const articleCol = findColumn(rows[0], ARTICLE_ALIASES);
-  const cpidCol = findColumn(rows[0], CPID_ALIASES);
-
-  if (!articleCol || !cpidCol) return lookup;
-
   for (const row of rows) {
-    const articleVal = row[articleCol];
-    const cpidVal = row[cpidCol];
+    const articleVal = row[mapping.article];
+    const cpidVal = row[mapping.clientProductId];
 
     if (!articleVal || !cpidVal) continue;
 
@@ -87,7 +107,6 @@ export async function getLinksLookup(
 
     if (!article || !cpid) continue;
 
-    // Key by lowercased article for case-insensitive lookup
     lookup.set(article.toLowerCase(), cpid);
   }
 

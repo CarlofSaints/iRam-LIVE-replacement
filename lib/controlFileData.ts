@@ -43,6 +43,21 @@ export async function saveRawPmfData(
   await writeJson(`clients/${clientId}/pmf-raw.json`, rawRows);
 }
 
+/** Read raw (unparsed) LINKS rows — preserves all original columns for header detection. */
+export async function getRawLinksData(
+  clientId: string
+): Promise<Record<string, unknown>[]> {
+  return readJson<Record<string, unknown>[]>(`clients/${clientId}/links-raw.json`, []);
+}
+
+/** Save raw (unparsed) LINKS rows alongside the parsed data. */
+export async function saveRawLinksData(
+  clientId: string,
+  rawRows: Record<string, unknown>[]
+): Promise<void> {
+  await writeJson(`clients/${clientId}/links-raw.json`, rawRows);
+}
+
 export async function saveControlFileData<T>(
   clientId: string,
   fileType: ControlFileType,
@@ -58,9 +73,12 @@ export async function deleteControlFile(
   fileType: ControlFileType
 ): Promise<void> {
   await deleteBlob(blobKey(clientId, fileType));
-  // Also clean up raw PMF data when PMF is deleted
+  // Also clean up raw data when PMF or LINKS is deleted
   if (fileType === "pmf") {
     await deleteBlob(`clients/${clientId}/pmf-raw.json`);
+  }
+  if (fileType === "links") {
+    await deleteBlob(`clients/${clientId}/links-raw.json`);
   }
   await setControlFileMeta(clientId, fileType, null);
 }

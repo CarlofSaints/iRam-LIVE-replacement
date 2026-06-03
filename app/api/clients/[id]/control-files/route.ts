@@ -4,6 +4,7 @@ import { getClientById } from "@/lib/clientData";
 import {
   saveControlFileData,
   saveRawPmfData,
+  saveRawLinksData,
   parsePmfSheet,
   parseLinksSheet,
   parseRangingSheet,
@@ -49,13 +50,17 @@ export async function POST(
 
     const parsed = PARSERS[type](rawRows);
 
-    // Save raw rows for PMF so the mapping UI can detect all original headers
+    // Save raw rows so the mapping UI can detect all original headers
+    const trimmedRaw = rawRows.map((r) => {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(r)) out[k.trim()] = v;
+      return out;
+    });
     if (type === "pmf") {
-      await saveRawPmfData(id, rawRows.map((r) => {
-        const out: Record<string, unknown> = {};
-        for (const [k, v] of Object.entries(r)) out[k.trim()] = v;
-        return out;
-      }));
+      await saveRawPmfData(id, trimmedRaw);
+    }
+    if (type === "links") {
+      await saveRawLinksData(id, trimmedRaw);
     }
 
     await saveControlFileData(id, type, parsed, {

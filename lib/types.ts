@@ -252,6 +252,13 @@ export interface ProductMaster {
   barcode?: string;
 }
 
+// ── Links Field Mapping ──
+
+export interface LinksFieldMapping {
+  article: string;          // which LINKS column = Article (channel-specific, joins to DISPO)
+  clientProductId: string;  // which LINKS column = Client Product ID (joins to PMF)
+}
+
 // ── Activity Log ──
 
 export interface LogEntry {

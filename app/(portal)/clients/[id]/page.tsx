@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { authFetch } from "@/lib/useAuth";
 import UploadZone from "@/components/UploadZone";
-import type { Client, Channel, CAM, ControlFileType, UploadMeta, ProductFieldMapping } from "@/lib/types";
+import type { Client, Channel, CAM, ControlFileType, UploadMeta, ProductFieldMapping, LinksFieldMapping } from "@/lib/types";
 
 const CF_LABELS: Record<ControlFileType, string> = {
   pmf: "PMF (Product Management File)",
@@ -39,6 +39,14 @@ export default function ClientDetailPage() {
   const [mappingLoading, setMappingLoading] = useState(false);
   const [mappingSaving, setMappingSaving] = useState(false);
 
+  // Links mapping state
+  const [linksHeaders, setLinksHeaders] = useState<string[]>([]);
+  const [linksMapping, setLinksMapping] = useState<Partial<LinksFieldMapping>>({});
+  const [linksAutoMatched, setLinksAutoMatched] = useState<Partial<LinksFieldMapping>>({});
+  const [linkCount, setLinkCount] = useState<number | null>(null);
+  const [linksMappingLoading, setLinksMappingLoading] = useState(false);
+  const [linksMappingSaving, setLinksMappingSaving] = useState(false);
+
   async function load() {
     const t = Date.now();
     const [cRes, chRes, camRes, uRes] = await Promise.all([
@@ -64,6 +72,15 @@ export default function ClientDetailPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasPmf]);
+
+  // Load links mapping data when client is loaded and has LINKS
+  const hasLinks = !!client?.controlFiles?.links;
+  useEffect(() => {
+    if (hasLinks) {
+      loadLinksMapping();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasLinks]);
 
   async function handleControlFileUpload(type: ControlFileType, file: File) {
     setUploading(type);
@@ -104,6 +121,9 @@ export default function ClientDetailPage() {
         if (json.productMasterCount != null) {
           setProductCount(json.productMasterCount);
         }
+      }
+      if (type === "links") {
+        await loadLinksMapping();
       }
     }
     setUploading(null);
@@ -157,6 +177,49 @@ export default function ClientDetailPage() {
     setMappingSaving(false);
   }
 
+  // ── Links Mapping ──
+
+  async function loadLinksMapping() {
+    setLinksMappingLoading(true);
+    try {
+      const res = await authFetch(`/api/clients/${id}/links-mapping`);
+      if (res.ok) {
+        const data = await res.json();
+        setLinksHeaders(data.headers ?? []);
+        setLinksAutoMatched(data.autoMatched ?? {});
+        setLinksMapping(data.mapping ?? data.autoMatched ?? {});
+      } else {
+        console.error("links-mapping GET failed:", res.status);
+      }
+    } catch (err) {
+      console.error("loadLinksMapping error:", err);
+    }
+    setLinksMappingLoading(false);
+  }
+
+  async function saveLinksMapping() {
+    if (!linksMapping.article || !linksMapping.clientProductId) {
+      setToast("Both Article and Client Product ID are required");
+      setTimeout(() => setToast(""), 3000);
+      return;
+    }
+    setLinksMappingSaving(true);
+    const res = await authFetch(`/api/clients/${id}/links-mapping`, {
+      method: "PUT",
+      body: JSON.stringify({ mapping: linksMapping }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      setLinkCount(data.linkCount ?? 0);
+      setToast(`Links mapping saved — ${data.linkCount} article links`);
+      setTimeout(() => setToast(""), 4000);
+    } else {
+      setToast("Failed to save links mapping");
+      setTimeout(() => setToast(""), 3000);
+    }
+    setLinksMappingSaving(false);
+  }
+
   async function handleControlFileDelete(type: ControlFileType) {
     if (!confirm(`Delete ${CF_LABELS[type]}?`)) return;
     const res = await authFetch(`/api/clients/${id}/control-files/${type}`, { method: "DELETE" });
@@ -176,6 +239,12 @@ export default function ClientDetailPage() {
         setAutoMatched({});
         setMapping({});
         setProductCount(null);
+      }
+      if (type === "links") {
+        setLinksHeaders([]);
+        setLinksAutoMatched({});
+        setLinksMapping({});
+        setLinkCount(null);
       }
     } else {
       const err = await res.text().catch(() => "Unknown error");
@@ -449,6 +518,77 @@ export default function ClientDetailPage() {
                           {autoMatched.clientProductId && (
                             <button
                               onClick={() => setMapping({ ...autoMatched })}
+                              className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs font-medium text-[var(--color-text-muted)] hover:bg-zinc-50"
+                            >
+                              Reset to Auto-Match
+                            </button>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* Links Mapping — renders right after the LINKS card */}
+                {type === "links" && (
+                  <div className="rounded-xl border border-[var(--color-border)] bg-white p-5">
+                    <div className="mb-4 flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <h3 className="text-sm font-semibold text-[var(--color-text)]">Links Mapping</h3>
+                        {!client.controlFiles.links ? (
+                          <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-xs font-medium text-zinc-500">Upload Links first</span>
+                        ) : linkCount != null && linkCount > 0 ? (
+                          <span className="rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700">{linkCount} article links</span>
+                        ) : (
+                          <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700">Not mapped</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {!client.controlFiles.links ? (
+                      <p className="text-sm text-[var(--color-text-muted)]">Upload a Links file above to enable article mapping.</p>
+                    ) : linksMappingLoading ? (
+                      <p className="text-sm text-[var(--color-text-muted)]">Loading mapping...</p>
+                    ) : linksHeaders.length === 0 ? (
+                      <p className="text-sm text-[var(--color-text-muted)]">No headers detected. Remove and re-upload the Links file.</p>
+                    ) : (
+                      <>
+                        <p className="mb-4 text-xs text-[var(--color-text-muted)]">
+                          Map which Links columns contain the Article (channel-specific) and Client Product ID (global, links to PMF). Both are required. {linksAutoMatched.article && linksAutoMatched.clientProductId && "(Auto-matched suggestions applied)"}
+                        </p>
+                        <div className="grid grid-cols-2 gap-4">
+                          {([
+                            { field: "article" as const, label: "Article *" },
+                            { field: "clientProductId" as const, label: "Client Product ID *" },
+                          ]).map(({ field, label }) => (
+                            <div key={field}>
+                              <label htmlFor={`links-mapping-${field}`} className="mb-1 block text-xs font-medium text-[var(--color-text)]">{label}</label>
+                              <select
+                                id={`links-mapping-${field}`}
+                                name={`links-mapping-${field}`}
+                                value={linksMapping[field] ?? ""}
+                                onChange={(e) => setLinksMapping((prev) => ({ ...prev, [field]: e.target.value || undefined }))}
+                                className={`w-full rounded-lg border px-3 py-2 text-sm ${!linksMapping[field] ? "border-amber-300" : "border-[var(--color-border)]"}`}
+                              >
+                                <option value="">— Not mapped —</option>
+                                {linksHeaders.map((h) => (
+                                  <option key={h} value={h}>{h}</option>
+                                ))}
+                              </select>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="mt-4 flex items-center gap-3">
+                          <button
+                            onClick={saveLinksMapping}
+                            disabled={linksMappingSaving || !linksMapping.article || !linksMapping.clientProductId}
+                            className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)] disabled:opacity-50"
+                          >
+                            {linksMappingSaving ? "Saving..." : "Save Mapping"}
+                          </button>
+                          {linksAutoMatched.article && linksAutoMatched.clientProductId && (
+                            <button
+                              onClick={() => setLinksMapping({ ...linksAutoMatched })}
                               className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs font-medium text-[var(--color-text-muted)] hover:bg-zinc-50"
                             >
                               Reset to Auto-Match
