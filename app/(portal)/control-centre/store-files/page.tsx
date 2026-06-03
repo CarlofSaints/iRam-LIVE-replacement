@@ -11,11 +11,13 @@ export default function StoreFilesPage() {
   const [stores, setStores] = useState<{ channel: string; count: number }[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [selectedMainChannel, setSelectedMainChannel] = useState("");
   const [selectedSubChannels, setSelectedSubChannels] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
 
-  const subChannels = channels.filter((c) => c.parentId);
+  const mainChannels = channels.filter((c) => !c.parentId);
+  const subChannels = channels.filter((c) => c.parentId && c.parentId === selectedMainChannel);
 
   async function load() {
     const [filesRes, chRes, storesRes] = await Promise.all([
@@ -107,25 +109,40 @@ export default function StoreFilesPage() {
         <h2 className="mb-4 text-sm font-semibold text-[var(--color-text)]">Upload Store File</h2>
 
         <div className="mb-4">
-          <label className="mb-2 block text-sm font-medium text-[var(--color-text)]">
-            Which sub-channels does this file cover?
-          </label>
-          <div className="flex flex-wrap gap-2">
-            {subChannels.map((ch) => (
-              <button
-                key={ch.id}
-                onClick={() => toggleSubChannel(ch.id)}
-                className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${
-                  selectedSubChannels.includes(ch.id)
-                    ? "border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)]"
-                    : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-zinc-300"
-                }`}
-              >
-                {ch.name}
-              </button>
-            ))}
-          </div>
+          <label className="mb-2 block text-sm font-medium text-[var(--color-text)]">Main Channel</label>
+          <select value={selectedMainChannel} onChange={(e) => { setSelectedMainChannel(e.target.value); setSelectedSubChannels([]); }}
+            className="w-full max-w-xs rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm">
+            <option value="">Select a main channel...</option>
+            {mainChannels.map((ch) => <option key={ch.id} value={ch.id}>{ch.name}</option>)}
+          </select>
         </div>
+
+        {selectedMainChannel && subChannels.length > 0 && (
+          <div className="mb-4">
+            <label className="mb-2 block text-sm font-medium text-[var(--color-text)]">
+              Which sub-channels does this file cover?
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {subChannels.map((ch) => (
+                <button
+                  key={ch.id}
+                  onClick={() => toggleSubChannel(ch.id)}
+                  className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${
+                    selectedSubChannels.includes(ch.id)
+                      ? "border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)]"
+                      : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-zinc-300"
+                  }`}
+                >
+                  {ch.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {selectedMainChannel && subChannels.length === 0 && (
+          <div className="mb-4 text-sm text-[var(--color-text-muted)]">No sub-channels for this main channel.</div>
+        )}
 
         <UploadZone
           onFile={handleUpload}
