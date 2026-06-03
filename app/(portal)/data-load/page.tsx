@@ -17,7 +17,13 @@ export default function DataLoadPage() {
   const [channelIds, setChannelIds] = useState<string[]>([]);
   const [fileType, setFileType] = useState<FileType>("dispo");
   const [uploading, setUploading] = useState(false);
-  const [results, setResults] = useState<{ channelName: string; ok: boolean; message: string; rowCount?: number }[]>([]);
+  const [results, setResults] = useState<{
+    channelName: string;
+    ok: boolean;
+    message: string;
+    rowCount?: number;
+    merge?: { inserted: number; updated: number; unchanged: number };
+  }[]>([]);
 
   async function load() {
     const [cRes, chRes] = await Promise.all([
@@ -67,7 +73,13 @@ export default function DataLoadPage() {
         });
         const data = await res.json();
         if (res.ok) {
-          uploadResults.push({ channelName: chName, ok: true, message: `${data.rowCount} rows processed`, rowCount: data.rowCount });
+          uploadResults.push({
+            channelName: chName,
+            ok: true,
+            message: `${data.rowCount} rows processed`,
+            rowCount: data.rowCount,
+            merge: data.merge,
+          });
         } else {
           uploadResults.push({ channelName: chName, ok: false, message: data.error || "Upload failed" });
         }
@@ -189,6 +201,19 @@ export default function DataLoadPage() {
                 <p className={`text-sm ${r.ok ? "text-green-600" : "text-red-600"}`}>
                   {r.message}
                 </p>
+                {r.ok && r.merge && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <span className="inline-flex items-center rounded-md bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
+                      {r.merge.inserted} new
+                    </span>
+                    <span className="inline-flex items-center rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+                      {r.merge.updated} updated
+                    </span>
+                    <span className="inline-flex items-center rounded-md bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600">
+                      {r.merge.unchanged} unchanged
+                    </span>
+                  </div>
+                )}
               </div>
             ))}
           </div>

@@ -218,6 +218,20 @@ export interface UploadMeta {
   errorMessage?: string;
 }
 
+// ── Sales Ledger ──
+
+export interface SalesLedgerMeta {
+  clientId: string;
+  clientName: string;
+  channelId: string; // sub-channel ID (or main channel if no sub)
+  channelName: string;
+  vendorNumber: string;
+  totalRows: number;
+  dateColumns: string[]; // normalized MM-YYYY format
+  mergedUploadIds: string[];
+  lastMergedAt: string; // ISO timestamp
+}
+
 // ── Activity Log ──
 
 export interface LogEntry {

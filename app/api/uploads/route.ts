@@ -3,6 +3,7 @@ import { getUploadIndex, getUploadsByClient, addUpload } from "@/lib/uploadData"
 import { getClientById } from "@/lib/clientData";
 import { getChannelById } from "@/lib/channelData";
 import { parseDispo } from "@/lib/dispoParser";
+import { mergeDispo } from "@/lib/salesData";
 import { requireLogin, requirePermission, noCacheHeaders, handleAuthError } from "@/lib/auth";
 import { addLog } from "@/lib/activityLog";
 import type { FileType } from "@/lib/types";
@@ -88,15 +89,33 @@ export async function POST(req: NextRequest) {
         result.rows
       );
 
+      // Merge into sales ledger (use sub-channel ID if present, otherwise main channel)
+      const ledgerChannelId = subChannelId ?? (channel.parentId ?? channel.id);
+      const ledgerChannelName = subChannelName ?? mainChannelName;
+
+      const merge = await mergeDispo({
+        clientId,
+        clientName: client.name,
+        channelId: ledgerChannelId,
+        channelName: ledgerChannelName,
+        vendorNumber: result.vendorNumber,
+        rows: result.rows,
+        dateColumns: result.dateColumns,
+        uploadId: upload.id,
+      });
+
       await addLog({
         userId: session.userId,
         userName: session.name,
         action: "upload_dispo",
-        details: `Uploaded DISPO for ${client.name} / ${channel.name} (${result.totalRows} rows, vendor ${result.vendorNumber})`,
+        details: `Uploaded DISPO for ${client.name} / ${channel.name} (${result.totalRows} rows, vendor ${result.vendorNumber}). Ledger merge: ${merge.inserted} new, ${merge.updated} updated, ${merge.unchanged} unchanged.`,
         status: "success",
       });
 
-      return Response.json({ success: true, id: upload.id, rowCount: result.totalRows }, { headers: noCacheHeaders() });
+      return Response.json(
+        { success: true, id: upload.id, rowCount: result.totalRows, merge },
+        { headers: noCacheHeaders() },
+      );
     }
 
     if (fileType === "aged_stock") {
