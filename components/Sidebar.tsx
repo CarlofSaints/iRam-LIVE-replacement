@@ -182,12 +182,21 @@ export default function Sidebar() {
       {user && (
         <div className="border-t border-[var(--color-border)] px-4 py-3">
           <div className="flex items-center justify-between">
-            <div className="min-w-0">
-              <div className="truncate text-sm font-medium text-[var(--color-text)]">
-                {user.name}
-              </div>
-              <div className="truncate text-xs text-[var(--color-text-muted)]">
-                {user.role.replace("_", " ")}
+            <div className="flex items-center gap-2.5 min-w-0">
+              {user.profilePicUrl ? (
+                <img src={user.profilePicUrl} alt="" className="h-8 w-8 shrink-0 rounded-full object-cover" />
+              ) : (
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary)] text-xs font-bold text-white">
+                  {user.name.split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 2)}
+                </div>
+              )}
+              <div className="min-w-0">
+                <div className="truncate text-sm font-medium text-[var(--color-text)]">
+                  {user.name}
+                </div>
+                <div className="truncate text-xs text-[var(--color-text-muted)]">
+                  {user.role.replace("_", " ")}
+                </div>
               </div>
             </div>
             <button

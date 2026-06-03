@@ -93,6 +93,7 @@ export interface User {
   active: boolean;
   createdAt: string; // ISO
   lastLoginAt?: string; // ISO
+  profilePicUrl?: string;
 }
 
 export interface SessionPayload {
@@ -101,6 +102,7 @@ export interface SessionPayload {
   name: string;
   role: string;
   forcePasswordChange?: boolean;
+  profilePicUrl?: string;
 }
 
 // ── Password Reset ──

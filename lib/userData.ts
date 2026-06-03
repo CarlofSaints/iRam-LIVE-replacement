@@ -59,6 +59,7 @@ export async function updateUser(
       | "active"
       | "forcePasswordChange"
       | "lastLoginAt"
+      | "profilePicUrl"
     >
   >
 ): Promise<User> {
