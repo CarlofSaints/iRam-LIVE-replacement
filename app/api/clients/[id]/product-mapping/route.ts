@@ -19,7 +19,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    requirePermission(req, "manage_control_files");
+    await requirePermission(req, "manage_control_files");
     const { id } = await params;
 
     const client = await getClientById(id);
