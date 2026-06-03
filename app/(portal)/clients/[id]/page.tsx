@@ -80,8 +80,25 @@ export default function ClientDetailPage() {
       const json = await res.json();
       setToast(`${CF_LABELS[type]} uploaded`);
       setTimeout(() => setToast(""), 3000);
-      await load();
-      // Refresh mapping data after PMF upload (after load() updates client state)
+      // Optimistically update client state so UI reflects the upload immediately
+      // (avoids stale blob CDN reads from load())
+      setClient((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          controlFiles: {
+            ...prev.controlFiles,
+            [type]: {
+              fileName: file.name,
+              uploadedAt: new Date().toISOString(),
+              uploadedBy: "You",
+              rowCount: json.rowCount ?? 0,
+            },
+          },
+        };
+      });
+      // Background refresh for accurate data (may still be stale briefly)
+      load();
       if (type === "pmf") {
         await loadProductMapping();
         if (json.productMasterCount != null) {
@@ -146,6 +163,20 @@ export default function ClientDetailPage() {
     if (res.ok) {
       setToast(`${CF_LABELS[type]} removed`);
       setTimeout(() => setToast(""), 3000);
+      // Optimistically clear from state
+      setClient((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          controlFiles: { ...prev.controlFiles, [type]: null },
+        };
+      });
+      if (type === "pmf") {
+        setPmfHeaders([]);
+        setAutoMatched({});
+        setMapping({});
+        setProductCount(null);
+      }
     } else {
       const err = await res.text().catch(() => "Unknown error");
       setToast(`Failed to delete: ${err}`);
