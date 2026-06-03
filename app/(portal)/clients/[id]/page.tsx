@@ -57,12 +57,13 @@ export default function ClientDetailPage() {
   useEffect(() => { load(); }, [id]);
 
   // Load product mapping data when client is loaded and has PMF
+  const hasPmf = !!client?.controlFiles?.pmf;
   useEffect(() => {
-    if (client?.controlFiles?.pmf) {
+    if (hasPmf) {
       loadProductMapping();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client?.controlFiles?.pmf?.uploadedAt]);
+  }, [hasPmf]);
 
   async function handleControlFileUpload(type: ControlFileType, file: File) {
     setUploading(type);
@@ -79,10 +80,10 @@ export default function ClientDetailPage() {
       const json = await res.json();
       setToast(`${CF_LABELS[type]} uploaded`);
       setTimeout(() => setToast(""), 3000);
-      load();
-      // Refresh mapping data after PMF upload
+      await load();
+      // Refresh mapping data after PMF upload (after load() updates client state)
       if (type === "pmf") {
-        loadProductMapping();
+        await loadProductMapping();
         if (json.productMasterCount != null) {
           setProductCount(json.productMasterCount);
         }
@@ -101,17 +102,17 @@ export default function ClientDetailPage() {
         const data = await res.json();
         setPmfHeaders(data.headers ?? []);
         setAutoMatched(data.autoMatched ?? {});
-        // Use saved mapping if exists, otherwise use auto-matched
         setMapping(data.mapping ?? data.autoMatched ?? {});
+      } else {
+        console.error("product-mapping GET failed:", res.status, await res.text().catch(() => ""));
       }
-      // Also load product master count
       const masterRes = await authFetch(`/api/clients/${id}/product-master`);
       if (masterRes.ok) {
         const masterData = await masterRes.json();
         setProductCount(masterData.count ?? 0);
       }
-    } catch {
-      // ignore
+    } catch (err) {
+      console.error("loadProductMapping error:", err);
     }
     setMappingLoading(false);
   }
