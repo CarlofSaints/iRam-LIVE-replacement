@@ -1,8 +1,15 @@
 /* ──────────────────────────────────────────────────────────────
    Enrichment Engine — query-time dimension enrichment
+
+   Join path for product dimensions:
+     DISPO Article → LINKS (Article → Client Product ID) → PMF Product Master
+
+   Join path for store dimensions:
+     DISPO Site → Store Master (siteNum)
    ────────────────────────────────────────────────────────────── */
 
 import { getProductLookup } from "./productMasterData";
+import { getLinksLookup } from "./linksLookup";
 import { getStoreLookup } from "./storeLookup";
 import type { ProductMaster, StoreRecord } from "./types";
 
@@ -13,8 +20,9 @@ type EnrichedRow = Record<string, unknown>;
  * Enrich a single row with product + store dimensions.
  * Prefixed field names avoid collisions with original data.
  *
- * Product fields (from ProductMaster):
- *   _brand, _category, _productStatus, _productDescription, _barcode
+ * Product fields (from ProductMaster via LINKS join):
+ *   _clientProductId, _brand, _category, _productStatus,
+ *   _productDescription, _barcode
  *
  * Store fields (from StoreRecord):
  *   _province, _townCity, _storeName, _storeChannel, _storeSubChannel,
@@ -22,16 +30,23 @@ type EnrichedRow = Record<string, unknown>;
  */
 export function enrichLedgerRow(
   row: RawRow,
+  linksLookup: Map<string, string>,      // article → clientProductId
   productLookup: Map<string, ProductMaster>,
   storeLookup: Map<string, StoreRecord>
 ): EnrichedRow {
   const enriched: EnrichedRow = { ...row };
 
-  // ── Product join (by Article field) ──
+  // ── Product join (two-hop: Article → LINKS → Client Product ID → PMF) ──
   const articleRaw = row["Article"] ?? row["article"] ?? row["ARTICLE"];
   if (articleRaw != null) {
     const articleKey = String(articleRaw).toLowerCase().trim();
-    const product = productLookup.get(articleKey);
+
+    // Step 1: Article → Client Product ID (via LINKS)
+    const cpid = linksLookup.get(articleKey);
+    enriched._clientProductId = cpid ?? "";
+
+    // Step 2: Client Product ID → Product dimensions (via PMF master)
+    const product = cpid ? productLookup.get(cpid.toLowerCase().trim()) : undefined;
     if (product) {
       enriched._brand = product.brand ?? "";
       enriched._category = product.category ?? "";
@@ -80,7 +95,7 @@ export function enrichLedgerRow(
 
 /**
  * Enrich an array of ledger rows with product + store dimensions.
- * Loads both lookups in parallel, then enriches all rows.
+ * Loads all three lookups in parallel, then enriches all rows.
  */
 export async function enrichLedger(
   rows: RawRow[],
@@ -89,19 +104,22 @@ export async function enrichLedger(
   rows: EnrichedRow[];
   productCount: number;
   storeCount: number;
+  linksCount: number;
 }> {
-  const [productLookup, storeLookup] = await Promise.all([
+  const [linksLookup, productLookup, storeLookup] = await Promise.all([
+    getLinksLookup(clientId),
     getProductLookup(clientId),
     getStoreLookup(),
   ]);
 
   const enrichedRows = rows.map((row) =>
-    enrichLedgerRow(row, productLookup, storeLookup)
+    enrichLedgerRow(row, linksLookup, productLookup, storeLookup)
   );
 
   return {
     rows: enrichedRows,
     productCount: productLookup.size,
     storeCount: storeLookup.size,
+    linksCount: linksLookup.size,
   };
 }

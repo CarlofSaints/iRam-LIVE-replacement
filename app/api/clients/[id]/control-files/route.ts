@@ -77,7 +77,7 @@ export async function POST(
     let productMasterCount: number | undefined;
     if (type === "pmf") {
       const mapping = await getProductMapping(id);
-      if (mapping && mapping.article) {
+      if (mapping && mapping.clientProductId) {
         const result = await buildProductMaster(id);
         productMasterCount = result.count;
       }

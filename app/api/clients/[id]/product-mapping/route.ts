@@ -69,9 +69,9 @@ export async function PUT(
 
     const body = (await req.json()) as { mapping: ProductFieldMapping };
 
-    if (!body.mapping || !body.mapping.article) {
+    if (!body.mapping || !body.mapping.clientProductId) {
       return Response.json(
-        { error: "Article field mapping is required" },
+        { error: "Client Product ID field mapping is required" },
         { status: 400, headers: noCacheHeaders() }
       );
     }

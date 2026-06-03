@@ -41,14 +41,14 @@ export async function getProductMaster(
 
 /**
  * Build structured ProductMaster[] from raw PMF data + saved mapping.
- * Deduplicates by article (last row wins).
+ * Deduplicates by clientProductId (last row wins).
  * Returns the count of products built.
  */
 export async function buildProductMaster(
   clientId: string
 ): Promise<{ count: number }> {
   const mapping = await getProductMapping(clientId);
-  if (!mapping || !mapping.article) {
+  if (!mapping || !mapping.clientProductId) {
     return { count: 0 };
   }
 
@@ -57,17 +57,17 @@ export async function buildProductMaster(
     return { count: 0 };
   }
 
-  // Build master, dedup by article (last row wins)
+  // Build master, dedup by clientProductId (last row wins)
   const dedup = new Map<string, ProductMaster>();
 
   for (const row of rawRows) {
-    const articleVal = row[mapping.article];
-    if (!articleVal || !String(articleVal).trim()) continue;
+    const cpidVal = row[mapping.clientProductId];
+    if (!cpidVal || !String(cpidVal).trim()) continue;
 
-    const article = String(articleVal).trim();
-    const key = article.toLowerCase();
+    const clientProductId = String(cpidVal).trim();
+    const key = clientProductId.toLowerCase();
 
-    const entry: ProductMaster = { article };
+    const entry: ProductMaster = { clientProductId };
 
     if (mapping.brand && row[mapping.brand] !== undefined) {
       entry.brand = String(row[mapping.brand]).trim() || undefined;
@@ -98,8 +98,8 @@ export async function buildProductMaster(
 // ── Lookup ───────────────────────────────────────────────────
 
 /**
- * Load product master and build a Map keyed by article (trimmed, lowercased)
- * for O(1) lookup during enrichment.
+ * Load product master and build a Map keyed by clientProductId
+ * (trimmed, lowercased) for O(1) lookup during enrichment.
  */
 export async function getProductLookup(
   clientId: string
@@ -107,7 +107,7 @@ export async function getProductLookup(
   const master = await getProductMaster(clientId);
   const lookup = new Map<string, ProductMaster>();
   for (const p of master) {
-    lookup.set(p.article.toLowerCase().trim(), p);
+    lookup.set(p.clientProductId.toLowerCase().trim(), p);
   }
   return lookup;
 }
@@ -119,13 +119,13 @@ export async function getProductLookup(
  * First match wins.
  */
 export const AUTO_MATCH: Record<keyof ProductFieldMapping, string[]> = {
-  article: [
-    "article",
+  clientProductId: [
     "client product id",
     "product id",
     "sku",
-    "article number",
-    "art no",
+    "cpid",
+    "client prod id",
+    "product code",
     "item code",
   ],
   brand: ["brand", "product brand", "brand name"],

@@ -135,8 +135,8 @@ export default function ClientDetailPage() {
   }
 
   async function saveProductMapping() {
-    if (!mapping.article) {
-      setToast("Article field mapping is required");
+    if (!mapping.clientProductId) {
+      setToast("Client Product ID mapping is required");
       setTimeout(() => setToast(""), 3000);
       return;
     }
@@ -410,11 +410,11 @@ export default function ClientDetailPage() {
                     ) : (
                       <>
                         <p className="mb-4 text-xs text-[var(--color-text-muted)]">
-                          Map PMF columns to standard product fields. Article is required. {autoMatched.article && "(Auto-matched suggestions applied)"}
+                          Map PMF columns to standard product fields. Client Product ID is required. {autoMatched.clientProductId && "(Auto-matched suggestions applied)"}
                         </p>
                         <div className="grid grid-cols-2 gap-4">
                           {([
-                            { field: "article" as const, label: "Article *", required: true },
+                            { field: "clientProductId" as const, label: "Client Product ID *", required: true },
                             { field: "brand" as const, label: "Brand", required: false },
                             { field: "category" as const, label: "Category", required: false },
                             { field: "status" as const, label: "Status", required: false },
@@ -441,12 +441,12 @@ export default function ClientDetailPage() {
                         <div className="mt-4 flex items-center gap-3">
                           <button
                             onClick={saveProductMapping}
-                            disabled={mappingSaving || !mapping.article}
+                            disabled={mappingSaving || !mapping.clientProductId}
                             className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)] disabled:opacity-50"
                           >
                             {mappingSaving ? "Saving..." : "Save & Build"}
                           </button>
-                          {autoMatched.article && (
+                          {autoMatched.clientProductId && (
                             <button
                               onClick={() => setMapping({ ...autoMatched })}
                               className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs font-medium text-[var(--color-text-muted)] hover:bg-zinc-50"

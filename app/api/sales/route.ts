@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
       if (enrich && data.length > 0) {
         const enriched = await enrichLedger(data, clientId);
         return Response.json(
-          { data: enriched.rows, meta, productCount: enriched.productCount, storeCount: enriched.storeCount },
+          { data: enriched.rows, meta, productCount: enriched.productCount, storeCount: enriched.storeCount, linksCount: enriched.linksCount },
           { headers: noCacheHeaders() },
         );
       }
