@@ -1,0 +1,112 @@
+import type { ControlFileType, ControlFileMeta } from "./types";
+import { readJson, writeJson, deleteBlob } from "./blob";
+import { setControlFileMeta } from "./clientData";
+
+function blobKey(clientId: string, fileType: ControlFileType): string {
+  const fileNames: Record<ControlFileType, string> = {
+    pmf: "pmf.json",
+    links: "links.json",
+    ranging: "ranging.json",
+    custom_sites: "custom-sites.json",
+    promotions: "promotions.json",
+  };
+  return `clients/${clientId}/${fileNames[fileType]}`;
+}
+
+export const CONTROL_FILE_LABELS: Record<ControlFileType, string> = {
+  pmf: "PMF (Product Management File)",
+  links: "Links",
+  ranging: "Ranging",
+  custom_sites: "Custom Sites",
+  promotions: "Promotions",
+};
+
+export async function getControlFileData<T>(
+  clientId: string,
+  fileType: ControlFileType
+): Promise<T[]> {
+  return readJson<T[]>(blobKey(clientId, fileType), []);
+}
+
+export async function saveControlFileData<T>(
+  clientId: string,
+  fileType: ControlFileType,
+  data: T[],
+  meta: ControlFileMeta
+): Promise<void> {
+  await writeJson(blobKey(clientId, fileType), data);
+  await setControlFileMeta(clientId, fileType, meta);
+}
+
+export async function deleteControlFile(
+  clientId: string,
+  fileType: ControlFileType
+): Promise<void> {
+  await deleteBlob(blobKey(clientId, fileType));
+  await setControlFileMeta(clientId, fileType, null);
+}
+
+// ── Parsers for each control file type ──
+
+export function parsePmfSheet(
+  rows: Record<string, unknown>[]
+): Record<string, unknown>[] {
+  return rows
+    .filter((r) => {
+      const id = String(r["CLIENT PRODUCT ID"] ?? r["Client Product Id"] ?? "").trim();
+      return id.length > 0;
+    })
+    .map((r) => normalizeKeys(r));
+}
+
+export function parseLinksSheet(
+  rows: Record<string, unknown>[]
+): Record<string, unknown>[] {
+  return rows
+    .filter((r) => {
+      const article = String(r["Article"] ?? r["article"] ?? "").trim();
+      return article.length > 0;
+    })
+    .map((r) => normalizeKeys(r));
+}
+
+export function parseRangingSheet(
+  rows: Record<string, unknown>[]
+): Record<string, unknown>[] {
+  return rows
+    .filter((r) => {
+      const prodId = String(r["ProductID"] ?? r["Product ID"] ?? r["productid"] ?? "").trim();
+      return prodId.length > 0;
+    })
+    .map((r) => normalizeKeys(r));
+}
+
+export function parseCustomSitesSheet(
+  rows: Record<string, unknown>[]
+): Record<string, unknown>[] {
+  return rows
+    .filter((r) => {
+      const siteId = String(r["SiteID"] ?? r["siteid"] ?? "").trim();
+      return siteId.length > 0;
+    })
+    .map((r) => normalizeKeys(r));
+}
+
+export function parsePromotionsSheet(
+  rows: Record<string, unknown>[]
+): Record<string, unknown>[] {
+  return rows
+    .filter((r) => {
+      const article = String(r["Article"] ?? r["article"] ?? "").trim();
+      return article.length > 0;
+    })
+    .map((r) => normalizeKeys(r));
+}
+
+function normalizeKeys(row: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(row)) {
+    out[k.trim()] = v;
+  }
+  return out;
+}
