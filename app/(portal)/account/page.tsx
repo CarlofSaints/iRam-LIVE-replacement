@@ -45,6 +45,11 @@ export default function AccountPage() {
         setCurrentPw("");
         setNewPw("");
         setConfirmPw("");
+        // Update localStorage session so AppShell stops redirecting here
+        if (data.session) {
+          localStorage.setItem("iram-live-session", JSON.stringify(data.session));
+          window.location.href = "/";
+        }
       }
     } catch {
       setError("Network error");
