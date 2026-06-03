@@ -40,7 +40,7 @@ export async function readJson<T>(key: string, fallback: T): Promise<T> {
 
   // Use the SDK get() to read blob by pathname (bypasses list + URL fetch)
   try {
-    const result = await get(fullKey, { access: "private" });
+    const result = await get(fullKey, { access: "public" });
     if (!result || result.statusCode !== 200) return fallback;
     const text = await new Response(result.stream).text();
     const parsed = JSON.parse(text) as T;
@@ -64,7 +64,7 @@ export async function writeJson<T>(key: string, data: T): Promise<void> {
   }
 
   await put(fullKey, json, {
-    access: "private",
+    access: "public",
     addRandomSuffix: false,
     allowOverwrite: true,
     contentType: "application/json",
@@ -112,7 +112,7 @@ export async function writeBlob(
     return `/data/${fullKey.replace(PREFIX, "")}`;
   }
   const blob = await put(fullKey, data, {
-    access: "private",
+    access: "public",
     addRandomSuffix: false,
     allowOverwrite: true,
     contentType,
