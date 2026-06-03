@@ -3,6 +3,7 @@ import { readJson, writeJson } from "./blob";
 import { v4 as uuid } from "uuid";
 
 const KEY = "channels.json";
+const SEEDED_KEY = "channels-seeded.json";
 
 const DEFAULT_CHANNELS: Channel[] = [
   { id: "massmart", name: "MASSMART", active: true, createdAt: new Date().toISOString() },
@@ -15,8 +16,13 @@ const DEFAULT_CHANNELS: Channel[] = [
 export async function getChannels(): Promise<Channel[]> {
   const channels = await readJson<Channel[]>(KEY, []);
   if (channels.length === 0) {
-    await writeJson(KEY, DEFAULT_CHANNELS);
-    return DEFAULT_CHANNELS;
+    // Only seed defaults once — check the flag to avoid overwriting user data on transient read failures
+    const seeded = await readJson<{ done: boolean }>(SEEDED_KEY, { done: false });
+    if (!seeded.done) {
+      await writeJson(KEY, DEFAULT_CHANNELS);
+      await writeJson(SEEDED_KEY, { done: true });
+      return DEFAULT_CHANNELS;
+    }
   }
   return channels;
 }

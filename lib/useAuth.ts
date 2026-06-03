@@ -37,12 +37,12 @@ export function useAuth() {
 
   const logout = useCallback(async () => {
     localStorage.removeItem("iram-live-session");
-    setState({ user: null, loading: false });
     try {
       await fetch("/api/auth", { method: "DELETE" });
     } catch {
       /* ignore */
     }
+    window.location.href = "/login";
   }, []);
 
   const hasRole = useCallback(
