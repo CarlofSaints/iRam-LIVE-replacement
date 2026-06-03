@@ -3,6 +3,7 @@ import * as XLSX from "xlsx";
 import { getClientById } from "@/lib/clientData";
 import {
   saveControlFileData,
+  saveRawPmfData,
   parsePmfSheet,
   parseLinksSheet,
   parseRangingSheet,
@@ -47,6 +48,15 @@ export async function POST(
     const rawRows: Record<string, unknown>[] = XLSX.utils.sheet_to_json(sheet, { defval: "" });
 
     const parsed = PARSERS[type](rawRows);
+
+    // Save raw rows for PMF so the mapping UI can detect all original headers
+    if (type === "pmf") {
+      await saveRawPmfData(id, rawRows.map((r) => {
+        const out: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(r)) out[k.trim()] = v;
+        return out;
+      }));
+    }
 
     await saveControlFileData(id, type, parsed, {
       fileName: file.name,

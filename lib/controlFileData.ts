@@ -28,6 +28,21 @@ export async function getControlFileData<T>(
   return readJson<T[]>(blobKey(clientId, fileType), []);
 }
 
+/** Read raw (unparsed) PMF rows — preserves all original columns for header detection. */
+export async function getRawPmfData(
+  clientId: string
+): Promise<Record<string, unknown>[]> {
+  return readJson<Record<string, unknown>[]>(`clients/${clientId}/pmf-raw.json`, []);
+}
+
+/** Save raw (unparsed) PMF rows alongside the parsed data. */
+export async function saveRawPmfData(
+  clientId: string,
+  rawRows: Record<string, unknown>[]
+): Promise<void> {
+  await writeJson(`clients/${clientId}/pmf-raw.json`, rawRows);
+}
+
 export async function saveControlFileData<T>(
   clientId: string,
   fileType: ControlFileType,
@@ -43,6 +58,10 @@ export async function deleteControlFile(
   fileType: ControlFileType
 ): Promise<void> {
   await deleteBlob(blobKey(clientId, fileType));
+  // Also clean up raw PMF data when PMF is deleted
+  if (fileType === "pmf") {
+    await deleteBlob(`clients/${clientId}/pmf-raw.json`);
+  }
   await setControlFileMeta(clientId, fileType, null);
 }
 

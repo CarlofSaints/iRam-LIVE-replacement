@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { requirePermission, noCacheHeaders, handleAuthError } from "@/lib/auth";
 import { getClientById } from "@/lib/clientData";
-import { getControlFileData } from "@/lib/controlFileData";
+import { getRawPmfData } from "@/lib/controlFileData";
 import {
   getProductMapping,
   saveProductMapping,
@@ -32,7 +32,7 @@ export async function GET(
 
     const [mapping, rawRows] = await Promise.all([
       getProductMapping(id),
-      getControlFileData<Record<string, unknown>>(id, "pmf"),
+      getRawPmfData(id),
     ]);
 
     const headers =

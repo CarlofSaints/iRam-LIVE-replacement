@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { requirePermission, noCacheHeaders, handleAuthError } from "@/lib/auth";
 import { getClientById } from "@/lib/clientData";
-import { getControlFileData } from "@/lib/controlFileData";
+import { getRawPmfData } from "@/lib/controlFileData";
 
 /**
  * GET — returns array of column names found in the stored raw PMF data.
@@ -23,10 +23,7 @@ export async function GET(
       );
     }
 
-    const rawRows = await getControlFileData<Record<string, unknown>>(
-      id,
-      "pmf"
-    );
+    const rawRows = await getRawPmfData(id);
     const headers =
       rawRows.length > 0 ? Object.keys(rawRows[0]) : [];
 

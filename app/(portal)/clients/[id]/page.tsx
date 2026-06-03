@@ -388,8 +388,10 @@ export default function ClientDetailPage() {
                       { field: "barcode" as const, label: "Barcode / EAN", required: false },
                     ]).map(({ field, label, required }) => (
                       <div key={field}>
-                        <label className="mb-1 block text-xs font-medium text-[var(--color-text)]">{label}</label>
+                        <label htmlFor={`mapping-${field}`} className="mb-1 block text-xs font-medium text-[var(--color-text)]">{label}</label>
                         <select
+                          id={`mapping-${field}`}
+                          name={`mapping-${field}`}
                           value={mapping[field] ?? ""}
                           onChange={(e) => setMapping((prev) => ({ ...prev, [field]: e.target.value || undefined }))}
                           className={`w-full rounded-lg border px-3 py-2 text-sm ${required && !mapping[field] ? "border-amber-300" : "border-[var(--color-border)]"}`}

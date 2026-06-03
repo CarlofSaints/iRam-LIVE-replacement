@@ -3,7 +3,7 @@
    ────────────────────────────────────────────────────────────── */
 
 import { readJson, writeJson } from "./blob";
-import { getControlFileData } from "./controlFileData";
+import { getRawPmfData } from "./controlFileData";
 import type { ProductFieldMapping, ProductMaster } from "./types";
 
 // ── Blob keys ────────────────────────────────────────────────
@@ -52,10 +52,7 @@ export async function buildProductMaster(
     return { count: 0 };
   }
 
-  const rawRows = await getControlFileData<Record<string, unknown>>(
-    clientId,
-    "pmf"
-  );
+  const rawRows = await getRawPmfData(clientId);
   if (rawRows.length === 0) {
     return { count: 0 };
   }
