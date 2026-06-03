@@ -386,25 +386,28 @@ export default function ClientDetailPage() {
             );
           })}
 
-          {/* ── Product Mapping Section (visible when PMF uploaded) ── */}
-          {client.controlFiles.pmf && (
-            <div className="rounded-xl border border-[var(--color-border)] bg-white p-5">
-              <div className="mb-4 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <h3 className="text-sm font-semibold text-[var(--color-text)]">Product Mapping</h3>
-                  {productCount != null && productCount > 0 ? (
-                    <span className="rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700">{productCount} products</span>
-                  ) : (
-                    <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700">Not mapped</span>
-                  )}
-                </div>
+          {/* ── Product Mapping Section ── */}
+          <div className="rounded-xl border border-[var(--color-border)] bg-white p-5">
+            <div className="mb-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <h3 className="text-sm font-semibold text-[var(--color-text)]">Product Mapping</h3>
+                {!client.controlFiles.pmf ? (
+                  <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-xs font-medium text-zinc-500">Upload PMF first</span>
+                ) : productCount != null && productCount > 0 ? (
+                  <span className="rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700">{productCount} products</span>
+                ) : (
+                  <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700">Not mapped</span>
+                )}
               </div>
+            </div>
 
-              {mappingLoading ? (
-                <p className="text-sm text-[var(--color-text-muted)]">Loading mapping...</p>
-              ) : pmfHeaders.length === 0 ? (
-                <p className="text-sm text-[var(--color-text-muted)]">No headers detected in PMF. Re-upload the PMF file.</p>
-              ) : (
+            {!client.controlFiles.pmf ? (
+              <p className="text-sm text-[var(--color-text-muted)]">Upload a PMF file above to enable product field mapping.</p>
+            ) : mappingLoading ? (
+              <p className="text-sm text-[var(--color-text-muted)]">Loading mapping...</p>
+            ) : pmfHeaders.length === 0 ? (
+              <p className="text-sm text-[var(--color-text-muted)]">No headers detected in PMF ({pmfHeaders.length} headers). Try removing and re-uploading the PMF file.</p>
+            ) : (
                 <>
                   <p className="mb-4 text-xs text-[var(--color-text-muted)]">
                     Map PMF columns to standard product fields. Article is required. {autoMatched.article && "(Auto-matched suggestions applied)"}
@@ -453,9 +456,8 @@ export default function ClientDetailPage() {
                     )}
                   </div>
                 </>
-              )}
-            </div>
-          )}
+            )}
+          </div>
         </div>
       )}
 
