@@ -45,8 +45,9 @@ export default function StatusReferencePage() {
       const res = await authFetch("/api/channels");
       if (res.ok) {
         const all: Channel[] = await res.json();
-        setChannels(all);
-        if (all.length > 0) setSelectedChannel(all[0].id);
+        const main = all.filter((c) => !c.parentId);
+        setChannels(main);
+        if (main.length > 0) setSelectedChannel(main[0].id);
       }
       setLoading(false);
     })();
