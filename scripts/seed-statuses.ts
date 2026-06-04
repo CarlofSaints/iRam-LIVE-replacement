@@ -17,19 +17,19 @@ interface SeedEntry {
 }
 
 const MAKRO: SeedEntry[] = [
-  { code: "A", channelName: "MAKRO", classification: "POSITIVE", description: "Archived", notes: "Product archived at retailer. Cross-ref with PMF: POSITIVE if PMF also inactive, NEGATIVE if PMF still ACTIVE." },
-  { code: "B", channelName: "MAKRO", classification: "UNCLASSIFIED", description: "Liquor Vintages", notes: "Liquor vintage-specific status. Context-dependent." },
-  { code: "BA", channelName: "MAKRO", classification: "UNCLASSIFIED", description: "MF-BOM Article", notes: "Bill of Materials article. Context-dependent." },
-  { code: "C", channelName: "MAKRO", classification: "UNCLASSIFIED", description: "Web Special Order", notes: "Web/special order only. Context-dependent." },
-  { code: "D", channelName: "MAKRO", classification: "POSITIVE", description: "Discontinued", notes: "POSITIVE if PMF status is also DISCONTINUED (statuses match). NEGATIVE if PMF status is ACTIVE (retailer dropped an active product — lost sales)." },
-  { code: "H", channelName: "MAKRO", classification: "POSITIVE", description: "Harmonized", notes: "Product harmonized to a new article number. Expected behaviour." },
-  { code: "M", channelName: "MAKRO", classification: "NEGATIVE", description: "Markdown", notes: "Product on markdown — orders blocked. Needs attention if product is still ACTIVE in PMF." },
-  { code: "N", channelName: "MAKRO", classification: "NEGATIVE", description: "Not Replenished", notes: "Replenishment stopped. NEGATIVE if PMF status is ACTIVE (should be replenishing). Check with retailer buyer." },
-  { code: "R", channelName: "MAKRO", classification: "UNCLASSIFIED", description: "Customer Orders", notes: "Customer order only — not regular replenishment. Context-dependent." },
-  { code: "S", channelName: "MAKRO", classification: "NEGATIVE", description: "Suspended", notes: "Product suspended at retailer. NEGATIVE if PMF status is ACTIVE. May indicate compliance/quality issue." },
-  { code: "U", channelName: "MAKRO", classification: "POSITIVE", description: "To be Harmonized", notes: "Pending harmonization to new article. Expected transitional status." },
-  { code: "V", channelName: "MAKRO", classification: "POSITIVE", description: "Vendor Discontinuation", notes: "Vendor discontinued this product. POSITIVE if PMF also DISCONTINUED. NEGATIVE if PMF still ACTIVE (supplier ended it but client has not updated PMF)." },
-  { code: "X", channelName: "MAKRO", classification: "POSITIVE", description: "Product Recall", notes: "Product recalled — blocking is correct. Verify recall is acknowledged internally." },
+  { code: "A", channelName: "MAKRO (MAIN)", classification: "POSITIVE", description: "Archived", notes: "Product archived at retailer. Cross-ref with PMF: POSITIVE if PMF also inactive, NEGATIVE if PMF still ACTIVE." },
+  { code: "B", channelName: "MAKRO (MAIN)", classification: "UNCLASSIFIED", description: "Liquor Vintages", notes: "Liquor vintage-specific status. Context-dependent." },
+  { code: "BA", channelName: "MAKRO (MAIN)", classification: "UNCLASSIFIED", description: "MF-BOM Article", notes: "Bill of Materials article. Context-dependent." },
+  { code: "C", channelName: "MAKRO (MAIN)", classification: "UNCLASSIFIED", description: "Web Special Order", notes: "Web/special order only. Context-dependent." },
+  { code: "D", channelName: "MAKRO (MAIN)", classification: "POSITIVE", description: "Discontinued", notes: "POSITIVE if PMF status is also DISCONTINUED (statuses match). NEGATIVE if PMF status is ACTIVE (retailer dropped an active product — lost sales)." },
+  { code: "H", channelName: "MAKRO (MAIN)", classification: "POSITIVE", description: "Harmonized", notes: "Product harmonized to a new article number. Expected behaviour." },
+  { code: "M", channelName: "MAKRO (MAIN)", classification: "NEGATIVE", description: "Markdown", notes: "Product on markdown — orders blocked. Needs attention if product is still ACTIVE in PMF." },
+  { code: "N", channelName: "MAKRO (MAIN)", classification: "NEGATIVE", description: "Not Replenished", notes: "Replenishment stopped. NEGATIVE if PMF status is ACTIVE (should be replenishing). Check with retailer buyer." },
+  { code: "R", channelName: "MAKRO (MAIN)", classification: "UNCLASSIFIED", description: "Customer Orders", notes: "Customer order only — not regular replenishment. Context-dependent." },
+  { code: "S", channelName: "MAKRO (MAIN)", classification: "NEGATIVE", description: "Suspended", notes: "Product suspended at retailer. NEGATIVE if PMF status is ACTIVE. May indicate compliance/quality issue." },
+  { code: "U", channelName: "MAKRO (MAIN)", classification: "POSITIVE", description: "To be Harmonized", notes: "Pending harmonization to new article. Expected transitional status." },
+  { code: "V", channelName: "MAKRO (MAIN)", classification: "POSITIVE", description: "Vendor Discontinuation", notes: "Vendor discontinued this product. POSITIVE if PMF also DISCONTINUED. NEGATIVE if PMF still ACTIVE (supplier ended it but client has not updated PMF)." },
+  { code: "X", channelName: "MAKRO (MAIN)", classification: "POSITIVE", description: "Product Recall", notes: "Product recalled — blocking is correct. Verify recall is acknowledged internally." },
 ];
 
 const MASSBUILD: SeedEntry[] = [

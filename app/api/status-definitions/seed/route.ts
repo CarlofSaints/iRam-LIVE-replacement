@@ -52,15 +52,17 @@ export async function POST(req: NextRequest) {
       else updated++;
     }
 
-    // Build resolution map for diagnostics
-    const resolved: Record<string, string> = {};
-    for (const [name, id] of nameToId.entries()) {
-      resolved[name] = id;
+    // Clean up orphaned statuses whose channelId doesn't match any real channel
+    const validIds = new Set(nameToId.values());
+    const allStatuses = await getStatusDefinitions();
+    const clean = allStatuses.filter((s) => validIds.has(s.channelId));
+    if (clean.length < allStatuses.length) {
+      const { writeJson } = await import("@/lib/blob");
+      await writeJson("status-definitions.json", clean);
     }
 
-    const total = await getStatusDefinitions();
     return Response.json(
-      { success: true, created, updated, skipped, total: total.length, channelResolution: resolved },
+      { success: true, created, updated, skipped, total: clean.length },
       { headers: noCacheHeaders() },
     );
   } catch (err) {
