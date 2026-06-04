@@ -4,7 +4,7 @@ import { requirePermission, handleAuthError } from "@/lib/auth";
 import { getSalesLedger, getSalesLedgerMeta } from "@/lib/salesData";
 import { enrichLedger } from "@/lib/enrichment";
 import { getReportConfig } from "@/lib/reportConfig";
-import { getStatusesByChannel } from "@/lib/statusData";
+import { getStatusDefinitions } from "@/lib/statusData";
 import { computeVitalSigns, getVitalSignsColumnOrder } from "@/lib/vitalSigns";
 import { addLog } from "@/lib/activityLog";
 
@@ -16,45 +16,75 @@ export async function GET(req: NextRequest) {
 
     const url = new URL(req.url);
     const clientId = url.searchParams.get("clientId");
-    const channelId = url.searchParams.get("channelId");
+    const channelIdsParam = url.searchParams.get("channelIds"); // comma-separated
 
-    if (!clientId || !channelId) {
+    if (!clientId || !channelIdsParam) {
       return Response.json(
-        { error: "clientId and channelId are required" },
+        { error: "clientId and channelIds are required" },
         { status: 400 }
       );
     }
 
-    // 1. Load sales ledger + meta
-    const [ledgerRows, meta] = await Promise.all([
-      getSalesLedger(clientId, channelId),
-      getSalesLedgerMeta(clientId, channelId),
-    ]);
-
-    if (ledgerRows.length === 0 || !meta) {
+    const channelIds = channelIdsParam.split(",").map((s) => s.trim()).filter(Boolean);
+    if (channelIds.length === 0) {
       return Response.json(
-        { error: "No sales data found for this client/channel" },
+        { error: "At least one channelId is required" },
+        { status: 400 }
+      );
+    }
+
+    // 1. Load and merge sales ledgers from all selected channels
+    const ledgerResults = await Promise.all(
+      channelIds.map(async (chId) => {
+        const [rows, meta] = await Promise.all([
+          getSalesLedger(clientId, chId),
+          getSalesLedgerMeta(clientId, chId),
+        ]);
+        return { rows, meta, channelId: chId };
+      })
+    );
+
+    const allRows: Record<string, unknown>[] = [];
+    const allDateCols = new Set<string>();
+    const channelNames: string[] = [];
+    let clientName = "";
+
+    for (const { rows, meta } of ledgerResults) {
+      if (rows.length > 0) allRows.push(...rows);
+      if (meta) {
+        for (const dc of meta.dateColumns ?? []) allDateCols.add(dc);
+        if (meta.channelName) channelNames.push(meta.channelName);
+        if (meta.clientName) clientName = meta.clientName;
+      }
+    }
+
+    if (allRows.length === 0) {
+      return Response.json(
+        { error: "No sales data found for the selected channels" },
         { status: 404 }
       );
     }
 
-    const dateColumns = meta.dateColumns ?? [];
+    const dateColumns = Array.from(allDateCols);
 
     // 2. Enrich rows with PMF + store dimensions
-    const enriched = await enrichLedger(ledgerRows, clientId);
+    const enriched = await enrichLedger(allRows, clientId);
 
-    // 3. Load report config (DSC brackets)
+    // 3. Load report config (DSC brackets + OTO multipliers)
     const config = await getReportConfig(clientId);
 
-    // 4. Load status definitions for OTO calculation
-    const statusDefs = await getStatusesByChannel(channelId);
+    // 4. Load all status definitions (covers all channels)
+    const allStatusDefs = await getStatusDefinitions();
+    const relevantStatusDefs = allStatusDefs.filter((s) =>
+      channelIds.includes(s.channelId)
+    );
 
     // 5. Compute vital signs
     const vitalRows = computeVitalSigns(
       enriched.rows,
       config.dscBrackets,
       dateColumns,
-      statusDefs,
+      relevantStatusDefs,
       config.otoMultipliers
     );
 
@@ -88,16 +118,20 @@ export async function GET(req: NextRequest) {
     const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
 
     // 7. Log activity
+    const channelLabel = channelNames.join(", ") || channelIds.join(", ");
     addLog({
       userId: session.userId,
       userName: session.name,
       action: "Downloaded Vital Signs report",
-      details: `Client: ${meta.clientName}, Channel: ${meta.channelName}, ${vitalRows.length} rows`,
+      details: `Client: ${clientName}, Channels: ${channelLabel}, ${vitalRows.length} rows`,
       status: "success",
     }).catch(() => {});
 
     // 8. Return as downloadable xlsx
-    const fileName = `Vital_Signs_${meta.clientName}_${meta.channelName}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    const channelSlug = channelNames.length <= 2
+      ? channelNames.join("_")
+      : `${channelNames.length}_channels`;
+    const fileName = `Vital_Signs_${clientName}_${channelSlug}_${new Date().toISOString().slice(0, 10)}.xlsx`;
 
     return new Response(buf, {
       headers: {

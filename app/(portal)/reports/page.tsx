@@ -1,31 +1,19 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { authFetch, useAuth } from "@/lib/useAuth";
+import { authFetch } from "@/lib/useAuth";
 import type { Client, Channel, SalesLedgerMeta } from "@/lib/types";
-import type { ReportConfig } from "@/lib/reportConfig";
 
 export default function ReportsPage() {
-  const { user } = useAuth();
-  const isAdmin =
-    user?.role === "super_admin" || user?.role === "admin";
-
   const [clients, setClients] = useState<Client[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [clientId, setClientId] = useState("");
-  const [channelId, setChannelId] = useState("");
+  const [mainChannelId, setMainChannelId] = useState("");
+  const [selectedSubIds, setSelectedSubIds] = useState<string[]>([]);
   const [ledgers, setLedgers] = useState<SalesLedgerMeta[]>([]);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [toast, setToast] = useState("");
-
-  // Report settings (admin only)
-  const [showSettings, setShowSettings] = useState(false);
-  const [reportConfig, setReportConfig] = useState<ReportConfig | null>(null);
-  const [oosThreshold, setOosThreshold] = useState(2);
-  const [alertThreshold, setAlertThreshold] = useState(300);
-  const [spUrl, setSpUrl] = useState("");
-  const [settingsSaving, setSettingsSaving] = useState(false);
 
   // Load clients + channels
   useEffect(() => {
@@ -42,62 +30,95 @@ export default function ReportsPage() {
     })();
   }, []);
 
-  // When client changes, load ledgers + report config
+  // When client changes, load ledgers
   useEffect(() => {
     if (!clientId) {
       setLedgers([]);
       setSelectedClient(null);
-      setReportConfig(null);
+      setMainChannelId("");
+      setSelectedSubIds([]);
       return;
     }
     const client = clients.find((c) => c.id === clientId) ?? null;
     setSelectedClient(client);
-    setChannelId("");
+    setMainChannelId("");
+    setSelectedSubIds([]);
 
     (async () => {
       const res = await authFetch(`/api/sales?clientId=${clientId}`);
       if (res.ok) setLedgers(await res.json());
       else setLedgers([]);
-
-      // Load report config
-      const cfgRes = await authFetch(
-        `/api/reports/config?clientId=${clientId}`
-      );
-      if (cfgRes.ok) {
-        const cfg: ReportConfig = await cfgRes.json();
-        setReportConfig(cfg);
-        setOosThreshold(cfg.dscBrackets.oosThreshold);
-        setAlertThreshold(cfg.dscBrackets.alertThreshold);
-        setSpUrl(cfg.spUrls?.vital_signs ?? "");
-      }
     })();
   }, [clientId, clients]);
 
-  // Client's main channels
-  const clientChannels = selectedClient
-    ? channels.filter((ch) => selectedClient.channelIds.includes(ch.id))
+  // When main channel changes, reset sub-channel selection
+  useEffect(() => {
+    setSelectedSubIds([]);
+  }, [mainChannelId]);
+
+  // Derive main channels assigned to the client
+  const clientMainChannels = selectedClient
+    ? channels.filter(
+        (ch) =>
+          !ch.parentId && selectedClient.channelIds.includes(ch.id)
+      )
     : [];
 
+  // Derive sub-channels under the selected main channel
+  const subChannels = mainChannelId
+    ? channels.filter((ch) => ch.parentId === mainChannelId)
+    : [];
+
+  // If a main channel has no sub-channels, the ledger uses the main channel ID directly
+  const hasSubChannels = subChannels.length > 0;
+
+  // The effective channel IDs for the report
+  const effectiveChannelIds = hasSubChannels
+    ? selectedSubIds
+    : mainChannelId
+      ? [mainChannelId]
+      : [];
+
   // Data requirement checks
-  const hasLedger = channelId
-    ? ledgers.some((l) => l.channelId === channelId && l.totalRows > 0)
-    : false;
+  const hasLedger =
+    effectiveChannelIds.length > 0 &&
+    effectiveChannelIds.some((chId) =>
+      ledgers.some((l) => l.channelId === chId && l.totalRows > 0)
+    );
   const hasPmf = !!selectedClient?.controlFiles?.pmf;
   const hasLinks = !!selectedClient?.controlFiles?.links;
 
-  const ledgerMeta = channelId
-    ? ledgers.find((l) => l.channelId === channelId)
-    : null;
+  // Aggregate ledger row count for selected channels
+  const selectedLedgerRows = effectiveChannelIds.reduce((sum, chId) => {
+    const l = ledgers.find((m) => m.channelId === chId);
+    return sum + (l?.totalRows ?? 0);
+  }, 0);
+
+  function toggleSubChannel(id: string) {
+    setSelectedSubIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  }
+
+  function selectAllSubs() {
+    setSelectedSubIds(subChannels.map((ch) => ch.id));
+  }
+
+  function clearAllSubs() {
+    setSelectedSubIds([]);
+  }
 
   async function downloadVitalSigns() {
-    if (!clientId || !channelId) return;
+    if (!clientId || effectiveChannelIds.length === 0) return;
     setDownloading(true);
     try {
       const res = await authFetch(
-        `/api/reports/vital-signs?clientId=${clientId}&channelId=${channelId}`
+        `/api/reports/vital-signs?clientId=${clientId}&channelIds=${effectiveChannelIds.join(",")}`
       );
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: "Download failed" }));
+        const err = await res
+          .json()
+          .catch(() => ({ error: "Download failed" }));
         setToast(err.error ?? "Download failed");
         setTimeout(() => setToast(""), 4000);
         setDownloading(false);
@@ -126,28 +147,6 @@ export default function ReportsPage() {
     setDownloading(false);
   }
 
-  async function saveSettings() {
-    if (!clientId) return;
-    setSettingsSaving(true);
-    const config: ReportConfig = {
-      dscBrackets: { oosThreshold, alertThreshold },
-      otoMultipliers: reportConfig?.otoMultipliers ?? {},
-      spUrls: { ...(reportConfig?.spUrls ?? {}), vital_signs: spUrl },
-    };
-    const res = await authFetch("/api/reports/config", {
-      method: "PUT",
-      body: JSON.stringify({ clientId, config }),
-    });
-    if (res.ok) {
-      setReportConfig(config);
-      setToast("Settings saved");
-    } else {
-      setToast("Failed to save settings");
-    }
-    setTimeout(() => setToast(""), 3000);
-    setSettingsSaving(false);
-  }
-
   return (
     <div className="p-8">
       <h1 className="mb-6 text-2xl font-bold text-[var(--color-text)]">
@@ -160,43 +159,101 @@ export default function ReportsPage() {
         </div>
       )}
 
-      {/* Client + Channel selectors */}
-      <div className="mb-6 grid grid-cols-2 gap-4">
-        <div>
-          <label className="mb-1 block text-sm font-medium text-[var(--color-text)]">
-            Client
-          </label>
-          <select
-            value={clientId}
-            onChange={(e) => setClientId(e.target.value)}
-            className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm"
-          >
-            <option value="">Select a client</option>
-            {clients.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
+      {/* Filters */}
+      <div className="mb-6 space-y-4">
+        {/* Row 1: Client + Main Channel */}
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="mb-1 block text-sm font-medium text-[var(--color-text)]">
+              Client
+            </label>
+            <select
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+              className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm"
+            >
+              <option value="">Select a client</option>
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-[var(--color-text)]">
+              Main Channel
+            </label>
+            <select
+              value={mainChannelId}
+              onChange={(e) => setMainChannelId(e.target.value)}
+              disabled={!clientId}
+              className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm disabled:opacity-50"
+            >
+              <option value="">Select a main channel</option>
+              {clientMainChannels.map((ch) => (
+                <option key={ch.id} value={ch.id}>
+                  {ch.name}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
-        <div>
-          <label className="mb-1 block text-sm font-medium text-[var(--color-text)]">
-            Channel
-          </label>
-          <select
-            value={channelId}
-            onChange={(e) => setChannelId(e.target.value)}
-            disabled={!clientId}
-            className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm disabled:opacity-50"
-          >
-            <option value="">Select a channel</option>
-            {clientChannels.map((ch) => (
-              <option key={ch.id} value={ch.id}>
-                {ch.name}
-              </option>
-            ))}
-          </select>
-        </div>
+
+        {/* Row 2: Sub Channel checkboxes */}
+        {mainChannelId && hasSubChannels && (
+          <div>
+            <div className="mb-2 flex items-center justify-between">
+              <label className="text-sm font-medium text-[var(--color-text)]">
+                Sub Channels
+              </label>
+              <div className="flex gap-2">
+                <button
+                  onClick={selectAllSubs}
+                  className="text-xs font-medium text-[var(--color-primary)] hover:underline"
+                >
+                  Select All
+                </button>
+                <span className="text-xs text-[var(--color-text-muted)]">|</span>
+                <button
+                  onClick={clearAllSubs}
+                  className="text-xs font-medium text-[var(--color-text-muted)] hover:underline"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {subChannels.map((ch) => {
+                const checked = selectedSubIds.includes(ch.id);
+                const hasData = ledgers.some(
+                  (l) => l.channelId === ch.id && l.totalRows > 0
+                );
+                return (
+                  <label
+                    key={ch.id}
+                    className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors ${
+                      checked
+                        ? "border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)]"
+                        : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-zinc-400"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleSubChannel(ch.id)}
+                      className="accent-[var(--color-primary)]"
+                    />
+                    {ch.name}
+                    {hasData && (
+                      <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-green-500" />
+                    )}
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Vital Signs Report Card */}
@@ -213,7 +270,12 @@ export default function ReportsPage() {
           </div>
           <button
             onClick={downloadVitalSigns}
-            disabled={downloading || !clientId || !channelId || !hasLedger}
+            disabled={
+              downloading ||
+              !clientId ||
+              effectiveChannelIds.length === 0 ||
+              !hasLedger
+            }
             className="rounded-lg bg-[var(--color-primary)] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)] disabled:opacity-50"
           >
             {downloading ? "Generating..." : "Download Excel"}
@@ -226,8 +288,8 @@ export default function ReportsPage() {
             label="Sales Ledger"
             met={hasLedger}
             detail={
-              ledgerMeta
-                ? `${ledgerMeta.totalRows} rows`
+              selectedLedgerRows > 0
+                ? `${selectedLedgerRows} rows`
                 : "No data"
             }
           />
@@ -253,100 +315,17 @@ export default function ReportsPage() {
             Select a client and channel to generate the report.
           </p>
         )}
-        {clientId && !channelId && (
+        {clientId && !mainChannelId && (
           <p className="mt-4 text-sm text-[var(--color-text-muted)]">
-            Select a channel to continue.
+            Select a main channel to continue.
+          </p>
+        )}
+        {mainChannelId && hasSubChannels && selectedSubIds.length === 0 && (
+          <p className="mt-4 text-sm text-[var(--color-text-muted)]">
+            Select at least one sub channel.
           </p>
         )}
       </div>
-
-      {/* Report Settings (admin only) */}
-      {isAdmin && clientId && (
-        <div className="mt-6">
-          <button
-            onClick={() => setShowSettings(!showSettings)}
-            className="flex items-center gap-2 text-sm font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              className={`transition-transform ${showSettings ? "rotate-180" : ""}`}
-            >
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-            Report Settings
-          </button>
-
-          {showSettings && (
-            <div className="mt-3 rounded-xl border border-[var(--color-border)] bg-white p-6">
-              <div className="mb-6">
-                <h3 className="mb-3 text-sm font-semibold text-[var(--color-text)]">
-                  DSC Brackets
-                </h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="mb-1 block text-xs font-medium text-[var(--color-text-muted)]">
-                      OOS Threshold (below = &quot;Out of Stock&quot;)
-                    </label>
-                    <input
-                      type="number"
-                      value={oosThreshold}
-                      onChange={(e) =>
-                        setOosThreshold(Number(e.target.value))
-                      }
-                      className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-xs font-medium text-[var(--color-text-muted)]">
-                      Alert Threshold (at/above = &quot;ALERT&quot;)
-                    </label>
-                    <input
-                      type="number"
-                      value={alertThreshold}
-                      onChange={(e) =>
-                        setAlertThreshold(Number(e.target.value))
-                      }
-                      className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="mb-6">
-                <h3 className="mb-3 text-sm font-semibold text-[var(--color-text)]">
-                  SharePoint Upload URLs
-                </h3>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-[var(--color-text-muted)]">
-                    Vital Signs SP Folder URL
-                  </label>
-                  <input
-                    type="text"
-                    value={spUrl}
-                    onChange={(e) => setSpUrl(e.target.value)}
-                    placeholder="https://..."
-                    className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm"
-                  />
-                </div>
-              </div>
-
-              <button
-                onClick={saveSettings}
-                disabled={settingsSaving}
-                className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)] disabled:opacity-50"
-              >
-                {settingsSaving ? "Saving..." : "Save Settings"}
-              </button>
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }
@@ -363,9 +342,7 @@ function RequirementBadge({
   return (
     <span
       className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${
-        met
-          ? "bg-green-50 text-green-700"
-          : "bg-amber-50 text-amber-700"
+        met ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"
       }`}
     >
       <span
