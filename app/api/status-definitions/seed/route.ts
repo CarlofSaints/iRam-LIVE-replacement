@@ -1,11 +1,12 @@
 import { NextRequest } from "next/server";
 import { upsertStatus, getStatusDefinitions } from "@/lib/statusData";
+import { getChannels } from "@/lib/channelData";
 import { noCacheHeaders } from "@/lib/auth";
 import type { StatusClassification } from "@/lib/types";
 
 interface SeedEntry {
   code: string;
-  channelId: string;
+  channelName: string;  // resolved to actual channelId at runtime
   classification: StatusClassification;
   description: string;
   notes?: string;
@@ -23,12 +24,26 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: "statuses array is required" }, { status: 400, headers: noCacheHeaders() });
     }
 
+    // Resolve channel names to actual IDs
+    const channels = await getChannels();
+    const nameToId = new Map<string, string>();
+    for (const ch of channels) {
+      nameToId.set(ch.name.toUpperCase(), ch.id);
+    }
+
     let created = 0;
     let updated = 0;
+    const skipped: string[] = [];
+
     for (const s of statuses) {
+      const channelId = nameToId.get(s.channelName.toUpperCase());
+      if (!channelId) {
+        skipped.push(`${s.code} (channel "${s.channelName}" not found)`);
+        continue;
+      }
       const { isNew } = await upsertStatus({
         code: s.code,
-        channelId: s.channelId,
+        channelId,
         classification: s.classification,
         description: s.description,
         notes: s.notes,
@@ -39,7 +54,7 @@ export async function POST(req: NextRequest) {
 
     const total = await getStatusDefinitions();
     return Response.json(
-      { success: true, created, updated, total: total.length },
+      { success: true, created, updated, skipped, total: total.length },
       { headers: noCacheHeaders() },
     );
   } catch (err) {
