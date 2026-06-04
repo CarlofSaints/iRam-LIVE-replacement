@@ -216,6 +216,9 @@ export interface UploadMeta {
   period: string;
   rowCount: number;
   dateColumns: string[];
+  reportYear?: number;
+  reportMonth?: number;
+  reportWeek?: number;
   status: "processed" | "error";
   errorMessage?: string;
 }
@@ -232,6 +235,9 @@ export interface SalesLedgerMeta {
   dateColumns: string[]; // normalized MM-YYYY format
   mergedUploadIds: string[];
   lastMergedAt: string; // ISO timestamp
+  reportYear?: number;
+  reportMonth?: number;
+  reportWeek?: number;
 }
 
 // ── Product Master ──

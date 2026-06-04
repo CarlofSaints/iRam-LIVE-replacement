@@ -36,6 +36,9 @@ export async function POST(req: NextRequest) {
     const clientId = formData.get("clientId") as string | null;
     const channelId = formData.get("channelId") as string | null;
     const fileType = formData.get("fileType") as FileType | null;
+    const reportYear = formData.get("reportYear") ? Number(formData.get("reportYear")) : undefined;
+    const reportMonth = formData.get("reportMonth") ? Number(formData.get("reportMonth")) : undefined;
+    const reportWeek = formData.get("reportWeek") ? Number(formData.get("reportWeek")) : undefined;
 
     if (!file || !clientId || !channelId || !fileType) {
       return Response.json({ error: "File, clientId, channelId, and fileType are required" }, { status: 400, headers: noCacheHeaders() });
@@ -181,6 +184,9 @@ export async function POST(req: NextRequest) {
           period: result.dateColumns.join(", "),
           rowCount: result.totalRows,
           dateColumns: result.dateColumns,
+          reportYear,
+          reportMonth,
+          reportWeek,
           status: "processed",
         },
         result.rows
@@ -196,6 +202,9 @@ export async function POST(req: NextRequest) {
         rows: result.rows,
         dateColumns: result.dateColumns,
         uploadId: upload.id,
+        reportYear,
+        reportMonth,
+        reportWeek,
       });
 
       await addLog({

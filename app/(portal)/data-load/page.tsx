@@ -16,6 +16,9 @@ export default function DataLoadPage() {
   const [clientId, setClientId] = useState("");
   const [channelId, setChannelId] = useState("");
   const [fileType, setFileType] = useState<FileType>("dispo");
+  const [reportYear, setReportYear] = useState(new Date().getFullYear());
+  const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
+  const [reportWeek, setReportWeek] = useState(Math.ceil(new Date().getDate() / 7));
   const [uploading, setUploading] = useState(false);
   const [result, setResult] = useState<{
     ok: boolean;
@@ -63,6 +66,9 @@ export default function DataLoadPage() {
     formData.append("clientId", clientId);
     formData.append("channelId", channelId);
     formData.append("fileType", fileType);
+    formData.append("reportYear", String(reportYear));
+    formData.append("reportMonth", String(reportMonth));
+    formData.append("reportWeek", String(reportWeek));
 
     try {
       const res = await authFetch("/api/uploads", {
@@ -164,6 +170,38 @@ export default function DataLoadPage() {
                 </button>
               </div>
             </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-[var(--color-text)]">Report Period</label>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="mb-1 block text-xs text-[var(--color-text-muted)]">Year</label>
+                  <select value={reportYear} onChange={(e) => setReportYear(Number(e.target.value))}
+                    className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm">
+                    {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - 2 + i).map((y) => (
+                      <option key={y} value={y}>{y}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-[var(--color-text-muted)]">Month</label>
+                  <select value={reportMonth} onChange={(e) => setReportMonth(Number(e.target.value))}
+                    className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm">
+                    {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                      <option key={m} value={m}>{String(m).padStart(2, "0")} - {["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][m-1]}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-[var(--color-text-muted)]">Week</label>
+                  <select value={reportWeek} onChange={(e) => setReportWeek(Number(e.target.value))}
+                    className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm">
+                    {[1, 2, 3, 4, 5].map((w) => (
+                      <option key={w} value={w}>Week {w}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
             <button onClick={() => setStep("upload")} disabled={!clientId || !channelId}
               className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)] disabled:opacity-50">
               Next
@@ -178,7 +216,8 @@ export default function DataLoadPage() {
             <div className="text-sm">
               <strong>Client:</strong> {selectedClient?.name} &middot;{" "}
               <strong>Channel:</strong> {channels.find((c) => c.id === channelId)?.name} &middot;{" "}
-              <strong>Type:</strong> {fileType === "dispo" ? "DISPO" : "Aged Stock"}
+              <strong>Type:</strong> {fileType === "dispo" ? "DISPO" : "Aged Stock"} &middot;{" "}
+              <strong>Period:</strong> {reportYear}{String(reportMonth).padStart(2, "0")} Wk{reportWeek}
             </div>
           </div>
           <UploadZone

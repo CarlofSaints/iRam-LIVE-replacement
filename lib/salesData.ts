@@ -127,6 +127,9 @@ export interface MergeDispoParams {
   rows: Record<string, unknown>[];
   dateColumns: string[]; // raw date column names from the upload
   uploadId: string;
+  reportYear?: number;
+  reportMonth?: number;
+  reportWeek?: number;
 }
 
 export interface MergeResult {
@@ -145,6 +148,9 @@ export async function mergeDispo(params: MergeDispoParams): Promise<MergeResult>
     rows,
     dateColumns,
     uploadId,
+    reportYear,
+    reportMonth,
+    reportWeek,
   } = params;
 
   // Load existing ledger (or start empty)
@@ -268,6 +274,9 @@ export async function mergeDispo(params: MergeDispoParams): Promise<MergeResult>
     dateColumns: Array.from(allDateCols).sort(),
     mergedUploadIds,
     lastMergedAt: new Date().toISOString(),
+    reportYear: reportYear ?? existingMeta?.reportYear,
+    reportMonth: reportMonth ?? existingMeta?.reportMonth,
+    reportWeek: reportWeek ?? existingMeta?.reportWeek,
   };
 
   await writeJson(metaKey(clientId, channelId), meta);

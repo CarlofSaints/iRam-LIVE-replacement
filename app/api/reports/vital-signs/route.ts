@@ -132,11 +132,13 @@ export async function GET(req: NextRequest) {
     // Naming: Vital Signs - CLIENT NAME - VENDOR - YYYYMMWkN
     const client = await getClientById(clientId);
     const vendorNum = client?.vendorNumbers?.[0] ?? "";
-    const now = new Date();
-    const yyyy = now.getFullYear();
-    const mm = String(now.getMonth() + 1).padStart(2, "0");
-    const weekOfMonth = Math.ceil(now.getDate() / 7);
-    const datePart = `${yyyy}${mm}Wk${weekOfMonth}`;
+
+    // Use report period from the most recent ledger meta, fall back to current date
+    const latestMeta = ledgerResults.find(({ meta }) => meta?.reportYear)?.meta;
+    const rYear = latestMeta?.reportYear ?? new Date().getFullYear();
+    const rMonth = latestMeta?.reportMonth ?? (new Date().getMonth() + 1);
+    const rWeek = latestMeta?.reportWeek ?? Math.ceil(new Date().getDate() / 7);
+    const datePart = `${rYear}${String(rMonth).padStart(2, "0")}Wk${rWeek}`;
     const fileName = `Vital Signs - ${clientName} - ${vendorNum} - ${datePart}.xlsx`;
 
     return new Response(buf, {
