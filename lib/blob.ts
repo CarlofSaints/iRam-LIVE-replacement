@@ -40,7 +40,7 @@ export async function readJson<T>(key: string, fallback: T): Promise<T> {
 
   // Use the SDK get() to read blob by pathname (bypasses list + URL fetch)
   try {
-    const result = await get(fullKey, { access: "public" });
+    const result = await get(fullKey, { access: "public", useCache: false });
     if (!result || result.statusCode !== 200) return fallback;
     const text = await new Response(result.stream).text();
     const parsed = JSON.parse(text) as T;
