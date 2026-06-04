@@ -2,9 +2,10 @@
 
 import React, { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { authFetch } from "@/lib/useAuth";
+import { authFetch, useAuth } from "@/lib/useAuth";
 import UploadZone from "@/components/UploadZone";
 import type { Client, Channel, CAM, ControlFileType, UploadMeta, ProductFieldMapping, LinksFieldMapping } from "@/lib/types";
+import type { ReportConfig } from "@/lib/reportConfig";
 
 const CF_LABELS: Record<ControlFileType, string> = {
   pmf: "PMF (Product Management File)",
@@ -17,6 +18,8 @@ const CF_TYPES: ControlFileType[] = ["pmf", "links", "ranging", "custom_sites", 
 
 export default function ClientDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "super_admin" || user?.role === "admin";
   const [client, setClient] = useState<Client | null>(null);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [cams, setCams] = useState<CAM[]>([]);
@@ -46,6 +49,14 @@ export default function ClientDetailPage() {
   const [linkCount, setLinkCount] = useState<number | null>(null);
   const [linksMappingLoading, setLinksMappingLoading] = useState(false);
   const [linksMappingSaving, setLinksMappingSaving] = useState(false);
+
+  // Report config state
+  const [rcOos, setRcOos] = useState(2);
+  const [rcAlert, setRcAlert] = useState(300);
+  const [rcOtoMultipliers, setRcOtoMultipliers] = useState<Record<string, number>>({});
+  const [rcCategories, setRcCategories] = useState<string[]>([]);
+  const [rcSpUrl, setRcSpUrl] = useState("");
+  const [rcSaving, setRcSaving] = useState(false);
 
   async function load() {
     const t = Date.now();
@@ -218,6 +229,52 @@ export default function ClientDetailPage() {
       setTimeout(() => setToast(""), 3000);
     }
     setLinksMappingSaving(false);
+  }
+
+  // Load report config + categories from product master
+  useEffect(() => {
+    if (!id || !isAdmin) return;
+    (async () => {
+      const [cfgRes, pmRes] = await Promise.all([
+        authFetch(`/api/reports/config?clientId=${id}`),
+        authFetch(`/api/clients/${id}/product-master`),
+      ]);
+      if (cfgRes.ok) {
+        const cfg: ReportConfig = await cfgRes.json();
+        setRcOos(cfg.dscBrackets.oosThreshold);
+        setRcAlert(cfg.dscBrackets.alertThreshold);
+        setRcOtoMultipliers(cfg.otoMultipliers ?? {});
+        setRcSpUrl(cfg.spUrls?.vital_signs ?? "");
+      }
+      if (pmRes.ok) {
+        const pmData = await pmRes.json();
+        const products: { category?: string }[] = pmData.products ?? [];
+        const cats = [...new Set(
+          products.map((p) => p.category?.trim()).filter((c): c is string => !!c)
+        )].sort();
+        setRcCategories(cats);
+      }
+    })();
+  }, [id, isAdmin]);
+
+  async function saveReportConfig() {
+    setRcSaving(true);
+    const config: ReportConfig = {
+      dscBrackets: { oosThreshold: rcOos, alertThreshold: rcAlert },
+      otoMultipliers: rcOtoMultipliers,
+      spUrls: { vital_signs: rcSpUrl },
+    };
+    const res = await authFetch("/api/reports/config", {
+      method: "PUT",
+      body: JSON.stringify({ clientId: id, config }),
+    });
+    if (res.ok) {
+      setToast("Report settings saved");
+    } else {
+      setToast("Failed to save report settings");
+    }
+    setTimeout(() => setToast(""), 3000);
+    setRcSaving(false);
   }
 
   async function handleControlFileDelete(type: ControlFileType) {
@@ -486,6 +543,7 @@ export default function ClientDetailPage() {
                             { field: "clientProductId" as const, label: "Client Product ID *", required: true },
                             { field: "brand" as const, label: "Brand", required: false },
                             { field: "category" as const, label: "Category", required: false },
+                            { field: "subCategory" as const, label: "Sub Category", required: false },
                             { field: "status" as const, label: "Status", required: false },
                             { field: "description" as const, label: "Description", required: false },
                             { field: "barcode" as const, label: "Barcode / EAN", required: false },
@@ -635,6 +693,80 @@ export default function ClientDetailPage() {
               </tbody>
             </table>
           )}
+        </div>
+      )}
+
+      {/* Report Settings — admin only */}
+      {isAdmin && (
+        <div className="mt-8 rounded-xl border border-[var(--color-border)] bg-white p-6">
+          <h3 className="mb-4 text-sm font-semibold text-[var(--color-text)]">Report Settings</h3>
+          <div className="mb-5">
+            <span className="mb-2 block text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]">DSC Brackets</span>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="mb-1 block text-xs text-[var(--color-text-muted)]">OOS Threshold (below = &quot;Out of Stock&quot;)</label>
+                <input type="number" value={rcOos} onChange={(e) => setRcOos(Number(e.target.value))}
+                  className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm" />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-[var(--color-text-muted)]">Alert Threshold (at/above = &quot;ALERT&quot;)</label>
+                <input type="number" value={rcAlert} onChange={(e) => setRcAlert(Number(e.target.value))}
+                  className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm" />
+              </div>
+            </div>
+          </div>
+          <div className="mb-5">
+            <span className="mb-2 block text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]">OTO Multipliers (per Category)</span>
+            <p className="mb-3 text-xs text-[var(--color-text-muted)]">
+              OTO Value = multiplier &times; RP. Default is 1 if not set.
+            </p>
+            {rcCategories.length === 0 ? (
+              <p className="text-xs text-[var(--color-text-muted)]">No categories found — upload and map a PMF file first.</p>
+            ) : (
+              <div className="grid grid-cols-3 gap-3">
+                {rcCategories.map((cat) => {
+                  const key = cat.toLowerCase();
+                  return (
+                    <div key={cat} className="flex items-center gap-2">
+                      <label className="min-w-0 flex-1 truncate text-xs text-[var(--color-text)]" title={cat}>{cat}</label>
+                      <input
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={rcOtoMultipliers[key] ?? ""}
+                        placeholder="1"
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setRcOtoMultipliers((prev) => {
+                            const next = { ...prev };
+                            if (val === "" || val === "0") {
+                              delete next[key];
+                            } else {
+                              next[key] = Number(val);
+                            }
+                            return next;
+                          });
+                        }}
+                        className="w-20 rounded-lg border border-[var(--color-border)] px-2 py-1.5 text-right text-sm"
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          <div className="mb-5">
+            <span className="mb-2 block text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]">SharePoint URLs</span>
+            <div>
+              <label className="mb-1 block text-xs text-[var(--color-text-muted)]">Vital Signs SP Folder URL</label>
+              <input type="text" value={rcSpUrl} onChange={(e) => setRcSpUrl(e.target.value)} placeholder="https://..."
+                className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm" />
+            </div>
+          </div>
+          <button onClick={saveReportConfig} disabled={rcSaving}
+            className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)] disabled:opacity-50">
+            {rcSaving ? "Saving..." : "Save Report Settings"}
+          </button>
         </div>
       )}
     </div>

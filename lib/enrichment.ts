@@ -21,7 +21,7 @@ type EnrichedRow = Record<string, unknown>;
  * Prefixed field names avoid collisions with original data.
  *
  * Product fields (from ProductMaster via LINKS join):
- *   _clientProductId, _brand, _category, _productStatus,
+ *   _clientProductId, _brand, _category, _subCategory, _productStatus,
  *   _productDescription, _barcode
  *
  * Store fields (from StoreRecord):
@@ -50,12 +50,14 @@ export function enrichLedgerRow(
     if (product) {
       enriched._brand = product.brand ?? "";
       enriched._category = product.category ?? "";
+      enriched._subCategory = product.subCategory ?? "";
       enriched._productStatus = product.status ?? "";
       enriched._productDescription = product.description ?? "";
       enriched._barcode = product.barcode ?? "";
     } else {
       enriched._brand = "";
       enriched._category = "";
+      enriched._subCategory = "";
       enriched._productStatus = "";
       enriched._productDescription = "";
       enriched._barcode = "";

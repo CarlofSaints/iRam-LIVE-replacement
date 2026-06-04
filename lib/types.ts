@@ -240,6 +240,7 @@ export interface ProductFieldMapping {
   clientProductId: string; // which PMF column = Client Product ID (global SKU key, joins to LINKS)
   brand?: string;          // which PMF column = Brand
   category?: string;       // which PMF column = Category
+  subCategory?: string;    // which PMF column = Sub Category
   status?: string;         // which PMF column = Product Status (Active/Discontinued)
   description?: string;    // which PMF column = Product Description
   barcode?: string;        // which PMF column = Barcode/EAN
@@ -249,6 +250,7 @@ export interface ProductMaster {
   clientProductId: string; // Client Product ID (global key — joins to LINKS, NOT Article)
   brand?: string;
   category?: string;
+  subCategory?: string;
   status?: string;
   description?: string;
   barcode?: string;

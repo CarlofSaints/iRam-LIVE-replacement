@@ -75,6 +75,9 @@ export async function buildProductMaster(
     if (mapping.category && row[mapping.category] !== undefined) {
       entry.category = String(row[mapping.category]).trim() || undefined;
     }
+    if (mapping.subCategory && row[mapping.subCategory] !== undefined) {
+      entry.subCategory = String(row[mapping.subCategory]).trim() || undefined;
+    }
     if (mapping.status && row[mapping.status] !== undefined) {
       entry.status = String(row[mapping.status]).trim() || undefined;
     }
@@ -130,6 +133,7 @@ export const AUTO_MATCH: Record<keyof ProductFieldMapping, string[]> = {
   ],
   brand: ["brand", "product brand", "brand name"],
   category: ["category", "product category", "cat", "product cat"],
+  subCategory: ["sub category", "product sub category", "sub cat", "subcategory"],
   status: ["status", "product status", "prod status", "active"],
   description: [
     "description",
