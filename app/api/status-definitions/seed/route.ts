@@ -52,9 +52,15 @@ export async function POST(req: NextRequest) {
       else updated++;
     }
 
+    // Build resolution map for diagnostics
+    const resolved: Record<string, string> = {};
+    for (const [name, id] of nameToId.entries()) {
+      resolved[name] = id;
+    }
+
     const total = await getStatusDefinitions();
     return Response.json(
-      { success: true, created, updated, skipped, total: total.length },
+      { success: true, created, updated, skipped, total: total.length, channelResolution: resolved },
       { headers: noCacheHeaders() },
     );
   } catch (err) {
