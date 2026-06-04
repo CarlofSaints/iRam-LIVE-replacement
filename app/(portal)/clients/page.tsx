@@ -31,7 +31,22 @@ export default function ClientsPage() {
 
   useEffect(() => { load(); }, []);
 
+  const mainChannels = channels.filter((c) => !c.parentId);
   const subChannels = channels.filter((c) => c.parentId);
+
+  /** Derive main channel names for a client from its assigned sub-channel IDs */
+  function clientMainChannelNames(client: Client): string[] {
+    return mainChannels
+      .filter(
+        (main) =>
+          client.channelIds.includes(main.id) ||
+          subChannels.some(
+            (sub) => sub.parentId === main.id && client.channelIds.includes(sub.id)
+          )
+      )
+      .map((ch) => ch.name);
+  }
+
   const filtered = clients.filter((c) =>
     c.name.toLowerCase().includes(search.toLowerCase()) ||
     c.vendorNumbers.some((v) => v.includes(search))
@@ -137,10 +152,12 @@ export default function ClientsPage() {
                     <td className="px-6 py-3 text-[var(--color-text-muted)]">{c.vendorNumbers.join(", ")}</td>
                     <td className="px-6 py-3">
                       <div className="flex flex-wrap gap-1">
-                        {c.channelIds.map((id) => {
-                          const ch = channels.find((x) => x.id === id);
-                          return <span key={id} className="rounded-full bg-blue-50 px-2 py-0.5 text-xs text-blue-700">{ch?.name ?? id}</span>;
-                        })}
+                        {clientMainChannelNames(c).map((name) => (
+                          <span key={name} className="rounded-full bg-blue-50 px-2 py-0.5 text-xs text-blue-700">{name}</span>
+                        ))}
+                        {clientMainChannelNames(c).length === 0 && (
+                          <span className="text-xs text-[var(--color-text-muted)]">—</span>
+                        )}
                       </div>
                     </td>
                     <td className="px-6 py-3 text-[var(--color-text-muted)]">{cam ? `${cam.name} ${cam.surname}` : "—"}</td>

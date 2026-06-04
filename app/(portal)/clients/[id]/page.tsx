@@ -391,18 +391,19 @@ export default function ClientDetailPage() {
             <div><span className="text-[var(--color-text-muted)]">Status</span><div className="font-medium">{client.active ? "Active" : "Inactive"}</div></div>
             <div>
               <span className="text-[var(--color-text-muted)]">Channels</span>
-              <div className="mt-1 flex flex-wrap gap-1">{client.channelIds.filter((cid) => channelIdSet.has(cid)).map((cid) => {
-                const ch = channels.find((x) => x.id === cid);
-                return <span key={cid} className="rounded-full bg-blue-50 px-2 py-0.5 text-xs text-blue-700">{ch?.name ?? cid}</span>;
-              })}
-              {client.channelIds.filter((cid) => !channelIdSet.has(cid)).length > 0 && (
-                <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-700">
-                  {client.channelIds.filter((cid) => !channelIdSet.has(cid)).length} stale — click Edit to clean up
-                </span>
-              )}
-              {client.channelIds.filter((cid) => channelIdSet.has(cid)).length === 0 && client.channelIds.filter((cid) => !channelIdSet.has(cid)).length === 0 && (
-                <span className="text-xs text-[var(--color-text-muted)]">None assigned</span>
-              )}</div>
+              <div className="mt-1 flex flex-wrap gap-1">{(() => {
+                const clientMains = mainChannels.filter(
+                  (main) =>
+                    client.channelIds.includes(main.id) ||
+                    subChannels.some(
+                      (sub) => sub.parentId === main.id && client.channelIds.includes(sub.id)
+                    )
+                );
+                if (clientMains.length === 0) return <span className="text-xs text-[var(--color-text-muted)]">None assigned</span>;
+                return clientMains.map((ch) => (
+                  <span key={ch.id} className="rounded-full bg-blue-50 px-2 py-0.5 text-xs text-blue-700">{ch.name}</span>
+                ));
+              })()}</div>
             </div>
             <div>
               <span className="text-[var(--color-text-muted)]">Linked Clients</span>
