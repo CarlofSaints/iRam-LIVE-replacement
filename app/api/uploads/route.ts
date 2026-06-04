@@ -206,6 +206,32 @@ export async function POST(req: NextRequest) {
         status: "success",
       });
 
+      // Fire-and-forget: detect new status codes
+      (async () => {
+        try {
+          const { upsertStatus, normalizeStatusCode } = await import("@/lib/statusData");
+          const seen = new Set<string>();
+          for (const row of result.rows) {
+            const raw = String(row["Status"] ?? row["PR ST"] ?? "").trim();
+            if (raw) seen.add(normalizeStatusCode(raw));
+          }
+          let newCount = 0;
+          for (const code of seen) {
+            const { isNew } = await upsertStatus({ code, channelId: mainChannelId, autoDetected: true });
+            if (isNew) newCount++;
+          }
+          if (newCount > 0) {
+            await addLog({
+              userId: session.userId,
+              userName: session.name,
+              action: "auto_detect_statuses",
+              details: `Auto-detected ${newCount} new status code(s) for ${mainChannelName}`,
+              status: "success",
+            });
+          }
+        } catch { /* never fail the upload */ }
+      })();
+
       return Response.json(
         { success: true, id: upload.id, rowCount: result.totalRows, merge },
         { headers: noCacheHeaders() },

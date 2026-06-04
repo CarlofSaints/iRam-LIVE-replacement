@@ -23,6 +23,7 @@ export const ALL_PERMISSIONS = [
   { key: "manage_clients" as const, label: "Manage Clients" },
   { key: "manage_cams" as const, label: "Manage CAMs" },
   { key: "manage_store_files" as const, label: "Manage Store Control Files" },
+  { key: "manage_statuses" as const, label: "Manage Status Definitions" },
   // Data
   { key: "upload_data" as const, label: "Upload Data" },
   { key: "manage_control_files" as const, label: "Manage Client Control Files" },
@@ -56,8 +57,8 @@ export const ROLE_DEFINITIONS: RoleDefinition[] = [
     description: "Manage clients, channels, data, and users",
     permissions: [
       "manage_users", "manage_channels", "manage_clients", "manage_cams",
-      "manage_store_files", "upload_data", "manage_control_files", "delete_uploads",
-      "view_dashboard", "view_uploads", "view_activity_log", "export_data",
+      "manage_store_files", "manage_statuses", "upload_data", "manage_control_files",
+      "delete_uploads", "view_dashboard", "view_uploads", "view_activity_log", "export_data",
     ],
   },
   {
@@ -258,6 +259,22 @@ export interface ProductMaster {
 export interface LinksFieldMapping {
   article: string;          // which LINKS column = Article (channel-specific, joins to DISPO)
   clientProductId: string;  // which LINKS column = Client Product ID (joins to PMF)
+}
+
+// ── Status Definitions ──
+
+export type StatusClassification = "POSITIVE" | "NEGATIVE" | "UNCLASSIFIED";
+
+export interface StatusDefinition {
+  id: string;
+  code: string;               // normalized: UPPERCASE, trimmed
+  channelId: string;           // main channel ID
+  classification: StatusClassification;
+  description: string;
+  notes?: string;
+  autoDetected: boolean;       // true = surfaced from DISPO upload scan
+  createdAt: string;
+  updatedAt: string;
 }
 
 // ── Activity Log ──
