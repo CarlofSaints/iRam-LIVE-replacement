@@ -38,8 +38,18 @@ export async function GET(
       rawRows.length > 0 ? Object.keys(rawRows[0]) : [];
     const autoMatched = headers.length > 0 ? autoMatchLinksHeaders(headers) : {};
 
+    // Count existing article links so the badge shows correctly on page load
+    let linkCount = 0;
+    if (mapping && mapping.article && mapping.clientProductId) {
+      for (const row of rawRows) {
+        const a = row[mapping.article];
+        const c = row[mapping.clientProductId];
+        if (a && String(a).trim() && c && String(c).trim()) linkCount++;
+      }
+    }
+
     return Response.json(
-      { mapping, headers, autoMatched },
+      { mapping, headers, autoMatched, linkCount },
       { headers: noCacheHeaders() }
     );
   } catch (err) {

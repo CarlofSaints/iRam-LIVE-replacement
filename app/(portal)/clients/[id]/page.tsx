@@ -199,6 +199,7 @@ export default function ClientDetailPage() {
         setLinksHeaders(data.headers ?? []);
         setLinksAutoMatched(data.autoMatched ?? {});
         setLinksMapping(data.mapping ?? data.autoMatched ?? {});
+        if (data.linkCount != null) setLinkCount(data.linkCount);
       } else {
         console.error("links-mapping GET failed:", res.status);
       }
