@@ -40,10 +40,17 @@ export default function DataLoadPage() {
 
   const selectedClient = clients.find((c) => c.id === clientId);
 
-  // Show main channels only, filtered to those assigned to the selected client
+  // Show main channels that have at least one sub-channel assigned to the client
+  // (client channelIds stores sub-channel IDs, not main channel IDs)
   const mainChannels = channels.filter((c) => !c.parentId);
+  const subChannels = channels.filter((c) => !!c.parentId);
   const availableChannels = selectedClient
-    ? mainChannels.filter((ch) => selectedClient.channelIds.includes(ch.id))
+    ? mainChannels.filter((main) =>
+        selectedClient.channelIds.includes(main.id) ||
+        subChannels.some(
+          (sub) => sub.parentId === main.id && selectedClient.channelIds.includes(sub.id)
+        )
+      )
     : [];
 
   async function handleUpload(file: File) {

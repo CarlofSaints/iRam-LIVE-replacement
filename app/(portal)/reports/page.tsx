@@ -56,11 +56,16 @@ export default function ReportsPage() {
     setSelectedSubIds([]);
   }, [mainChannelId]);
 
-  // Derive main channels assigned to the client
+  // Derive main channels that have at least one sub-channel assigned to the client
+  const allSubChannels = channels.filter((c) => !!c.parentId);
   const clientMainChannels = selectedClient
     ? channels.filter(
         (ch) =>
-          !ch.parentId && selectedClient.channelIds.includes(ch.id)
+          !ch.parentId &&
+          (selectedClient.channelIds.includes(ch.id) ||
+            allSubChannels.some(
+              (sub) => sub.parentId === ch.id && selectedClient.channelIds.includes(sub.id)
+            ))
       )
     : [];
 
