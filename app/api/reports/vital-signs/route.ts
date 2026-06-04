@@ -4,6 +4,7 @@ import { requirePermission, handleAuthError } from "@/lib/auth";
 import { getSalesLedger, getSalesLedgerMeta } from "@/lib/salesData";
 import { enrichLedger } from "@/lib/enrichment";
 import { getReportConfig } from "@/lib/reportConfig";
+import { getClientById } from "@/lib/clientData";
 import { getStatusDefinitions } from "@/lib/statusData";
 import { computeVitalSigns, getVitalSignsColumnOrder } from "@/lib/vitalSigns";
 import { addLog } from "@/lib/activityLog";
@@ -128,10 +129,15 @@ export async function GET(req: NextRequest) {
     }).catch(() => {});
 
     // 8. Return as downloadable xlsx
-    const channelSlug = channelNames.length <= 2
-      ? channelNames.join("_")
-      : `${channelNames.length}_channels`;
-    const fileName = `Vital_Signs_${clientName}_${channelSlug}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    // Naming: Vital Signs - CLIENT NAME - VENDOR - YYYYMMWkN
+    const client = await getClientById(clientId);
+    const vendorNum = client?.vendorNumbers?.[0] ?? "";
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, "0");
+    const weekOfMonth = Math.ceil(now.getDate() / 7);
+    const datePart = `${yyyy}${mm}Wk${weekOfMonth}`;
+    const fileName = `Vital Signs - ${clientName} - ${vendorNum} - ${datePart}.xlsx`;
 
     return new Response(buf, {
       headers: {
