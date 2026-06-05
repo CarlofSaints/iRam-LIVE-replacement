@@ -147,7 +147,7 @@ export function calcOpenToOrder(
   const soh = Number(row["SOH"] ?? 0);
   if (soh > 0) return { oto: 0, otoValue: 0 };
 
-  const statusRaw = String(row["Status"] ?? "").trim();
+  const statusRaw = String(row["Status"] ?? row["PR ST"] ?? "").trim();
   if (statusRaw !== "" && statusRaw !== "0") {
     const statusUpper = statusRaw.toUpperCase();
 
@@ -389,7 +389,7 @@ export function computeVitalSigns(
       // 18. Site Ranking
       "Site Ranking": siteRanking,
       // 19. PR ST
-      "PR ST": row["Status"] ?? "",
+      "PR ST": row["Status"] ?? row["PR ST"] ?? "",
       // 20. Selling UoM
       "Selling UoM": row["UOM"] ?? "",
       // 21-23. SOH, SOO, SIT
