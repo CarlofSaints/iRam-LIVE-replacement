@@ -61,13 +61,16 @@ export default function StatusReferencePage() {
 
   // All unique status codes across all channels (for scenario dropdown)
   const [allStatusCodes, setAllStatusCodes] = useState<string[]>([]);
+  // All unique product statuses from PMFs (for scenario condition dropdown)
+  const [productStatuses, setProductStatuses] = useState<string[]>([]);
 
-  // Load channels on mount
+  // Load channels, scenarios, and product statuses on mount
   useEffect(() => {
     (async () => {
-      const [chRes, scRes] = await Promise.all([
+      const [chRes, scRes, psRes] = await Promise.all([
         authFetch("/api/channels"),
         authFetch("/api/status-scenarios"),
+        authFetch("/api/status-scenarios/product-statuses"),
       ]);
       if (chRes.ok) {
         const all: Channel[] = await chRes.json();
@@ -76,6 +79,7 @@ export default function StatusReferencePage() {
         if (main.length > 0) setSelectedChannel(main[0].id);
       }
       if (scRes.ok) setScenarios(await scRes.json());
+      if (psRes.ok) setProductStatuses(await psRes.json());
       setLoading(false);
     })();
   }, []);
@@ -498,8 +502,9 @@ export default function StatusReferencePage() {
                     className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm"
                   >
                     <option value="">Any</option>
-                    <option value="ACTIVE">ACTIVE</option>
-                    <option value="DISCONTINUED">DISCONTINUED</option>
+                    {productStatuses.map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
                   </select>
                 </div>
                 <div>
