@@ -1,11 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { authFetch } from "@/lib/useAuth";
 import UploadZone from "@/components/UploadZone";
 import type { Client, Channel, FileType } from "@/lib/types";
 
-type Step = "select" | "upload" | "result";
+type Step = "select" | "upload" | "confirm" | "result";
+
+interface MissingArticleDetail {
+  article: string;
+  articleDesc: string;
+  vendProd: string;
+}
 
 export default function DataLoadPage() {
   const [clients, setClients] = useState<Client[]>([]);
@@ -20,13 +26,25 @@ export default function DataLoadPage() {
   const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
   const [reportWeek, setReportWeek] = useState(Math.ceil(new Date().getDate() / 7));
   const [uploading, setUploading] = useState(false);
+
+  // Keep a ref to the uploaded file so we can re-submit with force=true
+  const pendingFileRef = useRef<File | null>(null);
+
+  const [confirmData, setConfirmData] = useState<{
+    warning: string;
+    missingArticles: MissingArticleDetail[];
+    missingSites: string[];
+  } | null>(null);
+
   const [result, setResult] = useState<{
     ok: boolean;
     message: string;
     rowCount?: number;
     merge?: { inserted: number; updated: number; unchanged: number };
-    missingArticles?: string[];
-    missingSites?: string[];
+    warnings?: {
+      missingArticles: MissingArticleDetail[];
+      missingSites: string[];
+    };
   } | null>(null);
 
   async function load() {
@@ -44,7 +62,6 @@ export default function DataLoadPage() {
   const selectedClient = clients.find((c) => c.id === clientId);
 
   // Show main channels that have at least one sub-channel assigned to the client
-  // (client channelIds stores sub-channel IDs, not main channel IDs)
   const mainChannels = channels.filter((c) => !c.parentId);
   const subChannels = channels.filter((c) => !!c.parentId);
   const availableChannels = selectedClient
@@ -56,10 +73,8 @@ export default function DataLoadPage() {
       )
     : [];
 
-  async function handleUpload(file: File) {
-    if (!clientId || !channelId) return;
+  async function submitUpload(file: File, force: boolean) {
     setUploading(true);
-    setResult(null);
 
     const formData = new FormData();
     formData.append("file", file);
@@ -69,6 +84,7 @@ export default function DataLoadPage() {
     formData.append("reportYear", String(reportYear));
     formData.append("reportMonth", String(reportMonth));
     formData.append("reportWeek", String(reportWeek));
+    if (force) formData.append("force", "true");
 
     try {
       const res = await authFetch("/api/uploads", {
@@ -78,19 +94,32 @@ export default function DataLoadPage() {
         headers: {},
       });
       const data = await res.json();
-      if (res.ok) {
+
+      if (data.needsConfirmation) {
+        // Server returned validation warnings — ask the user
+        pendingFileRef.current = file;
+        setConfirmData({
+          warning: data.warning,
+          missingArticles: data.missingArticles ?? [],
+          missingSites: data.missingSites ?? [],
+        });
+        setStep("confirm");
+        setUploading(false);
+        return;
+      }
+
+      if (res.ok && data.success) {
         setResult({
           ok: true,
           message: `${data.rowCount} rows processed`,
           rowCount: data.rowCount,
           merge: data.merge,
+          warnings: data.warnings,
         });
       } else {
         setResult({
           ok: false,
           message: data.error || "Upload failed",
-          missingArticles: data.missingArticles,
-          missingSites: data.missingSites,
         });
       }
     } catch {
@@ -101,9 +130,25 @@ export default function DataLoadPage() {
     setUploading(false);
   }
 
+  function handleUpload(file: File) {
+    if (!clientId || !channelId) return;
+    setResult(null);
+    setConfirmData(null);
+    submitUpload(file, false);
+  }
+
+  async function handleForceUpload() {
+    const file = pendingFileRef.current;
+    if (!file) return;
+    setConfirmData(null);
+    await submitUpload(file, true);
+  }
+
   function reset() {
     setStep("select");
     setResult(null);
+    setConfirmData(null);
+    pendingFileRef.current = null;
   }
 
   if (loading) return <div className="p-8 text-sm text-[var(--color-text-muted)]">Loading...</div>;
@@ -119,8 +164,8 @@ export default function DataLoadPage() {
           { key: "upload", label: "2. Upload" },
           { key: "result", label: "3. Result" },
         ].map((s) => (
-          <div key={s.key} className={`flex items-center gap-2 text-sm font-medium ${step === s.key ? "text-[var(--color-primary)]" : "text-[var(--color-text-muted)]"}`}>
-            <div className={`flex h-6 w-6 items-center justify-center rounded-full text-xs ${step === s.key ? "bg-[var(--color-primary)] text-white" : "bg-zinc-200 text-zinc-500"}`}>
+          <div key={s.key} className={`flex items-center gap-2 text-sm font-medium ${step === s.key || (step === "confirm" && s.key === "result") ? "text-[var(--color-primary)]" : "text-[var(--color-text-muted)]"}`}>
+            <div className={`flex h-6 w-6 items-center justify-center rounded-full text-xs ${step === s.key || (step === "confirm" && s.key === "result") ? "bg-[var(--color-primary)] text-white" : "bg-zinc-200 text-zinc-500"}`}>
               {s.label[0]}
             </div>
             {s.label}
@@ -231,11 +276,98 @@ export default function DataLoadPage() {
         </div>
       )}
 
+      {/* ── Confirmation step — validation warnings ── */}
+      {step === "confirm" && confirmData && (
+        <div className="max-w-2xl">
+          <div className="rounded-xl border border-amber-300 bg-amber-50 p-5">
+            <div className="mb-3 text-sm font-bold text-amber-800">
+              Validation Warnings
+            </div>
+            <p className="mb-4 text-sm text-amber-700">{confirmData.warning}</p>
+
+            {/* Missing articles table */}
+            {confirmData.missingArticles.length > 0 && (
+              <div className="mb-4">
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-amber-700">
+                  Missing Articles ({confirmData.missingArticles.length})
+                </div>
+                <p className="mb-2 text-xs text-amber-600">
+                  These articles are in the DISPO but not in the LINKS file.
+                </p>
+                <div className="max-h-64 overflow-auto rounded-lg border border-amber-200 bg-white">
+                  <table className="w-full text-xs">
+                    <thead className="sticky top-0 bg-amber-100">
+                      <tr>
+                        <th className="px-3 py-1.5 text-left font-semibold text-amber-800">Article</th>
+                        <th className="px-3 py-1.5 text-left font-semibold text-amber-800">Article Description</th>
+                        <th className="px-3 py-1.5 text-left font-semibold text-amber-800">Vend Prod Code</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-amber-100">
+                      {confirmData.missingArticles.slice(0, 100).map((a, i) => (
+                        <tr key={i} className="hover:bg-amber-50/50">
+                          <td className="px-3 py-1 text-zinc-700">{a.article}</td>
+                          <td className="px-3 py-1 text-zinc-600">{a.articleDesc || "—"}</td>
+                          <td className="px-3 py-1 text-zinc-600">{a.vendProd || "—"}</td>
+                        </tr>
+                      ))}
+                      {confirmData.missingArticles.length > 100 && (
+                        <tr><td colSpan={3} className="px-3 py-1 text-amber-600">+ {confirmData.missingArticles.length - 100} more</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Missing sites */}
+            {confirmData.missingSites.length > 0 && (
+              <div className="mb-4">
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-amber-700">
+                  Missing Stores ({confirmData.missingSites.length})
+                </div>
+                <p className="mb-2 text-xs text-amber-600">
+                  These sites are in the DISPO but not in the store master.
+                </p>
+                <div className="max-h-48 overflow-auto rounded-lg border border-amber-200 bg-white p-3">
+                  <ul className="space-y-0.5 text-xs text-zinc-700">
+                    {confirmData.missingSites.slice(0, 50).map((s) => (
+                      <li key={s}>{s}</li>
+                    ))}
+                    {confirmData.missingSites.length > 50 && (
+                      <li className="text-amber-600">+ {confirmData.missingSites.length - 50} more</li>
+                    )}
+                  </ul>
+                </div>
+              </div>
+            )}
+
+            {/* Action buttons */}
+            <div className="flex gap-3">
+              <button
+                onClick={handleForceUpload}
+                disabled={uploading}
+                className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
+              >
+                {uploading ? "Uploading..." : "Continue Anyway"}
+              </button>
+              <button
+                onClick={reset}
+                disabled={uploading}
+                className="rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm font-medium text-[var(--color-text-muted)] hover:border-zinc-400 disabled:opacity-50"
+              >
+                Cancel &mdash; Fix Files First
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {step === "result" && result && (
-        <div className="max-w-lg">
+        <div className="max-w-2xl">
           <div className={`rounded-xl border p-4 ${result.ok ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}`}>
             <div className={`mb-1 text-sm font-bold ${result.ok ? "text-green-700" : "text-red-700"}`}>
-              {result.ok ? "Success" : "Upload Blocked"}
+              {result.ok ? "Success" : "Upload Failed"}
             </div>
             <p className={`text-sm ${result.ok ? "text-green-600" : "text-red-600"}`}>
               {result.message}
@@ -255,48 +387,58 @@ export default function DataLoadPage() {
             )}
           </div>
 
-          {/* Missing articles card */}
-          {result.missingArticles && result.missingArticles.length > 0 && (
-            <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4">
-              <div className="mb-2 text-sm font-bold text-red-700">
-                Missing Articles ({result.missingArticles.length})
-              </div>
-              <p className="mb-2 text-xs text-red-600">
-                These articles are in the DISPO but not in the LINKS file. Update the LINKS file and re-upload.
-              </p>
-              <div className="max-h-48 overflow-y-auto rounded-lg border border-red-200 bg-white p-3">
-                <ul className="space-y-0.5 text-xs text-red-700">
-                  {result.missingArticles.slice(0, 50).map((a) => (
-                    <li key={a}>{a}</li>
-                  ))}
-                  {result.missingArticles.length > 50 && (
-                    <li className="text-red-500">+ {result.missingArticles.length - 50} more</li>
-                  )}
-                </ul>
-              </div>
-            </div>
-          )}
-
-          {/* Missing sites card */}
-          {result.missingSites && result.missingSites.length > 0 && (
-            <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4">
-              <div className="mb-2 text-sm font-bold text-red-700">
-                Missing Stores ({result.missingSites.length})
-              </div>
-              <p className="mb-2 text-xs text-red-600">
-                These sites are in the DISPO but not in the store master. Upload an updated store file first.
-              </p>
-              <div className="max-h-48 overflow-y-auto rounded-lg border border-red-200 bg-white p-3">
-                <ul className="space-y-0.5 text-xs text-red-700">
-                  {result.missingSites.slice(0, 50).map((s) => (
-                    <li key={s}>{s}</li>
-                  ))}
-                  {result.missingSites.length > 50 && (
-                    <li className="text-red-500">+ {result.missingSites.length - 50} more</li>
-                  )}
-                </ul>
-              </div>
-            </div>
+          {/* Warnings on successful forced upload */}
+          {result.ok && result.warnings && (
+            <>
+              {result.warnings.missingArticles.length > 0 && (
+                <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                  <div className="mb-2 text-sm font-bold text-amber-700">
+                    Missing Articles ({result.warnings.missingArticles.length}) — Uploaded Anyway
+                  </div>
+                  <p className="mb-2 text-xs text-amber-600">
+                    These articles were not in the LINKS file. Data for these SKUs may be incomplete in reports.
+                  </p>
+                  <div className="max-h-48 overflow-auto rounded-lg border border-amber-200 bg-white">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-amber-100">
+                        <tr>
+                          <th className="px-3 py-1.5 text-left font-semibold text-amber-800">Article</th>
+                          <th className="px-3 py-1.5 text-left font-semibold text-amber-800">Description</th>
+                          <th className="px-3 py-1.5 text-left font-semibold text-amber-800">Vend Prod</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-amber-100">
+                        {result.warnings.missingArticles.slice(0, 30).map((a, i) => (
+                          <tr key={i}>
+                            <td className="px-3 py-1 text-zinc-700">{a.article}</td>
+                            <td className="px-3 py-1 text-zinc-600">{a.articleDesc || "—"}</td>
+                            <td className="px-3 py-1 text-zinc-600">{a.vendProd || "—"}</td>
+                          </tr>
+                        ))}
+                        {result.warnings.missingArticles.length > 30 && (
+                          <tr><td colSpan={3} className="px-3 py-1 text-amber-600">+ {result.warnings.missingArticles.length - 30} more</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+              {result.warnings.missingSites.length > 0 && (
+                <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                  <div className="mb-2 text-sm font-bold text-amber-700">
+                    Missing Stores ({result.warnings.missingSites.length}) — Uploaded Anyway
+                  </div>
+                  <div className="max-h-32 overflow-auto rounded-lg border border-amber-200 bg-white p-3">
+                    <ul className="space-y-0.5 text-xs text-zinc-700">
+                      {result.warnings.missingSites.slice(0, 30).map((s) => <li key={s}>{s}</li>)}
+                      {result.warnings.missingSites.length > 30 && (
+                        <li className="text-amber-600">+ {result.warnings.missingSites.length - 30} more</li>
+                      )}
+                    </ul>
+                  </div>
+                </div>
+              )}
+            </>
           )}
 
           <button onClick={reset} className="mt-4 rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)]">

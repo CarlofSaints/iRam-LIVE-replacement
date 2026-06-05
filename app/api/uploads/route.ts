@@ -13,6 +13,12 @@ import { requireLogin, requirePermission, noCacheHeaders, handleAuthError } from
 import { addLog } from "@/lib/activityLog";
 import type { FileType } from "@/lib/types";
 
+export interface MissingArticleDetail {
+  article: string;
+  articleDesc: string;
+  vendProd: string;
+}
+
 export async function GET(req: NextRequest) {
   try {
     requireLogin(req);
@@ -39,6 +45,7 @@ export async function POST(req: NextRequest) {
     const reportYear = formData.get("reportYear") ? Number(formData.get("reportYear")) : undefined;
     const reportMonth = formData.get("reportMonth") ? Number(formData.get("reportMonth")) : undefined;
     const reportWeek = formData.get("reportWeek") ? Number(formData.get("reportWeek")) : undefined;
+    const force = formData.get("force") === "true";
 
     if (!file || !clientId || !channelId || !fileType) {
       return Response.json({ error: "File, clientId, channelId, and fileType are required" }, { status: 400, headers: noCacheHeaders() });
@@ -55,7 +62,7 @@ export async function POST(req: NextRequest) {
     if (fileType === "dispo") {
       const result = parseDispo(buffer);
 
-      // Validate vendor number
+      // Validate vendor number (always hard-block — wrong vendor is never OK)
       if (result.vendorNumber && client.vendorNumbers.length > 0) {
         if (!client.vendorNumbers.includes(result.vendorNumber)) {
           return Response.json({
@@ -72,7 +79,7 @@ export async function POST(req: NextRequest) {
 
       // ── Validate articles against LINKS ──
       const linksLookup = await getLinksLookup(clientId);
-      const missingArticles: string[] = [];
+      const missingArticleDetails: MissingArticleDetail[] = [];
 
       if (linksLookup.size > 0) {
         const seenArticles = new Set<string>();
@@ -82,7 +89,11 @@ export async function POST(req: NextRequest) {
           if (normalized && !seenArticles.has(normalized)) {
             seenArticles.add(normalized);
             if (!linksLookup.has(normalized)) {
-              missingArticles.push(raw);
+              missingArticleDetails.push({
+                article: raw,
+                articleDesc: String(row["Article Desc"] ?? "").trim(),
+                vendProd: String(row["Vendor Prod Code"] ?? "").trim(),
+              });
             }
           }
         }
@@ -109,12 +120,14 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // ── Block upload if validation fails ──
-      if (missingArticles.length > 0 || missingSites.length > 0) {
-        // Fire-and-forget email alerts
+      const hasWarnings = missingArticleDetails.length > 0 || missingSites.length > 0;
+
+      // ── If warnings exist and user hasn't confirmed, return for confirmation ──
+      if (hasWarnings && !force) {
+        // Send notification emails
         const emailPromises: Promise<unknown>[] = [];
 
-        if (missingArticles.length > 0) {
+        if (missingArticleDetails.length > 0) {
           const recipients = [session.email];
           if (client.camId) {
             const cam = await getCamById(client.camId);
@@ -127,7 +140,7 @@ export async function POST(req: NextRequest) {
               to: recipients,
               clientName: client.name,
               channelName: mainChannelName,
-              missingArticles,
+              missingArticles: missingArticleDetails.map((d) => d.article),
               uploaderName: session.name,
             })
           );
@@ -152,20 +165,20 @@ export async function POST(req: NextRequest) {
           );
         }
 
-        // Wait for emails to send before returning (Vercel kills the function after response)
         await Promise.allSettled(emailPromises);
 
         const parts: string[] = [];
-        if (missingArticles.length > 0) parts.push(`${missingArticles.length} unrecognized article(s)`);
+        if (missingArticleDetails.length > 0) parts.push(`${missingArticleDetails.length} unrecognized article(s)`);
         if (missingSites.length > 0) parts.push(`${missingSites.length} unknown store(s)`);
 
         return Response.json(
           {
-            error: `Upload blocked: ${parts.join(" and ")} found.`,
-            missingArticles,
+            needsConfirmation: true,
+            warning: `${parts.join(" and ")} found. You can continue anyway or fix the files first.`,
+            missingArticles: missingArticleDetails,
             missingSites,
           },
-          { status: 400, headers: noCacheHeaders() },
+          { status: 200, headers: noCacheHeaders() },
         );
       }
 
@@ -208,11 +221,15 @@ export async function POST(req: NextRequest) {
         reportWeek,
       });
 
+      const logSuffix = hasWarnings
+        ? ` (forced with ${missingArticleDetails.length} missing articles, ${missingSites.length} missing sites)`
+        : "";
+
       await addLog({
         userId: session.userId,
         userName: session.name,
         action: "upload_dispo",
-        details: `Uploaded DISPO for ${client.name} / ${mainChannelName} (${result.totalRows} rows, vendor ${result.vendorNumber}). Ledger merge: ${merge.inserted} new, ${merge.updated} updated, ${merge.unchanged} unchanged.`,
+        details: `Uploaded DISPO for ${client.name} / ${mainChannelName} (${result.totalRows} rows, vendor ${result.vendorNumber}). Ledger merge: ${merge.inserted} new, ${merge.updated} updated, ${merge.unchanged} unchanged.${logSuffix}`,
         status: "success",
       });
 
@@ -243,7 +260,18 @@ export async function POST(req: NextRequest) {
       })();
 
       return Response.json(
-        { success: true, id: upload.id, rowCount: result.totalRows, merge },
+        {
+          success: true,
+          id: upload.id,
+          rowCount: result.totalRows,
+          merge,
+          ...(hasWarnings ? {
+            warnings: {
+              missingArticles: missingArticleDetails,
+              missingSites,
+            },
+          } : {}),
+        },
         { headers: noCacheHeaders() },
       );
     }
