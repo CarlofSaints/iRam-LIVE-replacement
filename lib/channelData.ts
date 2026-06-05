@@ -1,5 +1,5 @@
 import type { Channel } from "./types";
-import { readJson, writeJson } from "./blob";
+import { readJson, writeJson, deleteBlob } from "./blob";
 import { v4 as uuid } from "uuid";
 
 const KEY = "channels.json";
@@ -177,4 +177,14 @@ export async function deleteChannel(id: string): Promise<void> {
   }
   const filtered = channels.filter((c) => c.id !== id);
   await writeJson(KEY, filtered);
+}
+
+/**
+ * Wipe all channel data and flags.
+ * Next call to getChannels() will re-seed the defaults (MAKRO, GAME, MASSBUILD).
+ */
+export async function resetAllChannels(): Promise<void> {
+  await deleteBlob(KEY);
+  await deleteBlob(SEEDED_KEY);
+  await deleteBlob(MIGRATION_KEY);
 }

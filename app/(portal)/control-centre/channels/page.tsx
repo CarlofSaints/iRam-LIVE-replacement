@@ -71,6 +71,19 @@ export default function ChannelsPage() {
     load();
   }
 
+  async function handleResetAll() {
+    if (!confirm("This will DELETE all channels and store files.\n\nAfter reset:\n- Main channels (MAKRO, GAME, MASSBUILD) will be re-created\n- You must re-upload store control files to recreate sub-channels\n- Client channel assignments will need to be re-done\n\nContinue?")) return;
+    if (!confirm("Are you sure? This cannot be undone.")) return;
+    const res = await authFetch("/api/channels/reset", { method: "POST" });
+    if (!res.ok) {
+      const d = await res.json();
+      alert(d.error || "Reset failed");
+      return;
+    }
+    alert("Channels and store files wiped. Defaults re-seeded. Please re-upload your store control files.");
+    load();
+  }
+
   function startEdit(c: Channel) {
     setEditId(c.id);
     setEditIsSub(!!c.parentId);
@@ -94,6 +107,17 @@ export default function ChannelsPage() {
       {/* Info banner */}
       <div className="mb-6 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
         Sub-channels are automatically created when store files are uploaded.
+      </div>
+
+      {/* Reset button */}
+      <div className="mb-6 flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+        <span className="text-sm text-amber-700">Channel data out of sync?</span>
+        <button
+          onClick={handleResetAll}
+          className="rounded bg-red-600 px-3 py-1 text-xs font-semibold text-white hover:bg-red-700"
+        >
+          Reset All Channels &amp; Store Files
+        </button>
       </div>
 
       {showForm && (
