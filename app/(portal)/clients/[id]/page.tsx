@@ -443,22 +443,23 @@ export default function ClientDetailPage() {
               <div className="space-y-3">
                 {mainChannels.map((main) => {
                   const children = subChannels.filter((s) => s.parentId === main.id);
+                  const mainSelected = editForm.channelIds.includes(main.id);
                   return (
-                    <div key={main.id}>
-                      <span className="mb-1 block text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">{main.name}</span>
-                      <div className="flex flex-wrap gap-2">
-                        {children.length > 0 ? children.map((ch) => (
-                          <button key={ch.id} type="button" onClick={() => toggleEditChannel(ch.id)}
-                            className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${editForm.channelIds.includes(ch.id) ? "border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-zinc-400"}`}>
-                            {ch.name}
-                          </button>
-                        )) : (
-                          <button type="button" onClick={() => toggleEditChannel(main.id)}
-                            className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${editForm.channelIds.includes(main.id) ? "border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-zinc-400"}`}>
-                            {main.name}
-                          </button>
-                        )}
-                      </div>
+                    <div key={main.id} className="rounded-lg border border-[var(--color-border)] p-3">
+                      <button type="button" onClick={() => toggleEditChannel(main.id)}
+                        className={`mb-2 rounded-lg border px-3 py-1.5 text-sm font-bold transition-colors ${mainSelected ? "border-[var(--color-primary)] bg-[var(--color-primary)] text-white" : "border-[var(--color-border)] text-[var(--color-text)] hover:border-zinc-400"}`}>
+                        {main.name}
+                      </button>
+                      {children.length > 0 && (
+                        <div className="flex flex-wrap gap-2 pl-2 border-l-2 border-[var(--color-border)]">
+                          {children.map((ch) => (
+                            <button key={ch.id} type="button" onClick={() => toggleEditChannel(ch.id)}
+                              className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${editForm.channelIds.includes(ch.id) ? "border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-zinc-400"}`}>
+                              {ch.name}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
