@@ -21,6 +21,7 @@ export const CANONICAL_HEADERS = [
   "Site Name",
   "Status",
   "RP",
+  "R. Profile",
   "SOH",
   "SOO",
   "SIT",
@@ -81,6 +82,9 @@ export const HEADER_ALIASES: Record<string, string> = {
   "dist. prof.": "Dist.Prof.",
   "dist prof": "Dist.Prof.",
   "future pro": "Future Promo",
+  "r. profile": "R. Profile",
+  "r_profile": "R. Profile",
+  "r profile": "R. Profile",
 };
 
 // Regex to detect date-style columns

@@ -6,6 +6,7 @@ import { enrichLedger } from "@/lib/enrichment";
 import { getReportConfig } from "@/lib/reportConfig";
 import { getClientById } from "@/lib/clientData";
 import { getStatusDefinitions } from "@/lib/statusData";
+import { getStatusScenarios } from "@/lib/statusScenarioData";
 import { computeVitalSigns, getVitalSignsColumnOrder } from "@/lib/vitalSigns";
 import { addLog } from "@/lib/activityLog";
 
@@ -33,6 +34,11 @@ export async function GET(req: NextRequest) {
         { status: 400 }
       );
     }
+
+    // Optional period override params
+    const yearParam = url.searchParams.get("year");
+    const monthParam = url.searchParams.get("month");
+    const weekParam = url.searchParams.get("week");
 
     // 1. Load and merge sales ledgers from all selected channels
     const ledgerResults = await Promise.all(
@@ -71,22 +77,24 @@ export async function GET(req: NextRequest) {
     // 2. Enrich rows with PMF + store dimensions
     const enriched = await enrichLedger(allRows, clientId);
 
-    // 3. Load report config (DSC brackets + OTO multipliers)
-    const config = await getReportConfig(clientId);
-
-    // 4. Load all status definitions (covers all channels)
-    const allStatusDefs = await getStatusDefinitions();
+    // 3. Load report config, status definitions, and scenarios in parallel
+    const [config, allStatusDefs, statusScenarios] = await Promise.all([
+      getReportConfig(clientId),
+      getStatusDefinitions(),
+      getStatusScenarios(),
+    ]);
     const relevantStatusDefs = allStatusDefs.filter((s) =>
       channelIds.includes(s.channelId)
     );
 
-    // 5. Compute vital signs
+    // 4. Compute vital signs
     const vitalRows = computeVitalSigns(
       enriched.rows,
       config.dscBrackets,
       dateColumns,
       relevantStatusDefs,
-      config.otoMultipliers
+      config.otoMultipliers,
+      statusScenarios
     );
 
     // 6. Build Excel
@@ -133,11 +141,11 @@ export async function GET(req: NextRequest) {
     const client = await getClientById(clientId);
     const vendorNum = client?.vendorNumbers?.[0] ?? "";
 
-    // Use report period from the most recent ledger meta, fall back to current date
+    // Use period from query params, fall back to ledger meta, then current date
     const latestMeta = ledgerResults.find(({ meta }) => meta?.reportYear)?.meta;
-    const rYear = latestMeta?.reportYear ?? new Date().getFullYear();
-    const rMonth = latestMeta?.reportMonth ?? (new Date().getMonth() + 1);
-    const rWeek = latestMeta?.reportWeek ?? Math.ceil(new Date().getDate() / 7);
+    const rYear = yearParam ? parseInt(yearParam, 10) : (latestMeta?.reportYear ?? new Date().getFullYear());
+    const rMonth = monthParam ? parseInt(monthParam, 10) : (latestMeta?.reportMonth ?? (new Date().getMonth() + 1));
+    const rWeek = weekParam ? parseInt(weekParam, 10) : (latestMeta?.reportWeek ?? Math.ceil(new Date().getDate() / 7));
     const datePart = `${rYear}${String(rMonth).padStart(2, "0")}Wk${rWeek}`;
     const fileName = `Vital Signs - ${clientName} - ${vendorNum} - ${datePart}.xlsx`;
 

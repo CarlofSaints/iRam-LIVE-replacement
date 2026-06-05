@@ -4,6 +4,14 @@ import { useEffect, useState } from "react";
 import { authFetch } from "@/lib/useAuth";
 import type { Client, Channel, SalesLedgerMeta } from "@/lib/types";
 
+interface ReportStats {
+  totalDispos: number;
+  ytdVolume: number;
+  ytdValue: number;
+  totalSkus: number;
+  totalStores: number;
+}
+
 export default function ReportsPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
@@ -14,6 +22,15 @@ export default function ReportsPage() {
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [toast, setToast] = useState("");
+
+  // Stats
+  const [stats, setStats] = useState<ReportStats | null>(null);
+  const [statsLoading, setStatsLoading] = useState(false);
+
+  // Period selectors
+  const [reportYear, setReportYear] = useState<number | "">("");
+  const [reportMonth, setReportMonth] = useState<number | "">("");
+  const [reportWeek, setReportWeek] = useState<number | "">("");
 
   // Load clients + channels
   useEffect(() => {
@@ -37,17 +54,37 @@ export default function ReportsPage() {
       setSelectedClient(null);
       setMainChannelId("");
       setSelectedSubIds([]);
+      setStats(null);
+      setReportYear("");
+      setReportMonth("");
+      setReportWeek("");
       return;
     }
     const client = clients.find((c) => c.id === clientId) ?? null;
     setSelectedClient(client);
     setMainChannelId("");
     setSelectedSubIds([]);
+    setStats(null);
 
     (async () => {
       const res = await authFetch(`/api/sales?clientId=${clientId}`);
-      if (res.ok) setLedgers(await res.json());
-      else setLedgers([]);
+      if (res.ok) {
+        const metas: SalesLedgerMeta[] = await res.json();
+        setLedgers(metas);
+        // Default period from latest ledger meta
+        const withPeriod = metas.find((m) => m.reportYear);
+        if (withPeriod) {
+          setReportYear(withPeriod.reportYear ?? "");
+          setReportMonth(withPeriod.reportMonth ?? "");
+          setReportWeek(withPeriod.reportWeek ?? "");
+        } else {
+          setReportYear("");
+          setReportMonth("");
+          setReportWeek("");
+        }
+      } else {
+        setLedgers([]);
+      }
     })();
   }, [clientId, clients]);
 
@@ -78,13 +115,35 @@ export default function ReportsPage() {
   const hasSubChannels = subChannels.length > 0;
 
   // The effective channel IDs for the report.
-  // DISPO uploads always store the ledger under the MAIN channel ID,
-  // so we always include it. Sub-channel IDs are passed for row-level filtering.
   const effectiveChannelIds = mainChannelId
     ? hasSubChannels
       ? [mainChannelId, ...selectedSubIds]
       : [mainChannelId]
     : [];
+
+  // Fetch stats when client or effective channels change
+  useEffect(() => {
+    if (!clientId) {
+      setStats(null);
+      return;
+    }
+    setStatsLoading(true);
+    const params = new URLSearchParams({ clientId });
+    if (effectiveChannelIds.length > 0) {
+      params.set("channelIds", effectiveChannelIds.join(","));
+    }
+    (async () => {
+      try {
+        const res = await authFetch(`/api/reports/stats?${params}`);
+        if (res.ok) setStats(await res.json());
+        else setStats(null);
+      } catch {
+        setStats(null);
+      }
+      setStatsLoading(false);
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientId, mainChannelId, selectedSubIds.join(",")]);
 
   // Data requirement checks
   const hasLedger =
@@ -119,9 +178,15 @@ export default function ReportsPage() {
     if (!clientId || effectiveChannelIds.length === 0) return;
     setDownloading(true);
     try {
-      const res = await authFetch(
-        `/api/reports/vital-signs?clientId=${clientId}&channelIds=${effectiveChannelIds.join(",")}`
-      );
+      const params = new URLSearchParams({
+        clientId,
+        channelIds: effectiveChannelIds.join(","),
+      });
+      if (reportYear) params.set("year", String(reportYear));
+      if (reportMonth) params.set("month", String(reportMonth));
+      if (reportWeek) params.set("week", String(reportWeek));
+
+      const res = await authFetch(`/api/reports/vital-signs?${params}`);
       if (!res.ok) {
         const err = await res
           .json()
@@ -153,6 +218,9 @@ export default function ReportsPage() {
     }
     setDownloading(false);
   }
+
+  const currentYear = new Date().getFullYear();
+  const yearOptions = Array.from({ length: 4 }, (_, i) => currentYear - 2 + i);
 
   return (
     <div className="p-8">
@@ -263,6 +331,37 @@ export default function ReportsPage() {
         )}
       </div>
 
+      {/* Stats Cards */}
+      {clientId && stats && (
+        <div className="mb-6 grid grid-cols-5 gap-4">
+          <StatCard
+            label="Total DISPOs"
+            value={String(stats.totalDispos)}
+            loading={statsLoading}
+          />
+          <StatCard
+            label="YTD Volume"
+            value={stats.ytdVolume.toLocaleString()}
+            loading={statsLoading}
+          />
+          <StatCard
+            label="YTD Value"
+            value={`R ${stats.ytdValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+            loading={statsLoading}
+          />
+          <StatCard
+            label="Total SKUs"
+            value={String(stats.totalSkus)}
+            loading={statsLoading}
+          />
+          <StatCard
+            label="Total Stores"
+            value={String(stats.totalStores)}
+            loading={statsLoading}
+          />
+        </div>
+      )}
+
       {/* Vital Signs Report Card */}
       <div className="rounded-xl border border-[var(--color-border)] bg-white p-6">
         <div className="mb-4 flex items-center justify-between">
@@ -288,6 +387,59 @@ export default function ReportsPage() {
             {downloading ? "Generating..." : "Download Excel"}
           </button>
         </div>
+
+        {/* Period selectors */}
+        {clientId && mainChannelId && (
+          <div className="mb-4 grid grid-cols-3 gap-3">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-[var(--color-text-muted)]">
+                Year
+              </label>
+              <select
+                value={reportYear}
+                onChange={(e) => setReportYear(e.target.value ? Number(e.target.value) : "")}
+                className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm"
+              >
+                <option value="">Auto</option>
+                {yearOptions.map((y) => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-[var(--color-text-muted)]">
+                Month
+              </label>
+              <select
+                value={reportMonth}
+                onChange={(e) => setReportMonth(e.target.value ? Number(e.target.value) : "")}
+                className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm"
+              >
+                <option value="">Auto</option>
+                {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                  <option key={m} value={m}>
+                    {new Date(2000, m - 1).toLocaleString("en", { month: "long" })}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-[var(--color-text-muted)]">
+                Week
+              </label>
+              <select
+                value={reportWeek}
+                onChange={(e) => setReportWeek(e.target.value ? Number(e.target.value) : "")}
+                className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm"
+              >
+                <option value="">Auto</option>
+                {Array.from({ length: 5 }, (_, i) => i + 1).map((w) => (
+                  <option key={w} value={w}>W{w}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        )}
 
         {/* Data requirements */}
         <div className="flex flex-wrap gap-2">
@@ -333,6 +485,29 @@ export default function ReportsPage() {
           </p>
         )}
       </div>
+    </div>
+  );
+}
+
+function StatCard({
+  label,
+  value,
+  loading,
+}: {
+  label: string;
+  value: string;
+  loading: boolean;
+}) {
+  return (
+    <div className="rounded-xl border border-[var(--color-border)] bg-white p-4">
+      <p className="text-xs font-medium text-[var(--color-text-muted)]">{label}</p>
+      <p className="mt-1 text-lg font-bold text-[var(--color-text)]">
+        {loading ? (
+          <span className="inline-block h-5 w-16 animate-pulse rounded bg-zinc-100" />
+        ) : (
+          value
+        )}
+      </p>
     </div>
   );
 }

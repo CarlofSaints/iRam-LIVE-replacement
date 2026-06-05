@@ -9,7 +9,8 @@
    ────────────────────────────────────────────────────────────── */
 
 import { classifyDSC, type DSCBrackets } from "./reportConfig";
-import type { StatusDefinition } from "./types";
+import type { StatusDefinition, StatusScenario } from "./types";
+import { evaluateScenarios } from "./statusScenarioData";
 
 type Row = Record<string, unknown>;
 
@@ -140,7 +141,8 @@ export function calcArticleRankings(
 export function calcOpenToOrder(
   row: Row,
   statusDefs: StatusDefinition[],
-  categoryMultiplier: number
+  categoryMultiplier: number,
+  statusScenarios: StatusScenario[] = []
 ): { oto: 0 | 1; otoValue: number } {
   const soh = Number(row["SOH"] ?? 0);
   if (soh > 0) return { oto: 0, otoValue: 0 };
@@ -148,9 +150,17 @@ export function calcOpenToOrder(
   const statusRaw = String(row["Status"] ?? "").trim();
   if (statusRaw !== "" && statusRaw !== "0") {
     const statusUpper = statusRaw.toUpperCase();
-    const def = statusDefs.find((s) => s.code === statusUpper);
-    if (def && def.classification !== "POSITIVE") return { oto: 0, otoValue: 0 };
-    if (!def) return { oto: 0, otoValue: 0 };
+
+    // Try scenario-based classification first (most specific)
+    const scenarioResult = evaluateScenarios(statusUpper, row, statusScenarios);
+    if (scenarioResult !== null) {
+      if (scenarioResult !== "POSITIVE") return { oto: 0, otoValue: 0 };
+    } else {
+      // Fall back to channel-level status definitions
+      const def = statusDefs.find((s) => s.code === statusUpper);
+      if (def && def.classification !== "POSITIVE") return { oto: 0, otoValue: 0 };
+      if (!def) return { oto: 0, otoValue: 0 };
+    }
   }
 
   const soo = Number(row["SOO"] ?? 0);
@@ -160,7 +170,8 @@ export function calcOpenToOrder(
   const productStatus = String(row["_productStatus"] ?? "").trim().toUpperCase();
   if (productStatus !== "ACTIVE") return { oto: 0, otoValue: 0 };
 
-  const rp = Number(row["RP"] ?? 0);
+  const rpRaw = Number(row["R. Profile"] ?? 0);
+  const rp = isNaN(rpRaw) ? 0 : rpRaw;
   return { oto: 1, otoValue: categoryMultiplier * rp };
 }
 
@@ -270,13 +281,28 @@ export function computeVitalSigns(
   dscBrackets: DSCBrackets,
   dateColumns: string[],
   statusDefs: StatusDefinition[],
-  otoMultipliers: Record<string, number> = {}
+  otoMultipliers: Record<string, number> = {},
+  statusScenarios: StatusScenario[] = []
 ): VitalSignsRow[] {
   // Pre-compute rankings
   const siteRankings = calcSiteRankings(rows, dateColumns);
   const articleRankings = calcArticleRankings(rows, dateColumns);
   const { dateMap } = buildMonthlyColumns(dateColumns);
-  const monthCount = dateColumns.length || 1;
+
+  // Determine current-year date columns for Ave Monthly Sales
+  // Use the max year present in the data (data-driven)
+  let maxYear = 0;
+  for (const col of dateColumns) {
+    const p = parseDateKey(col);
+    if (p && p.year > maxYear) maxYear = p.year;
+  }
+  const currentYearCols = maxYear > 0
+    ? dateColumns.filter((col) => {
+        const p = parseDateKey(col);
+        return p != null && p.year === maxYear;
+      })
+    : dateColumns;
+  const monthCount = currentYearCols.length || 1;
 
   return rows.map((row) => {
     // DSC Alert
@@ -297,11 +323,11 @@ export function computeVitalSigns(
     // Open to Order
     const category = String(row["_category"] ?? "").trim().toLowerCase();
     const categoryMultiplier = (category && otoMultipliers[category]) || 1;
-    const { oto, otoValue } = calcOpenToOrder(row, statusDefs, categoryMultiplier);
+    const { oto, otoValue } = calcOpenToOrder(row, statusDefs, categoryMultiplier, statusScenarios);
 
-    // Ave Monthly Sales — sum of all date columns / number of months
+    // Ave Monthly Sales — sum of current-year date columns / number of months
     let totalUnits = 0;
-    for (const col of dateColumns) {
+    for (const col of currentYearCols) {
       const v = Number(row[col]);
       if (!isNaN(v)) totalUnits += v;
     }
@@ -339,7 +365,7 @@ export function computeVitalSigns(
       // 8. Material Description
       "Material Description": row["Article Desc"] ?? "",
       // 9. Replenishment
-      "Replenishment": row["PR QTY"] ?? "",
+      "Replenishment": row["RP"] ?? "",
       // 10. Sales Ranking
       "Sales Ranking": row["_productStatus"] ?? "",
       // 11. Article Rank by Units
@@ -399,7 +425,7 @@ export function computeVitalSigns(
       "Composition": row["Compo"] ?? "",
       "Regions": row["_province"] ?? "",
       "Buyer": row["Buyer"] ?? "",
-      "R_Profile": row["RP"] ?? "",
+      "R_Profile": row["R. Profile"] ?? "",
     };
 
     return output;

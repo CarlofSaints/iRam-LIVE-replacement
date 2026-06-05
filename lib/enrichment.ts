@@ -11,6 +11,7 @@
 import { getProductLookup } from "./productMasterData";
 import { getLinksLookup } from "./linksLookup";
 import { getStoreLookup } from "./storeLookup";
+import { getControlFileData } from "./controlFileData";
 import type { ProductMaster, StoreRecord } from "./types";
 
 type RawRow = Record<string, unknown>;
@@ -32,7 +33,8 @@ export function enrichLedgerRow(
   row: RawRow,
   linksLookup: Map<string, string>,      // article → clientProductId
   productLookup: Map<string, ProductMaster>,
-  storeLookup: Map<string, StoreRecord>
+  storeLookup: Map<string, StoreRecord>,
+  rangingLookup?: Set<string>             // set of article keys that exist in ranging file
 ): EnrichedRow {
   const enriched: EnrichedRow = { ...row };
 
@@ -92,6 +94,19 @@ export function enrichLedgerRow(
     }
   }
 
+  // ── Ranging enrichment (by Article) ──
+  if (rangingLookup) {
+    const articleRaw2 = row["Article"] ?? row["article"] ?? row["ARTICLE"];
+    if (articleRaw2 != null) {
+      const articleKey2 = String(articleRaw2).toLowerCase().trim();
+      enriched._rangingStatus = rangingLookup.has(articleKey2);
+    } else {
+      enriched._rangingStatus = false;
+    }
+  } else {
+    enriched._rangingStatus = false;
+  }
+
   return enriched;
 }
 
@@ -108,14 +123,27 @@ export async function enrichLedger(
   storeCount: number;
   linksCount: number;
 }> {
-  const [linksLookup, productLookup, storeLookup] = await Promise.all([
+  const [linksLookup, productLookup, storeLookup, rangingRows] = await Promise.all([
     getLinksLookup(clientId),
     getProductLookup(clientId),
     getStoreLookup(),
+    getControlFileData<Record<string, unknown>>(clientId, "ranging"),
   ]);
 
+  // Build ranging lookup — set of article keys present in ranging file
+  let rangingLookup: Set<string> | undefined;
+  if (rangingRows.length > 0) {
+    rangingLookup = new Set<string>();
+    for (const r of rangingRows) {
+      const article = String(
+        r["Article"] ?? r["article"] ?? r["ARTICLE"] ?? ""
+      ).toLowerCase().trim();
+      if (article) rangingLookup.add(article);
+    }
+  }
+
   const enrichedRows = rows.map((row) =>
-    enrichLedgerRow(row, linksLookup, productLookup, storeLookup)
+    enrichLedgerRow(row, linksLookup, productLookup, storeLookup, rangingLookup)
   );
 
   return {

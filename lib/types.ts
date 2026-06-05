@@ -285,6 +285,23 @@ export interface StatusDefinition {
   updatedAt: string;
 }
 
+// ── Status Scenarios (conditional classification) ──
+
+export interface StatusScenarioConditions {
+  clientStatus?: string;      // from PMF (e.g. "ACTIVE", "DISCONTINUED")
+  rangingStatus?: boolean;     // from ranging control file (true/false)
+}
+
+export interface StatusScenario {
+  id: string;
+  statusCode: string;         // DISPO status code (normalized uppercase)
+  conditions: StatusScenarioConditions;
+  classification: "POSITIVE" | "NEGATIVE";
+  description?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 // ── Activity Log ──
 
 export interface LogEntry {

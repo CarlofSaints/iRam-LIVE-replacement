@@ -2,18 +2,18 @@
 
 import { useEffect, useState, FormEvent } from "react";
 import { authFetch, useAuth } from "@/lib/useAuth";
-import type { StatusDefinition, StatusClassification, Channel } from "@/lib/types";
+import type { StatusDefinition, StatusClassification, Channel, StatusScenario } from "@/lib/types";
 
 const CLASSIFICATIONS: StatusClassification[] = ["POSITIVE", "NEGATIVE", "UNCLASSIFIED"];
 
-function ClassBadge({ c }: { c: StatusClassification }) {
-  const styles: Record<StatusClassification, string> = {
+function ClassBadge({ c }: { c: StatusClassification | "POSITIVE" | "NEGATIVE" }) {
+  const styles: Record<string, string> = {
     POSITIVE: "bg-green-50 text-green-700 border border-green-200",
     NEGATIVE: "bg-red-50 text-red-700 border border-red-200",
     UNCLASSIFIED: "bg-amber-50 text-amber-700 border border-amber-200",
   };
   return (
-    <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${styles[c]}`}>
+    <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${styles[c] ?? styles.UNCLASSIFIED}`}>
       {c}
     </span>
   );
@@ -39,16 +39,43 @@ export default function StatusReferencePage() {
   const [editId, setEditId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({ classification: "UNCLASSIFIED" as StatusClassification, description: "", notes: "" });
 
+  // Scenarios state
+  const [scenarios, setScenarios] = useState<StatusScenario[]>([]);
+  const [showAddScenario, setShowAddScenario] = useState(false);
+  const [scenarioForm, setScenarioForm] = useState({
+    statusCode: "",
+    clientStatus: "" as string,
+    rangingStatus: "" as string,
+    classification: "NEGATIVE" as "POSITIVE" | "NEGATIVE",
+    description: "",
+  });
+  const [scenarioError, setScenarioError] = useState("");
+  const [editScenarioId, setEditScenarioId] = useState<string | null>(null);
+  const [editScenarioForm, setEditScenarioForm] = useState({
+    statusCode: "",
+    clientStatus: "" as string,
+    rangingStatus: "" as string,
+    classification: "NEGATIVE" as "POSITIVE" | "NEGATIVE",
+    description: "",
+  });
+
+  // All unique status codes across all channels (for scenario dropdown)
+  const [allStatusCodes, setAllStatusCodes] = useState<string[]>([]);
+
   // Load channels on mount
   useEffect(() => {
     (async () => {
-      const res = await authFetch("/api/channels");
-      if (res.ok) {
-        const all: Channel[] = await res.json();
+      const [chRes, scRes] = await Promise.all([
+        authFetch("/api/channels"),
+        authFetch("/api/status-scenarios"),
+      ]);
+      if (chRes.ok) {
+        const all: Channel[] = await chRes.json();
         const main = all.filter((c) => !c.parentId);
         setChannels(main);
         if (main.length > 0) setSelectedChannel(main[0].id);
       }
+      if (scRes.ok) setScenarios(await scRes.json());
       setLoading(false);
     })();
   }, []);
@@ -62,10 +89,28 @@ export default function StatusReferencePage() {
     })();
   }, [selectedChannel]);
 
+  // Compute all unique status codes across all loaded statuses
+  useEffect(() => {
+    // Also load ALL statuses (not just current channel) for the scenario dropdown
+    (async () => {
+      const res = await authFetch("/api/status-definitions");
+      if (res.ok) {
+        const all: StatusDefinition[] = await res.json();
+        const codes = Array.from(new Set(all.map((s) => s.code))).sort();
+        setAllStatusCodes(codes);
+      }
+    })();
+  }, []);
+
   async function reload() {
     if (!selectedChannel) return;
     const res = await authFetch(`/api/status-definitions?channelId=${selectedChannel}`);
     if (res.ok) setStatuses(await res.json());
+  }
+
+  async function reloadScenarios() {
+    const res = await authFetch("/api/status-scenarios");
+    if (res.ok) setScenarios(await res.json());
   }
 
   // Filter + search
@@ -109,6 +154,60 @@ export default function StatusReferencePage() {
     if (!confirm("Delete this status definition?")) return;
     await authFetch(`/api/status-definitions/${id}`, { method: "DELETE" });
     reload();
+  }
+
+  // Scenario handlers
+  async function handleAddScenario(e: FormEvent) {
+    e.preventDefault();
+    setScenarioError("");
+    if (!scenarioForm.statusCode) { setScenarioError("Status code is required"); return; }
+
+    const conditions: Record<string, unknown> = {};
+    if (scenarioForm.clientStatus) conditions.clientStatus = scenarioForm.clientStatus;
+    if (scenarioForm.rangingStatus !== "") conditions.rangingStatus = scenarioForm.rangingStatus === "true";
+
+    const res = await authFetch("/api/status-scenarios", {
+      method: "POST",
+      body: JSON.stringify({
+        statusCode: scenarioForm.statusCode,
+        conditions,
+        classification: scenarioForm.classification,
+        description: scenarioForm.description,
+      }),
+    });
+    if (!res.ok) {
+      setScenarioError((await res.json()).error || "Failed to create");
+      return;
+    }
+    setShowAddScenario(false);
+    setScenarioForm({ statusCode: "", clientStatus: "", rangingStatus: "", classification: "NEGATIVE", description: "" });
+    reloadScenarios();
+  }
+
+  async function handleEditScenario(id: string) {
+    const conditions: Record<string, unknown> = {};
+    if (editScenarioForm.clientStatus) conditions.clientStatus = editScenarioForm.clientStatus;
+    if (editScenarioForm.rangingStatus !== "") conditions.rangingStatus = editScenarioForm.rangingStatus === "true";
+
+    const res = await authFetch(`/api/status-scenarios/${id}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        statusCode: editScenarioForm.statusCode,
+        conditions,
+        classification: editScenarioForm.classification,
+        description: editScenarioForm.description,
+      }),
+    });
+    if (res.ok) {
+      setEditScenarioId(null);
+      reloadScenarios();
+    }
+  }
+
+  async function handleDeleteScenario(id: string) {
+    if (!confirm("Delete this scenario?")) return;
+    await authFetch(`/api/status-scenarios/${id}`, { method: "DELETE" });
+    reloadScenarios();
   }
 
   if (loading) {
@@ -305,7 +404,7 @@ export default function StatusReferencePage() {
                       <td className="px-6 py-3 font-mono font-medium text-[var(--color-text)]">{s.code}</td>
                       <td className="px-6 py-3"><ClassBadge c={s.classification} /></td>
                       <td className="px-6 py-3 text-[var(--color-text-muted)]">{s.description}</td>
-                      <td className="px-6 py-3 text-[var(--color-text-muted)]">{s.notes || "—"}</td>
+                      <td className="px-6 py-3 text-[var(--color-text-muted)]">{s.notes || "\u2014"}</td>
                       <td className="px-6 py-3">
                         {s.autoDetected && (
                           <span className="rounded-full bg-blue-50 border border-blue-200 px-2 py-0.5 text-xs font-medium text-blue-700">
@@ -336,6 +435,223 @@ export default function StatusReferencePage() {
             </tbody>
           </table>
         )}
+      </div>
+
+      {/* ── Status Scenarios ── */}
+      <div className="mt-10">
+        <div className="mb-4 flex items-center justify-between">
+          <div>
+            <h2 className="text-xl font-bold text-[var(--color-text)]">Status Scenarios</h2>
+            <p className="mt-1 text-sm text-[var(--color-text-muted)]">
+              Conditional classification overrides. When a DISPO status code matches a scenario&apos;s conditions,
+              its classification takes priority over the per-channel definition above.
+            </p>
+          </div>
+          {isAdmin && (
+            <button
+              onClick={() => { setShowAddScenario(!showAddScenario); setScenarioError(""); }}
+              className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)]"
+            >
+              {showAddScenario ? "Cancel" : "+ Add Scenario"}
+            </button>
+          )}
+        </div>
+
+        {/* Add scenario form */}
+        {showAddScenario && isAdmin && (
+          <div className="mb-6 rounded-xl border border-[var(--color-border)] bg-white p-6">
+            <form onSubmit={handleAddScenario} className="space-y-3">
+              {scenarioError && <div className="rounded-lg bg-red-50 px-4 py-2 text-sm text-red-700">{scenarioError}</div>}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-[var(--color-text-muted)]">DISPO Status Code</label>
+                  <select
+                    value={scenarioForm.statusCode}
+                    onChange={(e) => setScenarioForm({ ...scenarioForm, statusCode: e.target.value })}
+                    required
+                    className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm"
+                  >
+                    <option value="">Select status code</option>
+                    {allStatusCodes.map((code) => (
+                      <option key={code} value={code}>{code}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-[var(--color-text-muted)]">Classification</label>
+                  <select
+                    value={scenarioForm.classification}
+                    onChange={(e) => setScenarioForm({ ...scenarioForm, classification: e.target.value as "POSITIVE" | "NEGATIVE" })}
+                    className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm"
+                  >
+                    <option value="POSITIVE">POSITIVE</option>
+                    <option value="NEGATIVE">NEGATIVE</option>
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-[var(--color-text-muted)]">Client Status (from PMF)</label>
+                  <select
+                    value={scenarioForm.clientStatus}
+                    onChange={(e) => setScenarioForm({ ...scenarioForm, clientStatus: e.target.value })}
+                    className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm"
+                  >
+                    <option value="">Any</option>
+                    <option value="ACTIVE">ACTIVE</option>
+                    <option value="DISCONTINUED">DISCONTINUED</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-[var(--color-text-muted)]">Ranging Status</label>
+                  <select
+                    value={scenarioForm.rangingStatus}
+                    onChange={(e) => setScenarioForm({ ...scenarioForm, rangingStatus: e.target.value })}
+                    className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm"
+                  >
+                    <option value="">Any</option>
+                    <option value="true">In Ranging (TRUE)</option>
+                    <option value="false">Not in Ranging (FALSE)</option>
+                  </select>
+                </div>
+              </div>
+              <input
+                placeholder="Description (optional)"
+                value={scenarioForm.description}
+                onChange={(e) => setScenarioForm({ ...scenarioForm, description: e.target.value })}
+                className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm"
+              />
+              <button
+                type="submit"
+                className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)]"
+              >
+                Create Scenario
+              </button>
+            </form>
+          </div>
+        )}
+
+        {/* Scenarios table */}
+        <div className="rounded-xl border border-[var(--color-border)] bg-white">
+          {scenarios.length === 0 ? (
+            <div className="px-6 py-8 text-center text-sm text-[var(--color-text-muted)]">
+              No status scenarios configured. Scenarios allow conditional classification based on
+              client status and ranging data.
+            </div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-[var(--color-border)] text-left text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
+                  <th className="px-6 py-3">Status Code</th>
+                  <th className="px-6 py-3">Client Status</th>
+                  <th className="px-6 py-3">Ranging</th>
+                  <th className="px-6 py-3">Classification</th>
+                  <th className="px-6 py-3">Description</th>
+                  {isAdmin && <th className="px-6 py-3">Actions</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {scenarios.map((sc) => (
+                  <tr key={sc.id} className="border-b border-[var(--color-border)] last:border-0">
+                    {editScenarioId === sc.id ? (
+                      <>
+                        <td className="px-6 py-3">
+                          <select
+                            value={editScenarioForm.statusCode}
+                            onChange={(e) => setEditScenarioForm({ ...editScenarioForm, statusCode: e.target.value })}
+                            className="rounded-lg border border-[var(--color-border)] px-2 py-1 text-sm"
+                          >
+                            {allStatusCodes.map((code) => (
+                              <option key={code} value={code}>{code}</option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="px-6 py-3">
+                          <select
+                            value={editScenarioForm.clientStatus}
+                            onChange={(e) => setEditScenarioForm({ ...editScenarioForm, clientStatus: e.target.value })}
+                            className="rounded-lg border border-[var(--color-border)] px-2 py-1 text-sm"
+                          >
+                            <option value="">Any</option>
+                            <option value="ACTIVE">ACTIVE</option>
+                            <option value="DISCONTINUED">DISCONTINUED</option>
+                          </select>
+                        </td>
+                        <td className="px-6 py-3">
+                          <select
+                            value={editScenarioForm.rangingStatus}
+                            onChange={(e) => setEditScenarioForm({ ...editScenarioForm, rangingStatus: e.target.value })}
+                            className="rounded-lg border border-[var(--color-border)] px-2 py-1 text-sm"
+                          >
+                            <option value="">Any</option>
+                            <option value="true">TRUE</option>
+                            <option value="false">FALSE</option>
+                          </select>
+                        </td>
+                        <td className="px-6 py-3">
+                          <select
+                            value={editScenarioForm.classification}
+                            onChange={(e) => setEditScenarioForm({ ...editScenarioForm, classification: e.target.value as "POSITIVE" | "NEGATIVE" })}
+                            className="rounded-lg border border-[var(--color-border)] px-2 py-1 text-sm"
+                          >
+                            <option value="POSITIVE">POSITIVE</option>
+                            <option value="NEGATIVE">NEGATIVE</option>
+                          </select>
+                        </td>
+                        <td className="px-6 py-3">
+                          <input
+                            value={editScenarioForm.description}
+                            onChange={(e) => setEditScenarioForm({ ...editScenarioForm, description: e.target.value })}
+                            className="w-full rounded-lg border border-[var(--color-border)] px-2 py-1 text-sm"
+                            placeholder="Description"
+                          />
+                        </td>
+                        <td className="px-6 py-3">
+                          <div className="flex gap-2">
+                            <button onClick={() => handleEditScenario(sc.id)} className="text-xs font-medium text-[var(--color-primary)] hover:underline">Save</button>
+                            <button onClick={() => setEditScenarioId(null)} className="text-xs text-[var(--color-text-muted)] hover:underline">Cancel</button>
+                          </div>
+                        </td>
+                      </>
+                    ) : (
+                      <>
+                        <td className="px-6 py-3 font-mono font-medium text-[var(--color-text)]">{sc.statusCode}</td>
+                        <td className="px-6 py-3 text-[var(--color-text-muted)]">{sc.conditions.clientStatus || "Any"}</td>
+                        <td className="px-6 py-3 text-[var(--color-text-muted)]">
+                          {sc.conditions.rangingStatus === true ? "TRUE" : sc.conditions.rangingStatus === false ? "FALSE" : "Any"}
+                        </td>
+                        <td className="px-6 py-3"><ClassBadge c={sc.classification} /></td>
+                        <td className="px-6 py-3 text-[var(--color-text-muted)]">{sc.description || "\u2014"}</td>
+                        {isAdmin && (
+                          <td className="px-6 py-3">
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => {
+                                  setEditScenarioId(sc.id);
+                                  setEditScenarioForm({
+                                    statusCode: sc.statusCode,
+                                    clientStatus: sc.conditions.clientStatus || "",
+                                    rangingStatus: sc.conditions.rangingStatus === true ? "true" : sc.conditions.rangingStatus === false ? "false" : "",
+                                    classification: sc.classification,
+                                    description: sc.description || "",
+                                  });
+                                }}
+                                className="text-xs text-[var(--color-primary)] hover:underline"
+                              >
+                                Edit
+                              </button>
+                              <button onClick={() => handleDeleteScenario(sc.id)} className="text-xs text-red-500 hover:underline">Delete</button>
+                            </div>
+                          </td>
+                        )}
+                      </>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
       </div>
     </div>
   );
