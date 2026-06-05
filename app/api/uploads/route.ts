@@ -152,8 +152,8 @@ export async function POST(req: NextRequest) {
           );
         }
 
-        // Don't let email failures affect the 400 response
-        Promise.allSettled(emailPromises).catch(() => {});
+        // Wait for emails to send before returning (Vercel kills the function after response)
+        await Promise.allSettled(emailPromises);
 
         const parts: string[] = [];
         if (missingArticles.length > 0) parts.push(`${missingArticles.length} unrecognized article(s)`);
