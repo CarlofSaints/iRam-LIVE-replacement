@@ -4,17 +4,70 @@ import { v4 as uuid } from "uuid";
 
 const KEY = "channels.json";
 const SEEDED_KEY = "channels-seeded.json";
+const MIGRATION_KEY = "channels-migrated-v2.json";
 
 const DEFAULT_CHANNELS: Channel[] = [
-  { id: "massmart", name: "MASSMART", active: true, createdAt: new Date().toISOString() },
-  { id: "makro", name: "MAKRO", parentId: "massmart", active: true, createdAt: new Date().toISOString() },
-  { id: "game", name: "GAME", parentId: "massmart", active: true, createdAt: new Date().toISOString() },
-  { id: "massbuild", name: "MASSBUILD", parentId: "massmart", active: true, createdAt: new Date().toISOString() },
-  { id: "jumbo", name: "JUMBO CASH AND CARRY", parentId: "massmart", active: true, createdAt: new Date().toISOString() },
+  { id: "makro", name: "MAKRO", active: true, createdAt: new Date().toISOString() },
+  { id: "game", name: "GAME", active: true, createdAt: new Date().toISOString() },
+  { id: "massbuild", name: "MASSBUILD", active: true, createdAt: new Date().toISOString() },
 ];
 
+/** Names that should be main channels (no parentId) */
+const MAIN_CHANNEL_NAMES = new Set(["MAKRO", "GAME", "MASSBUILD"]);
+
+/**
+ * One-time migration: fix the channel hierarchy.
+ * Old defaults had MASSMART as the sole main channel with MAKRO/GAME/MASSBUILD
+ * as sub-channels. This promotes MAKRO/GAME/MASSBUILD to main channels,
+ * re-parents any remaining MASSMART sub-channels under MAKRO, and removes MASSMART.
+ */
+async function migrateChannelHierarchy(channels: Channel[]): Promise<Channel[]> {
+  const migrated = await readJson<{ done: boolean }>(MIGRATION_KEY, { done: false });
+  if (migrated.done) return channels;
+
+  const massmart = channels.find(
+    (c) => !c.parentId && c.name.toUpperCase() === "MASSMART"
+  );
+
+  if (!massmart) {
+    // No MASSMART parent — nothing to migrate
+    await writeJson(MIGRATION_KEY, { done: true });
+    return channels;
+  }
+
+  // Promote MAKRO, GAME, MASSBUILD to main channels
+  let updated = channels.map((c) => {
+    if (c.parentId === massmart.id && MAIN_CHANNEL_NAMES.has(c.name.toUpperCase())) {
+      // Remove parentId to make it a main channel
+      const { parentId: _removed, ...rest } = c;
+      return rest as Channel;
+    }
+    return c;
+  });
+
+  // Re-parent any remaining MASSMART sub-channels under MAKRO
+  const makro = updated.find(
+    (c) => !c.parentId && c.name.toUpperCase() === "MAKRO"
+  );
+  if (makro) {
+    updated = updated.map((c) => {
+      if (c.parentId === massmart.id) {
+        return { ...c, parentId: makro.id };
+      }
+      return c;
+    });
+  }
+
+  // Remove MASSMART
+  updated = updated.filter((c) => c.id !== massmart.id);
+
+  await writeJson(KEY, updated);
+  await writeJson(MIGRATION_KEY, { done: true });
+  return updated;
+}
+
 export async function getChannels(): Promise<Channel[]> {
-  const channels = await readJson<Channel[]>(KEY, []);
+  let channels = await readJson<Channel[]>(KEY, []);
   if (channels.length === 0) {
     // Only seed defaults once — check the flag to avoid overwriting user data on transient read failures
     const seeded = await readJson<{ done: boolean }>(SEEDED_KEY, { done: false });
@@ -24,6 +77,7 @@ export async function getChannels(): Promise<Channel[]> {
       return DEFAULT_CHANNELS;
     }
   }
+  channels = await migrateChannelHierarchy(channels);
   return channels;
 }
 
