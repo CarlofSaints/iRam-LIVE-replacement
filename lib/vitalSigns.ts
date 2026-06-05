@@ -143,7 +143,7 @@ export function calcOpenToOrder(
   statusDefs: StatusDefinition[],
   categoryMultiplier: number,
   statusScenarios: StatusScenario[] = []
-): { oto: 0 | 1; otoValue: number } {
+): { oto: number; otoValue: number } {
   const soh = Number(row["SOH"] ?? 0);
   if (soh > 0) return { oto: 0, otoValue: 0 };
 
@@ -172,7 +172,11 @@ export function calcOpenToOrder(
 
   const rpRaw = Number(row["R. Profile"] ?? 0);
   const rp = isNaN(rpRaw) ? 0 : rpRaw;
-  return { oto: 1, otoValue: categoryMultiplier * rp };
+  const nettCost = Number(row["Nett Cost"] ?? 0);
+  const nc = isNaN(nettCost) ? 0 : nettCost;
+  const oto = categoryMultiplier * rp;          // suggested order units
+  const otoValue = oto * nc;                     // value of suggested order
+  return { oto, otoValue };
 }
 
 // ── Column output builder ─────────────────────────────────────
