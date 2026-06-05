@@ -75,11 +75,31 @@ export function autoMatchLinksHeaders(
   return result;
 }
 
+// ── Normalize ─────────────────────────────────────────────────
+
+/**
+ * Normalize an article value for comparison:
+ * - Convert to string, trim, lowercase
+ * - Strip trailing ".0" (Excel number→string artifact)
+ * - Strip leading zeros (e.g. "007890" → "7890")
+ *
+ * This ensures numeric articles match regardless of whether the
+ * source stored them as text ("12345") or number (12345 → "12345.0").
+ */
+export function normalizeArticle(val: unknown): string {
+  let s = String(val ?? "").trim().toLowerCase();
+  // Strip trailing .0 / .00 etc. (only when the entire value is numeric-ish)
+  s = s.replace(/\.0+$/, "");
+  // Strip leading zeros but keep at least one digit
+  s = s.replace(/^0+(?=\d)/, "");
+  return s;
+}
+
 // ── Lookup ───────────────────────────────────────────────────
 
 /**
  * Load LINKS raw data + saved mapping, build a Map:
- *   article (lowercased, trimmed) → clientProductId (original casing, trimmed)
+ *   article (normalized) → clientProductId (original casing, trimmed)
  *
  * Returns empty Map if no mapping saved or no LINKS data.
  */
@@ -102,12 +122,12 @@ export async function getLinksLookup(
 
     if (!articleVal || !cpidVal) continue;
 
-    const article = String(articleVal).trim();
+    const article = normalizeArticle(articleVal);
     const cpid = String(cpidVal).trim();
 
     if (!article || !cpid) continue;
 
-    lookup.set(article.toLowerCase(), cpid);
+    lookup.set(article, cpid);
   }
 
   return lookup;

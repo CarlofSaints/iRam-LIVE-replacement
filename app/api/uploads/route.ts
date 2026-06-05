@@ -4,7 +4,7 @@ import { getClientById } from "@/lib/clientData";
 import { getChannelById } from "@/lib/channelData";
 import { parseDispo } from "@/lib/dispoParser";
 import { mergeDispo } from "@/lib/salesData";
-import { getLinksLookup } from "@/lib/linksLookup";
+import { getLinksLookup, normalizeArticle } from "@/lib/linksLookup";
 import { getMergedStores } from "@/lib/storeFileData";
 import { getCamById } from "@/lib/camData";
 import { getUsers } from "@/lib/userData";
@@ -77,11 +77,12 @@ export async function POST(req: NextRequest) {
       if (linksLookup.size > 0) {
         const seenArticles = new Set<string>();
         for (const row of result.rows) {
-          const article = String(row["Article"] ?? "").trim();
-          if (article && !seenArticles.has(article.toLowerCase())) {
-            seenArticles.add(article.toLowerCase());
-            if (!linksLookup.has(article.toLowerCase())) {
-              missingArticles.push(article);
+          const raw = String(row["Article"] ?? "").trim();
+          const normalized = normalizeArticle(raw);
+          if (normalized && !seenArticles.has(normalized)) {
+            seenArticles.add(normalized);
+            if (!linksLookup.has(normalized)) {
+              missingArticles.push(raw);
             }
           }
         }
