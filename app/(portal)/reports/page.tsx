@@ -77,12 +77,14 @@ export default function ReportsPage() {
   // If a main channel has no sub-channels, the ledger uses the main channel ID directly
   const hasSubChannels = subChannels.length > 0;
 
-  // The effective channel IDs for the report
-  const effectiveChannelIds = hasSubChannels
-    ? selectedSubIds
-    : mainChannelId
-      ? [mainChannelId]
-      : [];
+  // The effective channel IDs for the report.
+  // DISPO uploads always store the ledger under the MAIN channel ID,
+  // so we always include it. Sub-channel IDs are passed for row-level filtering.
+  const effectiveChannelIds = mainChannelId
+    ? hasSubChannels
+      ? [mainChannelId, ...selectedSubIds]
+      : [mainChannelId]
+    : [];
 
   // Data requirement checks
   const hasLedger =
