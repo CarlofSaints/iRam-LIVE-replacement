@@ -1,202 +1,162 @@
 import { NextRequest } from "next/server";
+import { list } from "@vercel/blob";
 import { requireLogin, noCacheHeaders, handleAuthError } from "@/lib/auth";
-import { getSalesLedger, getSalesLedgerMeta, getAllSalesLedgers } from "@/lib/salesData";
-import { getUploadIndex, getUploadData } from "@/lib/uploadData";
-import { getClients } from "@/lib/clientData";
-import { getChannels } from "@/lib/channelData";
 
+/**
+ * Raw blob diagnostic — bypasses readJson entirely.
+ * Lists blobs by prefix and fetches their contents directly.
+ *
+ * Usage:
+ *   /api/debug/ledger-check                         → list all blobs under live/sales/ and live/uploads/
+ *   /api/debug/ledger-check?uploadId=XXXX            → read raw upload data, show ALL keys + status fields
+ *   /api/debug/ledger-check?blobKey=sales/CLIENT/CH  → read specific blob, show keys + sample rows
+ */
 export async function GET(req: NextRequest) {
   try {
     requireLogin(req);
 
     const url = new URL(req.url);
-    const clientId = url.searchParams.get("clientId");
-    const channelId = url.searchParams.get("channelId");
+    const uploadId = url.searchParams.get("uploadId");
+    const blobKey = url.searchParams.get("blobKey");
 
-    // If no params, show all available data locations
-    if (!clientId) {
-      const [clients, channels, uploads] = await Promise.all([
-        getClients(),
-        getChannels(),
-        getUploadIndex(),
-      ]);
-
-      // Build a map of all ledgers per client
-      const clientLedgers: Record<string, unknown> = {};
-      for (const client of clients) {
-        const ledgers = await getAllSalesLedgers(client.id);
-        if (ledgers.length > 0) {
-          clientLedgers[client.id] = {
-            clientName: client.name,
-            vendorNumbers: client.vendorNumbers,
-            channelIds: client.channelIds,
-            ledgers: ledgers.map((l) => ({
-              channelId: l.channelId,
-              channelName: l.channelName,
-              totalRows: l.totalRows,
-              dateColumns: l.dateColumns,
-              lastMergedAt: l.lastMergedAt,
-            })),
-          };
-        }
-      }
-
-      // Summarize uploads
-      const uploadSummary = uploads.slice(0, 20).map((u) => ({
-        id: u.id,
-        clientId: u.clientId,
-        clientName: u.clientName,
-        channelId: u.channelId,
-        channelName: u.channelName,
-        fileType: u.fileType,
-        fileName: u.fileName,
-        rowCount: u.rowCount,
-        uploadDate: u.uploadDate,
-      }));
-
-      // Channel map for reference
-      const channelMap = channels.map((c) => ({
-        id: c.id,
-        name: c.name,
-        parentId: c.parentId ?? null,
-        isMain: !c.parentId,
-      }));
-
-      return Response.json(
-        {
-          instructions: "Use ?clientId=X&channelId=Y to inspect a specific ledger. Below shows all available data.",
-          clients: clients.map((c) => ({
-            id: c.id,
-            name: c.name,
-            vendorNumbers: c.vendorNumbers,
-            channelIds: c.channelIds,
-          })),
-          channels: channelMap,
-          clientLedgers,
-          recentUploads: uploadSummary,
-        },
-        { headers: noCacheHeaders() },
-      );
+    // ── Mode 1: Read specific blob by key ──
+    if (blobKey) {
+      const fullKey = blobKey.startsWith("live/") ? blobKey : `live/${blobKey}`;
+      return Response.json(await inspectBlob(fullKey), { headers: noCacheHeaders() });
     }
 
-    if (!channelId) {
-      // Show all ledgers for this client
-      const ledgers = await getAllSalesLedgers(clientId);
-      return Response.json(
-        {
-          instructions: "Add &channelId=X to inspect a specific ledger",
-          clientId,
-          ledgers: ledgers.map((l) => ({
-            channelId: l.channelId,
-            channelName: l.channelName,
-            totalRows: l.totalRows,
-            lastMergedAt: l.lastMergedAt,
-          })),
-        },
-        { headers: noCacheHeaders() },
-      );
+    // ── Mode 2: Read raw upload data by upload ID ──
+    if (uploadId) {
+      const fullKey = `live/uploads/${uploadId}.json`;
+      return Response.json(await inspectBlob(fullKey), { headers: noCacheHeaders() });
     }
 
-    // Full inspection for a specific clientId + channelId
-    const [ledger, meta] = await Promise.all([
-      getSalesLedger(clientId, channelId),
-      getSalesLedgerMeta(clientId, channelId),
-    ]);
-
-    // Collect all unique keys across first 10 rows
-    const allKeys = new Set<string>();
-    const sampleRows: Record<string, unknown>[] = [];
-    for (let i = 0; i < Math.min(ledger.length, 10); i++) {
-      const row = ledger[i];
-      for (const k of Object.keys(row)) allKeys.add(k);
-      sampleRows.push({
-        Article: row["Article"],
-        Site: row["Site"],
-        Status: row["Status"],
-        "PR ST": row["PR ST"],
-        "pr st": row["pr st"],
-        RP: row["RP"],
-        "R. Profile": row["R. Profile"],
-      });
-    }
-
-    // Count how many rows have a non-empty Status
-    let statusCount = 0;
-    let prStCount = 0;
-    for (const row of ledger) {
-      const s = row["Status"];
-      if (s !== undefined && s !== null && String(s).trim() !== "") statusCount++;
-      const p = row["PR ST"];
-      if (p !== undefined && p !== null && String(p).trim() !== "") prStCount++;
-    }
-
-    // Check the most recent raw upload for this client+channel
-    const uploads = await getUploadIndex();
-    const clientUploads = uploads.filter(
-      (u) => u.clientId === clientId && u.channelId === channelId && u.fileType === "dispo",
-    );
-    const latestUpload = clientUploads[0];
-
-    let rawSample: Record<string, unknown>[] = [];
-    let rawKeys: string[] = [];
-    let rawStatusCount = 0;
-    let rawPrStCount = 0;
-
-    if (latestUpload) {
-      const rawData = await getUploadData(latestUpload.id);
-      rawKeys = rawData.length > 0 ? Object.keys(rawData[0]) : [];
-
-      for (let i = 0; i < Math.min(rawData.length, 10); i++) {
-        const row = rawData[i];
-        rawSample.push({
-          Article: row["Article"],
-          Site: row["Site"],
-          Status: row["Status"],
-          "PR ST": row["PR ST"],
-          "pr st": row["pr st"],
-          RP: row["RP"],
-          "R. Profile": row["R. Profile"],
-        });
-      }
-
-      for (const row of rawData) {
-        const s = row["Status"];
-        if (s !== undefined && s !== null && String(s).trim() !== "") rawStatusCount++;
-        const p = row["PR ST"];
-        if (p !== undefined && p !== null && String(p).trim() !== "") rawPrStCount++;
-      }
-    }
+    // ── Mode 3: List all relevant blobs ──
+    const salesBlobs = await listBlobsByPrefix("live/sales/");
+    const uploadBlobs = await listBlobsByPrefix("live/uploads/");
 
     return Response.json(
       {
-        ledger: {
-          totalRows: ledger.length,
-          allKeysInFirst10: Array.from(allKeys).sort(),
-          hasStatusKey: allKeys.has("Status"),
-          hasPrStKey: allKeys.has("PR ST"),
-          rowsWithStatusValue: statusCount,
-          rowsWithPrStValue: prStCount,
-          sampleRows,
-        },
-        latestUpload: latestUpload
-          ? {
-              id: latestUpload.id,
-              fileName: latestUpload.fileName,
-              uploadDate: latestUpload.uploadDate,
-              rowCount: latestUpload.rowCount,
-              allKeysInRow0: rawKeys,
-              hasStatusKey: rawKeys.includes("Status"),
-              hasPrStKey: rawKeys.includes("PR ST"),
-              rawRowsWithStatusValue: rawStatusCount,
-              rawRowsWithPrStValue: rawPrStCount,
-              sampleRows: rawSample,
-            }
-          : null,
-        meta,
+        instructions: [
+          "Use ?uploadId=XXXX to inspect a raw upload's data (shows all column keys + status values)",
+          "Use ?blobKey=sales/CLIENTID/massbuild.json to inspect a ledger directly",
+        ],
+        salesBlobs: salesBlobs.map((b) => ({
+          pathname: b.pathname,
+          size: b.size,
+          uploadedAt: b.uploadedAt,
+        })),
+        uploadBlobs: uploadBlobs.map((b) => ({
+          pathname: b.pathname,
+          size: b.size,
+          uploadedAt: b.uploadedAt,
+        })),
       },
       { headers: noCacheHeaders() },
     );
   } catch (err) {
     return handleAuthError(err);
   }
+}
+
+async function listBlobsByPrefix(prefix: string) {
+  const allBlobs: { pathname: string; size: number; uploadedAt: Date; url: string }[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < 10; page++) {
+    const result = await list({ prefix, limit: 100, cursor });
+    allBlobs.push(...result.blobs);
+    if (!result.hasMore) break;
+    cursor = result.cursor;
+  }
+  return allBlobs;
+}
+
+async function inspectBlob(fullKey: string) {
+  // Find the blob
+  const { blobs } = await list({ prefix: fullKey, limit: 10 });
+  const match = blobs.find((b) => b.pathname === fullKey);
+
+  if (!match) {
+    return {
+      error: `Blob not found: ${fullKey}`,
+      foundBlobs: blobs.map((b) => b.pathname),
+    };
+  }
+
+  // Fetch the actual content
+  const res = await fetch(`${match.url}?t=${Date.now()}`, { cache: "no-store" });
+  if (!res.ok) {
+    return {
+      error: `Fetch failed: ${res.status} ${res.statusText}`,
+      blobUrl: match.url,
+      blobSize: match.size,
+    };
+  }
+
+  const text = await res.text();
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return {
+      error: "Not valid JSON",
+      blobSize: match.size,
+      textPreview: text.slice(0, 500),
+    };
+  }
+
+  // If it's an array of objects (rows), analyze the keys + status fields
+  if (Array.isArray(data) && data.length > 0 && typeof data[0] === "object") {
+    const rows = data as Record<string, unknown>[];
+    const allKeys = new Set<string>();
+    for (let i = 0; i < Math.min(rows.length, 20); i++) {
+      for (const k of Object.keys(rows[i])) allKeys.add(k);
+    }
+
+    // Find any key that contains "st" (case-insensitive) to catch status variants
+    const statusLikeKeys = Array.from(allKeys).filter(
+      (k) => k.toLowerCase().includes("st") && !k.toLowerCase().includes("cost") && !k.toLowerCase().includes("dist") && !k.toLowerCase().includes("list")
+    );
+
+    // Sample first 5 rows — show status-like fields + Article + Site
+    const sampleRows = rows.slice(0, 5).map((row) => {
+      const sample: Record<string, unknown> = {
+        Article: row["Article"],
+        Site: row["Site"],
+      };
+      for (const k of statusLikeKeys) {
+        sample[k] = row[k];
+      }
+      return sample;
+    });
+
+    // Count non-empty values for each status-like key
+    const statusKeyCounts: Record<string, number> = {};
+    for (const k of statusLikeKeys) {
+      let count = 0;
+      for (const row of rows) {
+        const v = row[k];
+        if (v !== undefined && v !== null && String(v).trim() !== "") count++;
+      }
+      statusKeyCounts[k] = count;
+    }
+
+    return {
+      blobKey: fullKey,
+      blobSize: match.size,
+      totalRows: rows.length,
+      allKeys: Array.from(allKeys).sort(),
+      statusLikeKeys,
+      statusKeyCounts,
+      sampleRows,
+    };
+  }
+
+  // Otherwise just show the data shape
+  return {
+    blobKey: fullKey,
+    blobSize: match.size,
+    dataType: Array.isArray(data) ? `array[${data.length}]` : typeof data,
+    preview: JSON.stringify(data).slice(0, 1000),
+  };
 }
