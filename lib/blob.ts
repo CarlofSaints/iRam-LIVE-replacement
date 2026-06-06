@@ -1,4 +1,4 @@
-import { put, get, list, del } from "@vercel/blob";
+import { put, list, del } from "@vercel/blob";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from "fs";
 import { join, dirname } from "path";
 
@@ -38,11 +38,16 @@ export async function readJson<T>(key: string, fallback: T): Promise<T> {
     }
   }
 
-  // Use the SDK get() to read blob by pathname (bypasses list + URL fetch)
+  // Use list() to find the blob URL, then fetch directly (cache-busted)
   try {
-    const result = await get(fullKey, { access: "public" });
-    if (!result || result.statusCode !== 200) return fallback;
-    const text = await new Response(result.stream).text();
+    const { blobs } = await list({ prefix: fullKey, limit: 10 });
+    const match = blobs.find((b) => b.pathname === fullKey);
+    if (!match) return fallback;
+    const res = await fetch(`${match.url}?t=${Date.now()}`, {
+      cache: "no-store",
+    });
+    if (!res.ok) return fallback;
+    const text = await res.text();
     const parsed = JSON.parse(text) as T;
     // Warm the cache with what we just read
     writeCache.set(fullKey, { json: text, ts: Date.now() });
