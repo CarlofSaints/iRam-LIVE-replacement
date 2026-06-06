@@ -219,9 +219,17 @@ export async function mergeDispo(params: MergeDispoParams): Promise<MergeResult>
       }
     }
 
-    // Snapshot Nett Cost per year so LY value calculations use the correct price
-    if (uploadPrimaryYear > 0 && hasValue(normalizedRow["Nett Cost"])) {
-      normalizedRow[`_nettCost_${uploadPrimaryYear}`] = normalizedRow["Nett Cost"];
+    // Snapshot pricing per year so LY value calculations use historical prices
+    if (uploadPrimaryYear > 0) {
+      if (hasValue(normalizedRow["Nett Cost"])) {
+        normalizedRow[`_nettCost_${uploadPrimaryYear}`] = normalizedRow["Nett Cost"];
+      }
+      if (hasValue(normalizedRow["Incl SP"])) {
+        normalizedRow[`_inclSP_${uploadPrimaryYear}`] = normalizedRow["Incl SP"];
+      }
+      if (hasValue(normalizedRow["Prom SP"])) {
+        normalizedRow[`_promSP_${uploadPrimaryYear}`] = normalizedRow["Prom SP"];
+      }
     }
 
     const existingRow = ledgerMap.get(key);

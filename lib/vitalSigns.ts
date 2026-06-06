@@ -16,6 +16,16 @@ type Row = Record<string, unknown>;
 
 export interface VitalSignsRow extends Record<string, unknown> {}
 
+const VAT_RATE = 0.15;
+
+/** Effective selling price ex-VAT: Prom SP if > 0, else Incl SP, divided by (1 + VAT) */
+function effectivePriceExVat(row: Row, inclKey = "Incl SP", promKey = "Prom SP"): number {
+  const promSP = Number(row[promKey] ?? 0);
+  const inclSP = Number(row[inclKey] ?? 0);
+  const price = (!isNaN(promSP) && promSP > 0) ? promSP : (!isNaN(inclSP) ? inclSP : 0);
+  return price / (1 + VAT_RATE);
+}
+
 // ── Date column helpers ───────────────────────────────────────
 
 const DATE_RE = /^(\d{2})-(\d{4})$/; // MM-YYYY
@@ -353,15 +363,18 @@ export function computeVitalSigns(
     }
     const aveMonthly = Math.round((totalUnits / monthCount) * 100) / 100;
 
-    // Nett Cost for value calculations
+    // Nett Cost (still used for OTO Value calculation)
     const nettCost = Number(row["Nett Cost"] ?? 0);
+
+    // Selling price ex-VAT for revenue calculations
+    const sellingPrice = effectivePriceExVat(row);
 
     // Build monthly Units/Value columns
     const monthlyData: Record<string, unknown> = {};
     for (const [rawCol, { unitsCol, valueCol }] of dateMap) {
       const units = Number(row[rawCol] ?? 0);
       monthlyData[unitsCol] = isNaN(units) ? 0 : units;
-      monthlyData[valueCol] = isNaN(units) ? 0 : Math.round(units * nettCost * 100) / 100;
+      monthlyData[valueCol] = isNaN(units) ? 0 : Math.round(units * sellingPrice * 100) / 100;
     }
 
     // Curr Y/S — split to units + value
@@ -374,9 +387,12 @@ export function computeVitalSigns(
       if (!isNaN(v)) lyUnits += v;
     }
 
-    // Use LY Nett Cost snapshot if available, fall back to current
-    const lyNettCostRaw = Number(row[`_nettCost_${lastYear}`] ?? 0);
-    const lyNettCost = (!isNaN(lyNettCostRaw) && lyNettCostRaw > 0) ? lyNettCostRaw : nettCost;
+    // LY selling price from snapshots, fall back to current
+    const lySellingPrice = effectivePriceExVat(
+      row,
+      `_inclSP_${lastYear}`,
+      `_promSP_${lastYear}`,
+    ) || sellingPrice;
 
     const output: VitalSignsRow = {
       // 1. Vendor
@@ -449,8 +465,8 @@ export function computeVitalSigns(
       ...monthlyData,
       // Curr Y/S split
       "Curr Y/S Units": currYS,
-      "Curr Y/S Value": Math.round(currYS * nettCost * 100) / 100,
-      "Curr Y/S Value LY": lyUnits > 0 ? Math.round(lyUnits * lyNettCost * 100) / 100 : "",
+      "Curr Y/S Value": Math.round(currYS * sellingPrice * 100) / 100,
+      "Curr Y/S Value LY": lyUnits > 0 ? Math.round(lyUnits * lySellingPrice * 100) / 100 : "",
       "Curr Y/S Units LY": lyUnits > 0 ? lyUnits : "",
       // Trailing columns
       "Composition": row["Compo"] ?? "",
