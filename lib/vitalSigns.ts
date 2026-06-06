@@ -308,6 +308,22 @@ export function computeVitalSigns(
     : dateColumns;
   const monthCount = currentYearCols.length || 1;
 
+  // Determine the max month in the current year (for LY same-period comparison)
+  let maxMonth = 0;
+  for (const col of currentYearCols) {
+    const p = parseDateKey(col);
+    if (p && p.month > maxMonth) maxMonth = p.month;
+  }
+
+  // Last year same-period columns: same months (01..maxMonth) but previous year
+  const lastYear = maxYear - 1;
+  const lyYtdCols = maxYear > 0 && maxMonth > 0
+    ? dateColumns.filter((col) => {
+        const p = parseDateKey(col);
+        return p != null && p.year === lastYear && p.month <= maxMonth;
+      })
+    : [];
+
   return rows.map((row) => {
     // DSC Alert
     const actDsc = Number(row["Act DSC"] ?? 0);
@@ -350,6 +366,13 @@ export function computeVitalSigns(
 
     // Curr Y/S — split to units + value
     const currYS = Number(row["Curr Y/S"] ?? 0);
+
+    // Curr Y/S LY — sum last year's monthly columns for the same period
+    let lyUnits = 0;
+    for (const col of lyYtdCols) {
+      const v = Number(row[col]);
+      if (!isNaN(v)) lyUnits += v;
+    }
 
     const output: VitalSignsRow = {
       // 1. Vendor
@@ -423,8 +446,8 @@ export function computeVitalSigns(
       // Curr Y/S split
       "Curr Y/S Units": currYS,
       "Curr Y/S Value": Math.round(currYS * nettCost * 100) / 100,
-      "Curr Y/S Value LY": "",
-      "Curr Y/S Units LY": "",
+      "Curr Y/S Value LY": lyUnits > 0 ? Math.round(lyUnits * nettCost * 100) / 100 : "",
+      "Curr Y/S Units LY": lyUnits > 0 ? lyUnits : "",
       // Trailing columns
       "Composition": row["Compo"] ?? "",
       "Regions": row["_province"] ?? "",
