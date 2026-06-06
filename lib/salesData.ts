@@ -190,6 +190,16 @@ export async function mergeDispo(params: MergeDispoParams): Promise<MergeResult>
     allDateCols.add(norm);
   }
 
+  // Determine the primary year of this upload (for Nett Cost snapshots)
+  let uploadPrimaryYear = 0;
+  for (const norm of dateNormMap.values()) {
+    const p = norm.match(/^\d{2}-(\d{4})$/);
+    if (p) {
+      const y = parseInt(p[1], 10);
+      if (y > uploadPrimaryYear) uploadPrimaryYear = y;
+    }
+  }
+
   let inserted = 0;
   let updated = 0;
   let unchanged = 0;
@@ -207,6 +217,11 @@ export async function mergeDispo(params: MergeDispoParams): Promise<MergeResult>
       } else {
         normalizedRow[col] = val;
       }
+    }
+
+    // Snapshot Nett Cost per year so LY value calculations use the correct price
+    if (uploadPrimaryYear > 0 && hasValue(normalizedRow["Nett Cost"])) {
+      normalizedRow[`_nettCost_${uploadPrimaryYear}`] = normalizedRow["Nett Cost"];
     }
 
     const existingRow = ledgerMap.get(key);

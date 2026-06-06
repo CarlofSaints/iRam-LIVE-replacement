@@ -374,6 +374,10 @@ export function computeVitalSigns(
       if (!isNaN(v)) lyUnits += v;
     }
 
+    // Use LY Nett Cost snapshot if available, fall back to current
+    const lyNettCostRaw = Number(row[`_nettCost_${lastYear}`] ?? 0);
+    const lyNettCost = (!isNaN(lyNettCostRaw) && lyNettCostRaw > 0) ? lyNettCostRaw : nettCost;
+
     const output: VitalSignsRow = {
       // 1. Vendor
       "Vendor": row["Vendor"] ?? "",
@@ -446,7 +450,7 @@ export function computeVitalSigns(
       // Curr Y/S split
       "Curr Y/S Units": currYS,
       "Curr Y/S Value": Math.round(currYS * nettCost * 100) / 100,
-      "Curr Y/S Value LY": lyUnits > 0 ? Math.round(lyUnits * nettCost * 100) / 100 : "",
+      "Curr Y/S Value LY": lyUnits > 0 ? Math.round(lyUnits * lyNettCost * 100) / 100 : "",
       "Curr Y/S Units LY": lyUnits > 0 ? lyUnits : "",
       // Trailing columns
       "Composition": row["Compo"] ?? "",
