@@ -1,7 +1,9 @@
 import { NextRequest } from "next/server";
 import { requireLogin, noCacheHeaders, handleAuthError } from "@/lib/auth";
-import { getSalesLedger, getSalesLedgerMeta } from "@/lib/salesData";
+import { getSalesLedger, getSalesLedgerMeta, getAllSalesLedgers } from "@/lib/salesData";
 import { getUploadIndex, getUploadData } from "@/lib/uploadData";
+import { getClients } from "@/lib/clientData";
+import { getChannels } from "@/lib/channelData";
 
 export async function GET(req: NextRequest) {
   try {
@@ -11,14 +13,91 @@ export async function GET(req: NextRequest) {
     const clientId = url.searchParams.get("clientId");
     const channelId = url.searchParams.get("channelId");
 
-    if (!clientId || !channelId) {
+    // If no params, show all available data locations
+    if (!clientId) {
+      const [clients, channels, uploads] = await Promise.all([
+        getClients(),
+        getChannels(),
+        getUploadIndex(),
+      ]);
+
+      // Build a map of all ledgers per client
+      const clientLedgers: Record<string, unknown> = {};
+      for (const client of clients) {
+        const ledgers = await getAllSalesLedgers(client.id);
+        if (ledgers.length > 0) {
+          clientLedgers[client.id] = {
+            clientName: client.name,
+            vendorNumbers: client.vendorNumbers,
+            channelIds: client.channelIds,
+            ledgers: ledgers.map((l) => ({
+              channelId: l.channelId,
+              channelName: l.channelName,
+              totalRows: l.totalRows,
+              dateColumns: l.dateColumns,
+              lastMergedAt: l.lastMergedAt,
+            })),
+          };
+        }
+      }
+
+      // Summarize uploads
+      const uploadSummary = uploads.slice(0, 20).map((u) => ({
+        id: u.id,
+        clientId: u.clientId,
+        clientName: u.clientName,
+        channelId: u.channelId,
+        channelName: u.channelName,
+        fileType: u.fileType,
+        fileName: u.fileName,
+        rowCount: u.rowCount,
+        uploadDate: u.uploadDate,
+      }));
+
+      // Channel map for reference
+      const channelMap = channels.map((c) => ({
+        id: c.id,
+        name: c.name,
+        parentId: c.parentId ?? null,
+        isMain: !c.parentId,
+      }));
+
       return Response.json(
-        { error: "clientId and channelId are required" },
-        { status: 400, headers: noCacheHeaders() },
+        {
+          instructions: "Use ?clientId=X&channelId=Y to inspect a specific ledger. Below shows all available data.",
+          clients: clients.map((c) => ({
+            id: c.id,
+            name: c.name,
+            vendorNumbers: c.vendorNumbers,
+            channelIds: c.channelIds,
+          })),
+          channels: channelMap,
+          clientLedgers,
+          recentUploads: uploadSummary,
+        },
+        { headers: noCacheHeaders() },
       );
     }
 
-    // 1. Check the merged ledger
+    if (!channelId) {
+      // Show all ledgers for this client
+      const ledgers = await getAllSalesLedgers(clientId);
+      return Response.json(
+        {
+          instructions: "Add &channelId=X to inspect a specific ledger",
+          clientId,
+          ledgers: ledgers.map((l) => ({
+            channelId: l.channelId,
+            channelName: l.channelName,
+            totalRows: l.totalRows,
+            lastMergedAt: l.lastMergedAt,
+          })),
+        },
+        { headers: noCacheHeaders() },
+      );
+    }
+
+    // Full inspection for a specific clientId + channelId
     const [ledger, meta] = await Promise.all([
       getSalesLedger(clientId, channelId),
       getSalesLedgerMeta(clientId, channelId),
@@ -30,7 +109,6 @@ export async function GET(req: NextRequest) {
     for (let i = 0; i < Math.min(ledger.length, 10); i++) {
       const row = ledger[i];
       for (const k of Object.keys(row)) allKeys.add(k);
-      // Only include status-related fields + Article + Site for readability
       sampleRows.push({
         Article: row["Article"],
         Site: row["Site"],
@@ -52,12 +130,12 @@ export async function GET(req: NextRequest) {
       if (p !== undefined && p !== null && String(p).trim() !== "") prStCount++;
     }
 
-    // 2. Check the most recent raw upload for this client
+    // Check the most recent raw upload for this client+channel
     const uploads = await getUploadIndex();
     const clientUploads = uploads.filter(
       (u) => u.clientId === clientId && u.channelId === channelId && u.fileType === "dispo",
     );
-    const latestUpload = clientUploads[0]; // newest first
+    const latestUpload = clientUploads[0];
 
     let rawSample: Record<string, unknown>[] = [];
     let rawKeys: string[] = [];
