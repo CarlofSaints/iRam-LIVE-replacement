@@ -28,10 +28,15 @@ export default function ReportsPage() {
   const [stats, setStats] = useState<ReportStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
 
-  // Period selectors
+  // Period selectors — Vital Signs
   const [reportYear, setReportYear] = useState<number | "">("");
   const [reportMonth, setReportMonth] = useState<number | "">("");
   const [reportWeek, setReportWeek] = useState<number | "">("");
+
+  // Period selectors — Month-End (independent)
+  const [meYear, setMeYear] = useState<number | "">("");
+  const [meMonth, setMeMonth] = useState<number | "">("");
+  const [meWeek, setMeWeek] = useState<number | "">("");
 
   // Load clients + channels
   useEffect(() => {
@@ -59,6 +64,9 @@ export default function ReportsPage() {
       setReportYear("");
       setReportMonth("");
       setReportWeek("");
+      setMeYear("");
+      setMeMonth("");
+      setMeWeek("");
       return;
     }
     const client = clients.find((c) => c.id === clientId) ?? null;
@@ -78,10 +86,16 @@ export default function ReportsPage() {
           setReportYear(withPeriod.reportYear ?? "");
           setReportMonth(withPeriod.reportMonth ?? "");
           setReportWeek(withPeriod.reportWeek ?? "");
+          setMeYear(withPeriod.reportYear ?? "");
+          setMeMonth(withPeriod.reportMonth ?? "");
+          setMeWeek(withPeriod.reportWeek ?? "");
         } else {
           setReportYear("");
           setReportMonth("");
           setReportWeek("");
+          setMeYear("");
+          setMeMonth("");
+          setMeWeek("");
         }
       } else {
         setLedgers([]);
@@ -228,9 +242,9 @@ export default function ReportsPage() {
         clientId,
         channelIds: effectiveChannelIds.join(","),
       });
-      if (reportYear) params.set("year", String(reportYear));
-      if (reportMonth) params.set("month", String(reportMonth));
-      if (reportWeek) params.set("week", String(reportWeek));
+      if (meYear) params.set("year", String(meYear));
+      if (meMonth) params.set("month", String(meMonth));
+      if (meWeek) params.set("week", String(meWeek));
 
       const res = await authFetch(`/api/reports/month-end?${params}`);
       if (!res.ok) {
@@ -541,7 +555,7 @@ export default function ReportsPage() {
             </h2>
             <p className="mt-1 text-sm text-[var(--color-text-muted)]">
               Sales summary (Sub-Channel, Province, Category, Store, Product),
-              OOS summary, and OOS detail. Uses the same period selectors above.
+              OOS summary, and OOS detail.
             </p>
           </div>
           <button
@@ -557,6 +571,59 @@ export default function ReportsPage() {
             {downloadingMonthEnd ? "Generating..." : "Download Excel"}
           </button>
         </div>
+
+        {/* Period selectors — Month-End */}
+        {clientId && mainChannelId && (
+          <div className="mb-4 grid grid-cols-3 gap-3">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-[var(--color-text-muted)]">
+                Year
+              </label>
+              <select
+                value={meYear}
+                onChange={(e) => setMeYear(e.target.value ? Number(e.target.value) : "")}
+                className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm"
+              >
+                <option value="">Auto</option>
+                {yearOptions.map((y) => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-[var(--color-text-muted)]">
+                Month
+              </label>
+              <select
+                value={meMonth}
+                onChange={(e) => setMeMonth(e.target.value ? Number(e.target.value) : "")}
+                className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm"
+              >
+                <option value="">Auto</option>
+                {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                  <option key={m} value={m}>
+                    {new Date(2000, m - 1).toLocaleString("en", { month: "long" })}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-[var(--color-text-muted)]">
+                Week
+              </label>
+              <select
+                value={meWeek}
+                onChange={(e) => setMeWeek(e.target.value ? Number(e.target.value) : "")}
+                className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm"
+              >
+                <option value="">Auto</option>
+                {Array.from({ length: 5 }, (_, i) => i + 1).map((w) => (
+                  <option key={w} value={w}>W{w}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        )}
 
         <div className="flex flex-wrap gap-2">
           <RequirementBadge
