@@ -21,6 +21,7 @@ export default function ReportsPage() {
   const [ledgers, setLedgers] = useState<SalesLedgerMeta[]>([]);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [downloading, setDownloading] = useState(false);
+  const [downloadingMonthEnd, setDownloadingMonthEnd] = useState(false);
   const [toast, setToast] = useState("");
 
   // Stats
@@ -217,6 +218,51 @@ export default function ReportsPage() {
       setTimeout(() => setToast(""), 4000);
     }
     setDownloading(false);
+  }
+
+  async function downloadMonthEnd() {
+    if (!clientId || effectiveChannelIds.length === 0) return;
+    setDownloadingMonthEnd(true);
+    try {
+      const params = new URLSearchParams({
+        clientId,
+        channelIds: effectiveChannelIds.join(","),
+      });
+      if (reportYear) params.set("year", String(reportYear));
+      if (reportMonth) params.set("month", String(reportMonth));
+      if (reportWeek) params.set("week", String(reportWeek));
+
+      const res = await authFetch(`/api/reports/month-end?${params}`);
+      if (!res.ok) {
+        const err = await res
+          .json()
+          .catch(() => ({ error: "Download failed" }));
+        setToast(err.error ?? "Download failed");
+        setTimeout(() => setToast(""), 4000);
+        setDownloadingMonthEnd(false);
+        return;
+      }
+      const blob = await res.blob();
+      const disposition = res.headers.get("Content-Disposition") ?? "";
+      const fnMatch = disposition.match(/filename="?([^"]+)"?/);
+      const fileName = fnMatch ? fnMatch[1] : "Month_End.xlsx";
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+
+      setToast("Month-End report downloaded");
+      setTimeout(() => setToast(""), 3000);
+    } catch {
+      setToast("Download failed");
+      setTimeout(() => setToast(""), 4000);
+    }
+    setDownloadingMonthEnd(false);
   }
 
   const currentYear = new Date().getFullYear();
@@ -484,6 +530,48 @@ export default function ReportsPage() {
             Select at least one sub channel.
           </p>
         )}
+      </div>
+
+      {/* Month-End Report Card */}
+      <div className="mt-6 rounded-xl border border-[var(--color-border)] bg-white p-6">
+        <div className="mb-4 flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-[var(--color-text)]">
+              Month-End Report
+            </h2>
+            <p className="mt-1 text-sm text-[var(--color-text-muted)]">
+              Sales summary (Sub-Channel, Province, Category, Store, Product),
+              OOS summary, and OOS detail. Uses the same period selectors above.
+            </p>
+          </div>
+          <button
+            onClick={downloadMonthEnd}
+            disabled={
+              downloadingMonthEnd ||
+              !clientId ||
+              effectiveChannelIds.length === 0 ||
+              !hasLedger
+            }
+            className="rounded-lg bg-[var(--color-primary)] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)] disabled:opacity-50"
+          >
+            {downloadingMonthEnd ? "Generating..." : "Download Excel"}
+          </button>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <RequirementBadge
+            label="Sales Ledger"
+            met={hasLedger}
+            detail={
+              selectedLedgerRows > 0
+                ? `${selectedLedgerRows} rows`
+                : "No data"
+            }
+          />
+          <RequirementBadge label="PMF" met={hasPmf} detail={hasPmf ? "Uploaded" : "Not uploaded"} />
+          <RequirementBadge label="LINKS" met={hasLinks} detail={hasLinks ? "Uploaded" : "Not uploaded"} />
+          <RequirementBadge label="Store Files" met={true} detail="Optional" />
+        </div>
       </div>
     </div>
   );
