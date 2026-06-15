@@ -13,6 +13,9 @@
    Also computes OOS summary + detail data.
    ────────────────────────────────────────────────────────────── */
 
+import type { StatusDefinition, StatusScenario, StatusClassification } from "./types";
+import { evaluateScenarios } from "./statusScenarioData";
+
 type Row = Record<string, unknown>;
 
 const VAT_RATE = 0.15;
@@ -187,9 +190,10 @@ function aggregateRows(
   ctx: DateContext,
   groupKey: (row: Row) => string,
   totalYtd: number,
-  mode: "volume" | "value"
+  mode: "volume" | "value",
+  countMode: "stores" | "skus" = "stores"
 ): SummaryRow[] {
-  const groups = new Map<string, { metrics: RowMetrics; stores: Set<string> }>();
+  const groups = new Map<string, { metrics: RowMetrics; stores: Set<string>; skuCount: number }>();
 
   for (const row of rows) {
     const key = groupKey(row);
@@ -201,6 +205,7 @@ function aggregateRows(
       group = {
         metrics: { ytdUnits: 0, ytdValue: 0, lyYtdUnits: 0, lyYtdValue: 0, currentMonthUnits: 0, currentMonthValue: 0, sameMonthLyUnits: 0, sameMonthLyValue: 0, lastMonthUnits: 0, lastMonthValue: 0 },
         stores: new Set(),
+        skuCount: 0,
       };
       groups.set(key, group);
     }
@@ -216,11 +221,20 @@ function aggregateRows(
     group.metrics.lastMonthUnits += m.lastMonthUnits;
     group.metrics.lastMonthValue += m.lastMonthValue;
     if (site) group.stores.add(site);
+
+    if (countMode === "skus") {
+      // Count a SKU instance for this group when the product has any sales
+      // (this year or last) and/or any stock on hand at this store.
+      const soh = Number(row["SOH"] ?? 0);
+      const hasStock = !isNaN(soh) && soh > 0;
+      const hasSales = m.ytdUnits > 0 || m.lyYtdUnits > 0;
+      if (hasSales || hasStock) group.skuCount++;
+    }
   }
 
   const result: SummaryRow[] = [];
 
-  for (const [name, { metrics, stores }] of groups) {
+  for (const [name, { metrics, stores, skuCount }] of groups) {
     const ytd = mode === "volume" ? metrics.ytdUnits : metrics.ytdValue;
     const lyYtd = mode === "volume" ? metrics.lyYtdUnits : metrics.lyYtdValue;
     const cm = mode === "volume" ? metrics.currentMonthUnits : metrics.currentMonthValue;
@@ -229,7 +243,7 @@ function aggregateRows(
 
     result.push({
       name,
-      storeCount: stores.size,
+      storeCount: countMode === "skus" ? skuCount : stores.size,
       ytd: r2(ytd),
       lyYtd: r2(lyYtd),
       currentMonth: r2(cm),
@@ -254,7 +268,7 @@ function r2(n: number): number {
 
 // ── Grand total row ────────────────────────────────────────────
 
-function computeGrandTotal(summaryRows: SummaryRow[]): SummaryRow {
+function computeGrandTotal(summaryRows: SummaryRow[], totalStoreCount?: number): SummaryRow {
   const totals: SummaryRow = {
     name: "GRAND TOTAL",
     storeCount: 0, // will be set from unique stores across all groups
@@ -275,8 +289,13 @@ function computeGrandTotal(summaryRows: SummaryRow[]): SummaryRow {
     totals.currentMonth += row.currentMonth;
     totals.sameMonthLy += row.sameMonthLy;
     totals.lastMonth += row.lastMonth;
-    totals.storeCount += row.storeCount; // approximate — groups may share stores
+    // Sum per-group counts only as a fallback. For "stores" mode this
+    // over-counts at levels where a store appears in many groups
+    // (Category, Product), so the caller passes the true unique total.
+    if (totalStoreCount === undefined) totals.storeCount += row.storeCount;
   }
+
+  if (totalStoreCount !== undefined) totals.storeCount = totalStoreCount;
 
   totals.ytd = r2(totals.ytd);
   totals.lyYtd = r2(totals.lyYtd);
@@ -313,6 +332,16 @@ export function buildSalesSummary(
     grandYtdValue += m.ytdValue;
   }
 
+  // True unique store count across the whole dataset — used for the grand
+  // total of every "stores" mode level (a store can sit in many Category /
+  // Product groups, so summing per-group counts would over-count).
+  const storeSet = new Set<string>();
+  for (const row of rows) {
+    const s = String(row["Site"] ?? "").trim();
+    if (s) storeSet.add(s);
+  }
+  const tStores = storeSet.size;
+
   const levels: SalesSummaryLevel[] = [];
 
   // Level 1: Sub-Channel
@@ -321,9 +350,9 @@ export function buildSalesSummary(
   levels.push({
     level: "Sub-Channel",
     volumeRows: subChVolume,
-    volumeTotal: computeGrandTotal(subChVolume),
+    volumeTotal: computeGrandTotal(subChVolume, tStores),
     valueRows: subChValue,
-    valueTotal: computeGrandTotal(subChValue),
+    valueTotal: computeGrandTotal(subChValue, tStores),
   });
 
   // Level 2: Province
@@ -332,9 +361,9 @@ export function buildSalesSummary(
   levels.push({
     level: "Province",
     volumeRows: provVolume,
-    volumeTotal: computeGrandTotal(provVolume),
+    volumeTotal: computeGrandTotal(provVolume, tStores),
     valueRows: provValue,
-    valueTotal: computeGrandTotal(provValue),
+    valueTotal: computeGrandTotal(provValue, tStores),
   });
 
   // Level 3: Category
@@ -343,14 +372,15 @@ export function buildSalesSummary(
   levels.push({
     level: "Category",
     volumeRows: catVolume,
-    volumeTotal: computeGrandTotal(catVolume),
+    volumeTotal: computeGrandTotal(catVolume, tStores),
     valueRows: catValue,
-    valueTotal: computeGrandTotal(catValue),
+    valueTotal: computeGrandTotal(catValue, tStores),
   });
 
-  // Level 4: Store
-  const storeVolume = aggregateRows(rows, ctx, (r) => String(r["_storeName"] || r["Site Name"] || r["Site"] || "Unknown"), grandYtdUnits, "volume");
-  const storeValue = aggregateRows(rows, ctx, (r) => String(r["_storeName"] || r["Site Name"] || r["Site"] || "Unknown"), grandYtdValue, "value");
+  // Level 4: Store — count is "Number of SKUs" (SKU instances with sales
+  // and/or stock at the store), not store count.
+  const storeVolume = aggregateRows(rows, ctx, (r) => String(r["_storeName"] || r["Site Name"] || r["Site"] || "Unknown"), grandYtdUnits, "volume", "skus");
+  const storeValue = aggregateRows(rows, ctx, (r) => String(r["_storeName"] || r["Site Name"] || r["Site"] || "Unknown"), grandYtdValue, "value", "skus");
   levels.push({
     level: "Store",
     volumeRows: storeVolume,
@@ -365,9 +395,9 @@ export function buildSalesSummary(
   levels.push({
     level: "Product",
     volumeRows: prodVolume,
-    volumeTotal: computeGrandTotal(prodVolume),
+    volumeTotal: computeGrandTotal(prodVolume, tStores),
     valueRows: prodValue,
-    valueTotal: computeGrandTotal(prodValue),
+    valueTotal: computeGrandTotal(prodValue, tStores),
   });
 
   return levels;
@@ -376,56 +406,122 @@ export function buildSalesSummary(
 // ── OOS Summary ────────────────────────────────────────────────
 
 export interface OOSSummary {
-  baseCount: number;       // total rows
-  oosCount: number;        // rows where SOH < 1
+  baseCount: number;       // SKU×store rows with stock and/or sales (the base)
+  oosCount: number;        // base rows where SOH <= 0
   oosPct: number;
   productSummary: OOSProductRow[];
+  storeSummary: OOSStoreRow[];
 }
 
 export interface OOSProductRow {
   article: string;
   description: string;
   category: string;
-  totalStores: number;
-  oosStores: number;
+  totalStores: number;     // sites where this SKU has stock and/or sales
+  oosStores: number;       // those sites where SOH <= 0
   oosPct: number;
 }
 
-export function buildOOSSummary(rows: Row[]): OOSSummary {
-  const baseCount = rows.length;
+export interface OOSStoreRow {
+  site: string;
+  siteName: string;
+  subChannel: string;
+  totalSkus: number;       // SKUs in this store with stock and/or sales
+  oosSkus: number;         // those SKUs where SOH <= 0
+  oosPct: number;
+}
+
+// Parse a possibly string/blank numeric cell. Blank → blankAs; non-numeric → NaN.
+function parseNum(v: unknown, blankAs: number): number {
+  if (typeof v === "number") return v;
+  if (v == null) return blankAs;
+  const s = String(v).replace(/,/g, "").trim();
+  if (s === "") return blankAs;
+  const n = Number(s);
+  return isNaN(n) ? NaN : n;
+}
+
+// A SKU×store is "in base" if it has stock on hand and/or any sales (across the
+// ledger's date columns). It is OOS when, being in base, its SOH is 0 or below.
+function classifyOOS(row: Row, dateColumns: string[]): { inBase: boolean; isOOS: boolean } {
+  const soh = parseNum(row["SOH"], 0);
+  const hasStock = !isNaN(soh) && soh > 0;
+
+  let salesUnits = 0;
+  for (const col of dateColumns) {
+    const v = parseNum(row[col], 0);
+    if (!isNaN(v)) salesUnits += v;
+  }
+  const hasSales = salesUnits > 0;
+
+  const inBase = hasStock || hasSales;
+  const isOOS = inBase && !isNaN(soh) && soh <= 0;
+  return { inBase, isOOS };
+}
+
+export function buildOOSSummary(rows: Row[], dateColumns: string[]): OOSSummary {
+  let baseCount = 0;
   let oosCount = 0;
 
-  // Per-product: total stores + OOS stores
+  // Per-product: base sites + OOS sites (counts distinct sites)
   const productMap = new Map<string, {
     description: string;
     category: string;
-    totalStores: Set<string>;
+    baseStores: Set<string>;
     oosStores: Set<string>;
   }>();
 
+  // Per-store: base SKUs + OOS SKUs (counts distinct SKUs)
+  const storeMap = new Map<string, {
+    siteName: string;
+    subChannel: string;
+    baseSkus: Set<string>;
+    oosSkus: Set<string>;
+  }>();
+
   for (const row of rows) {
-    const soh = Number(row["SOH"] ?? 0);
-    const isOOS = !isNaN(soh) && soh < 1;
+    const { inBase, isOOS } = classifyOOS(row, dateColumns);
+    if (!inBase) continue; // ignore rows with neither stock nor sales
+
+    baseCount++;
     if (isOOS) oosCount++;
 
     const article = String(row["Article"] ?? "").trim();
-    if (!article) continue;
+    const site = String(row["Site"] ?? "").trim();
 
-    let entry = productMap.get(article);
-    if (!entry) {
-      entry = {
-        description: String(row["Article Desc"] ?? ""),
-        category: String(row["_category"] ?? ""),
-        totalStores: new Set(),
-        oosStores: new Set(),
-      };
-      productMap.set(article, entry);
+    if (article) {
+      let entry = productMap.get(article);
+      if (!entry) {
+        entry = {
+          description: String(row["Article Desc"] ?? ""),
+          category: String(row["_category"] ?? ""),
+          baseStores: new Set(),
+          oosStores: new Set(),
+        };
+        productMap.set(article, entry);
+      }
+      if (site) {
+        entry.baseStores.add(site);
+        if (isOOS) entry.oosStores.add(site);
+      }
     }
 
-    const site = String(row["Site"] ?? "").trim();
     if (site) {
-      entry.totalStores.add(site);
-      if (isOOS) entry.oosStores.add(site);
+      let s = storeMap.get(site);
+      if (!s) {
+        s = {
+          siteName: String(row["_storeName"] || row["Site Name"] || ""),
+          subChannel: String(row["_storeSubChannel"] || row["_storeChannel"] || ""),
+          baseSkus: new Set(),
+          oosSkus: new Set(),
+        };
+        storeMap.set(site, s);
+      }
+      const skuKey = article || String(row["Article Desc"] ?? "");
+      if (skuKey) {
+        s.baseSkus.add(skuKey);
+        if (isOOS) s.oosSkus.add(skuKey);
+      }
     }
   }
 
@@ -436,22 +532,36 @@ export function buildOOSSummary(rows: Row[]): OOSSummary {
       article,
       description: entry.description,
       category: entry.category,
-      totalStores: entry.totalStores.size,
+      totalStores: entry.baseStores.size,
       oosStores: entry.oosStores.size,
-      oosPct: entry.totalStores.size > 0
-        ? r2((entry.oosStores.size / entry.totalStores.size) * 100)
+      oosPct: entry.baseStores.size > 0
+        ? r2((entry.oosStores.size / entry.baseStores.size) * 100)
         : 0,
     });
   }
-
-  // Sort by OOS % descending
   productSummary.sort((a, b) => b.oosPct - a.oosPct);
+
+  const storeSummary: OOSStoreRow[] = [];
+  for (const [site, s] of storeMap) {
+    storeSummary.push({
+      site,
+      siteName: s.siteName,
+      subChannel: s.subChannel,
+      totalSkus: s.baseSkus.size,
+      oosSkus: s.oosSkus.size,
+      oosPct: s.baseSkus.size > 0
+        ? r2((s.oosSkus.size / s.baseSkus.size) * 100)
+        : 0,
+    });
+  }
+  storeSummary.sort((a, b) => b.oosPct - a.oosPct);
 
   return {
     baseCount,
     oosCount,
     oosPct: baseCount > 0 ? r2((oosCount / baseCount) * 100) : 0,
     productSummary,
+    storeSummary,
   };
 }
 
@@ -470,17 +580,20 @@ export interface OOSDetailRow {
   soo: number;
   sit: number;
   status: string;
+  productStatus: string;
   dscAlert: string;
   dateLastSold: string;
   brand: string;
 }
 
-export function buildOOSDetail(rows: Row[]): OOSDetailRow[] {
+export function buildOOSDetail(rows: Row[], dateColumns: string[]): OOSDetailRow[] {
   const detail: OOSDetailRow[] = [];
 
   for (const row of rows) {
-    const soh = Number(row["SOH"] ?? 0);
-    if (isNaN(soh) || soh >= 1) continue;
+    const { isOOS } = classifyOOS(row, dateColumns);
+    if (!isOOS) continue;
+
+    const soh = parseNum(row["SOH"], 0);
 
     detail.push({
       subChannel: String(row["_storeSubChannel"] || row["_storeChannel"] || ""),
@@ -491,10 +604,11 @@ export function buildOOSDetail(rows: Row[]): OOSDetailRow[] {
       description: String(row["Article Desc"] ?? ""),
       site: String(row["Site"] ?? ""),
       siteName: String(row["_storeName"] || row["Site Name"] || ""),
-      soh,
-      soo: Number(row["SOO"] ?? 0),
-      sit: Number(row["SIT"] ?? 0),
+      soh: isNaN(soh) ? 0 : soh,
+      soo: parseNum(row["SOO"], 0) || 0,
+      sit: parseNum(row["SIT"], 0) || 0,
       status: String(row["Status"] ?? row["PR ST"] ?? ""),
+      productStatus: String(row["_productStatus"] || ""),
       dscAlert: String(row["_dscAlert"] || ""),
       dateLastSold: String(row["_dateLastSold"] || ""),
       brand: String(row["_brand"] || ""),
@@ -510,4 +624,301 @@ export function buildOOSDetail(rows: Row[]): OOSDetailRow[] {
   );
 
   return detail;
+}
+
+// ── Status (PMF Product Status vs DISPO PR ST) ─────────────────
+//
+// Classification reuses the Status Reference logic: a scenario match
+// (keyed by PR ST + conditions on PMF status / ranging) wins; otherwise
+// fall back to the channel-level status definition for that code.
+
+const BLANK = "(blank)";
+
+function prstDisplay(row: Row): string {
+  const raw = String(row["Status"] ?? row["PR ST"] ?? "").trim();
+  return raw === "" ? BLANK : raw.toUpperCase();
+}
+
+function pmfStatusDisplay(row: Row): string {
+  const raw = String(row["_productStatus"] ?? "").trim();
+  return raw === "" ? BLANK : raw.toUpperCase();
+}
+
+export function classifyRowStatus(
+  row: Row,
+  statusDefs: StatusDefinition[],
+  scenarios: StatusScenario[],
+): StatusClassification {
+  const upper = String(row["Status"] ?? row["PR ST"] ?? "").trim().toUpperCase();
+  const scenario = evaluateScenarios(upper, row, scenarios);
+  if (scenario !== null) return scenario;
+  const def = statusDefs.find((s) => s.code === upper);
+  if (def) return def.classification;
+  return "UNCLASSIFIED";
+}
+
+export interface StatusCountRow {
+  prst: string;
+  count: number;
+  contributionPct: number;
+}
+
+export interface StatusPmfRow {
+  pmfStatus: string;
+  prst: string;
+  count: number;
+  contributionPct: number;
+  classification: StatusClassification | "MIXED";
+}
+
+export interface StatusSummary {
+  baseCount: number;
+  prst: StatusCountRow[];        // Table 1: PR ST breakdown
+  prstByPmf: StatusPmfRow[];     // Table 2: PR ST × PMF Product Status
+}
+
+export function buildStatusSummary(
+  rows: Row[],
+  dateColumns: string[],
+  statusDefs: StatusDefinition[],
+  scenarios: StatusScenario[],
+): StatusSummary {
+  let baseCount = 0;
+  const prstMap = new Map<string, number>();
+  const comboMap = new Map<string, { pmf: string; prst: string; count: number; pos: number; neg: number; unc: number }>();
+
+  for (const row of rows) {
+    const { inBase } = classifyOOS(row, dateColumns);
+    if (!inBase) continue; // same SKU×store base as OOS
+    baseCount++;
+
+    const prst = prstDisplay(row);
+    prstMap.set(prst, (prstMap.get(prst) ?? 0) + 1);
+
+    const pmf = pmfStatusDisplay(row);
+    const cls = classifyRowStatus(row, statusDefs, scenarios);
+    const key = `${pmf}|||${prst}`;
+    let c = comboMap.get(key);
+    if (!c) {
+      c = { pmf, prst, count: 0, pos: 0, neg: 0, unc: 0 };
+      comboMap.set(key, c);
+    }
+    c.count++;
+    if (cls === "POSITIVE") c.pos++;
+    else if (cls === "NEGATIVE") c.neg++;
+    else c.unc++;
+  }
+
+  const prst: StatusCountRow[] = [];
+  for (const [code, count] of prstMap) {
+    prst.push({ prst: code, count, contributionPct: baseCount > 0 ? r2((count / baseCount) * 100) : 0 });
+  }
+  prst.sort((a, b) => b.count - a.count);
+
+  const prstByPmf: StatusPmfRow[] = [];
+  for (const c of comboMap.values()) {
+    const distinct = [c.pos > 0, c.neg > 0, c.unc > 0].filter(Boolean).length;
+    let classification: StatusPmfRow["classification"];
+    if (distinct > 1) classification = "MIXED";
+    else if (c.neg > 0) classification = "NEGATIVE";
+    else if (c.pos > 0) classification = "POSITIVE";
+    else classification = "UNCLASSIFIED";
+    prstByPmf.push({
+      pmfStatus: c.pmf,
+      prst: c.prst,
+      count: c.count,
+      contributionPct: baseCount > 0 ? r2((c.count / baseCount) * 100) : 0,
+      classification,
+    });
+  }
+  prstByPmf.sort((a, b) =>
+    a.pmfStatus.localeCompare(b.pmfStatus) || b.count - a.count
+  );
+
+  return { baseCount, prst, prstByPmf };
+}
+
+// ── Status Detail (negative SKU×store combinations only) ───────
+
+export interface StatusDetailRow {
+  subChannel: string;
+  province: string;
+  category: string;
+  brand: string;
+  article: string;
+  description: string;
+  site: string;
+  siteName: string;
+  prst: string;
+  productStatus: string;
+  ranging: string;
+}
+
+export function buildStatusDetail(
+  rows: Row[],
+  dateColumns: string[],
+  statusDefs: StatusDefinition[],
+  scenarios: StatusScenario[],
+): StatusDetailRow[] {
+  const detail: StatusDetailRow[] = [];
+
+  for (const row of rows) {
+    const { inBase } = classifyOOS(row, dateColumns);
+    if (!inBase) continue;
+    if (classifyRowStatus(row, statusDefs, scenarios) !== "NEGATIVE") continue;
+
+    detail.push({
+      subChannel: String(row["_storeSubChannel"] || row["_storeChannel"] || ""),
+      province: String(row["_province"] || ""),
+      category: String(row["_category"] || ""),
+      brand: String(row["_brand"] || ""),
+      article: String(row["Article"] ?? ""),
+      description: String(row["Article Desc"] ?? ""),
+      site: String(row["Site"] ?? ""),
+      siteName: String(row["_storeName"] || row["Site Name"] || ""),
+      prst: prstDisplay(row),
+      productStatus: pmfStatusDisplay(row),
+      ranging: row["_rangingStatus"] === true ? "Yes" : "No",
+    });
+  }
+
+  detail.sort((a, b) =>
+    a.subChannel.localeCompare(b.subChannel) ||
+    a.province.localeCompare(b.province) ||
+    a.category.localeCompare(b.category) ||
+    a.siteName.localeCompare(b.siteName)
+  );
+
+  return detail;
+}
+
+// ── Margin Opportunity & Risk ──────────────────────────────────
+//
+// For each site/SKU with SOH > 0 and valid costs:
+//   MAC < Nett Cost → OPPORTUNITY (retailer's cost is below ours; we can
+//     drop the shelf price while holding our product margin)
+//   MAC > Nett Cost → RISK (retailer's cost is above ours; margin eroded —
+//     we either pay margin support or supply free stock)
+//
+// Product Margin (not in DISPO) = ((Incl SP / 1.15) − Nett Cost) / (Incl SP / 1.15)
+
+export interface MarginRow {
+  site: string;
+  siteName: string;
+  productCode: string;
+  article: string;
+  productStatus: string;
+  prst: string;
+  soh: number;
+  mac: number;
+  nettCost: number;
+  inclSP: number;
+  prodMargin: number;   // fraction (e.g. 0.29)
+  stkMargin: number;    // fraction
+  macVsNett: number;    // Nett Cost − MAC
+  marginStatus: "RISK" | "OPPORTUNITY";
+  marginSupport: number | null;   // RISK: SOH × (MAC − Nett)
+  freeStockUnits: number | null;  // RISK: marginSupport / Nett
+  suggestedSP: number | null;     // OPPORTUNITY: MAC / (1 − prodMargin) × 1.15
+}
+
+export interface MarginSummary {
+  base: number;             // SOH>0 with valid MAC + Nett Cost
+  opportunityCount: number;
+  riskCount: number;
+  totalMarginSupport: number;
+  totalFreeStockUnits: number;
+}
+
+export interface MarginAnalysis {
+  summary: MarginSummary;
+  rows: MarginRow[];
+}
+
+// DISPO STK Margin may arrive as a fraction (0.47) or percentage points (47).
+function marginFraction(raw: unknown): number {
+  const v = parseNum(raw, 0);
+  if (isNaN(v)) return 0;
+  return Math.abs(v) > 1 ? v / 100 : v;
+}
+
+export function buildMarginAnalysis(rows: Row[]): MarginAnalysis {
+  const out: MarginRow[] = [];
+  let base = 0;
+  let opportunityCount = 0;
+  let riskCount = 0;
+  let totalMarginSupport = 0;
+  let totalFreeStockUnits = 0;
+
+  for (const row of rows) {
+    const soh = parseNum(row["SOH"], 0);
+    const mac = parseNum(row["MAC"], NaN);
+    const nett = parseNum(row["Nett Cost"], NaN);
+    if (isNaN(soh) || soh <= 0) continue;
+    if (isNaN(mac) || mac <= 0 || isNaN(nett) || nett <= 0) continue;
+    base++;
+
+    let status: "RISK" | "OPPORTUNITY" | null = null;
+    if (mac < nett) status = "OPPORTUNITY";
+    else if (mac > nett) status = "RISK";
+    if (!status) continue; // MAC == Nett → neither
+
+    const inclSP = parseNum(row["Incl SP"], 0);
+    const inclEx = inclSP > 0 ? inclSP / (1 + VAT_RATE) : 0;
+    const prodMargin = inclEx > 0 ? (inclEx - nett) / inclEx : 0;
+    const stkMargin = marginFraction(row["Stock Margin"]);
+
+    let marginSupport: number | null = null;
+    let freeStockUnits: number | null = null;
+    let suggestedSP: number | null = null;
+
+    if (status === "RISK") {
+      marginSupport = soh * (mac - nett);
+      freeStockUnits = nett !== 0 ? marginSupport / nett : null;
+      riskCount++;
+      totalMarginSupport += marginSupport;
+      if (freeStockUnits != null) totalFreeStockUnits += freeStockUnits;
+    } else {
+      suggestedSP = (1 - prodMargin) !== 0 ? (mac / (1 - prodMargin)) * (1 + VAT_RATE) : null;
+      opportunityCount++;
+    }
+
+    out.push({
+      site: String(row["Site"] ?? ""),
+      siteName: String(row["_storeName"] || row["Site Name"] || ""),
+      productCode: String(row["_clientProductId"] || ""),
+      article: String(row["Article"] ?? ""),
+      productStatus: String(row["_productStatus"] || ""),
+      prst: String(row["Status"] ?? row["PR ST"] ?? ""),
+      soh,
+      mac,
+      nettCost: nett,
+      inclSP,
+      prodMargin,
+      stkMargin,
+      macVsNett: nett - mac,
+      marginStatus: status,
+      marginSupport: marginSupport === null ? null : r2(marginSupport),
+      freeStockUnits: freeStockUnits === null ? null : r2(freeStockUnits),
+      suggestedSP: suggestedSP === null ? null : r2(suggestedSP),
+    });
+  }
+
+  // Risks first (by support desc), then opportunities
+  out.sort((a, b) => {
+    if (a.marginStatus !== b.marginStatus) return a.marginStatus === "RISK" ? -1 : 1;
+    if (a.marginStatus === "RISK") return (b.marginSupport ?? 0) - (a.marginSupport ?? 0);
+    return (b.suggestedSP ?? 0) - (a.suggestedSP ?? 0);
+  });
+
+  return {
+    summary: {
+      base,
+      opportunityCount,
+      riskCount,
+      totalMarginSupport: r2(totalMarginSupport),
+      totalFreeStockUnits: r2(totalFreeStockUnits),
+    },
+    rows: out,
+  };
 }

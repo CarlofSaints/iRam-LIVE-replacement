@@ -10,9 +10,14 @@ import {
   buildSalesSummary,
   buildOOSSummary,
   buildOOSDetail,
+  buildStatusSummary,
+  buildStatusDetail,
+  buildMarginAnalysis,
 } from "@/lib/monthEndReport";
 import { buildMonthEndWorkbook } from "@/lib/monthEndExcel";
 import { calcMonthLastSold } from "@/lib/vitalSigns";
+import { getStatusDefinitions } from "@/lib/statusData";
+import { getStatusScenarios } from "@/lib/statusScenarioData";
 
 export const maxDuration = 120;
 
@@ -43,6 +48,12 @@ export async function GET(req: NextRequest) {
     const yearParam = url.searchParams.get("year");
     const monthParam = url.searchParams.get("month");
     const weekParam = url.searchParams.get("week");
+
+    // Optional dimension filters (multi-value, comma-separated)
+    const subChFilter = (url.searchParams.get("subChannels") || "")
+      .split(",").map((s) => s.trim()).filter(Boolean);
+    const catFilter = (url.searchParams.get("categories") || "")
+      .split(",").map((s) => s.trim()).filter(Boolean);
 
     // 1. Load and merge sales ledgers from all selected channels
     const ledgerResults = await Promise.all(
@@ -85,8 +96,8 @@ export async function GET(req: NextRequest) {
     const config = await getReportConfig(clientId);
 
     // 4. Enrich rows with DSC alert + date last sold for OOS Detail
-    const enrichedRows = enriched.rows.map((row) => {
-      const actDsc = Number(row["Act DSC"] ?? 0);
+    const enrichedRows: Record<string, unknown>[] = enriched.rows.map((row) => {
+      const actDsc = Number((row as Record<string, unknown>)["Act DSC"] ?? 0);
       return {
         ...row,
         _dscAlert: classifyDSC(actDsc, config.dscBrackets),
@@ -94,13 +105,35 @@ export async function GET(req: NextRequest) {
       };
     });
 
+    // 4b. Apply optional sub-channel / category filters (scopes every sheet)
+    const subSet = new Set(subChFilter);
+    const catSet = new Set(catFilter);
+    const reportRows = (subSet.size || catSet.size)
+      ? enrichedRows.filter((row) => {
+          const sub = String(row["_storeSubChannel"] || row["_storeChannel"] || "");
+          const cat = String(row["_category"] || "");
+          if (subSet.size && !subSet.has(sub)) return false;
+          if (catSet.size && !catSet.has(cat)) return false;
+          return true;
+        })
+      : enrichedRows;
+
     // 5. Build date context
     const ctx = buildDateContext(dateColumns);
 
-    // 6. Build all report data
-    const salesSummary = buildSalesSummary(enrichedRows, ctx);
-    const oosSummary = buildOOSSummary(enrichedRows);
-    const oosDetail = buildOOSDetail(enrichedRows);
+    // Status classification inputs (Status Reference logic)
+    const [statusDefs, statusScenarios] = await Promise.all([
+      getStatusDefinitions(),
+      getStatusScenarios(),
+    ]);
+
+    // 6. Build all report data (from the filtered row set)
+    const salesSummary = buildSalesSummary(reportRows, ctx);
+    const oosSummary = buildOOSSummary(reportRows, dateColumns);
+    const oosDetail = buildOOSDetail(reportRows, dateColumns);
+    const statusSummary = buildStatusSummary(reportRows, dateColumns, statusDefs, statusScenarios);
+    const statusDetail = buildStatusDetail(reportRows, dateColumns, statusDefs, statusScenarios);
+    const marginAnalysis = buildMarginAnalysis(reportRows);
 
     // 7. Build period label
     const client = await getClientById(clientId);
@@ -114,7 +147,7 @@ export async function GET(req: NextRequest) {
     const periodLabel = `${monthNames[rMonth] || rMonth} ${rYear} Wk${rWeek}`;
     const channelLabel = channelNames.join(", ") || channelIds.join(", ");
 
-    // 8. Build Excel workbook
+    // 8. Build Excel workbook (Data sheet holds the filtered enriched rows)
     const buf = await buildMonthEndWorkbook(
       salesSummary,
       oosSummary,
@@ -122,6 +155,11 @@ export async function GET(req: NextRequest) {
       clientName || client?.name || "Unknown",
       channelLabel,
       periodLabel,
+      reportRows,
+      dateColumns,
+      statusSummary,
+      statusDetail,
+      marginAnalysis,
     );
 
     // 9. Log activity

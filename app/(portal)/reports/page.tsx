@@ -38,6 +38,12 @@ export default function ReportsPage() {
   const [meMonth, setMeMonth] = useState<number | "">("");
   const [meWeek, setMeWeek] = useState<number | "">("");
 
+  // Dimension filters — Month-End (Sub-Channel + Category)
+  const [dimSubChannels, setDimSubChannels] = useState<string[]>([]);
+  const [dimCategories, setDimCategories] = useState<string[]>([]);
+  const [meSubChannels, setMeSubChannels] = useState<string[]>([]);
+  const [meCategories, setMeCategories] = useState<string[]>([]);
+
   // Load clients + channels
   useEffect(() => {
     (async () => {
@@ -160,6 +166,35 @@ export default function ReportsPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientId, mainChannelId, selectedSubIds.join(",")]);
 
+  // Load Month-End filter options (sub-channels + categories) for the selection
+  useEffect(() => {
+    setMeSubChannels([]);
+    setMeCategories([]);
+    if (!clientId || effectiveChannelIds.length === 0) {
+      setDimSubChannels([]);
+      setDimCategories([]);
+      return;
+    }
+    const params = new URLSearchParams({ clientId, channelIds: effectiveChannelIds.join(",") });
+    (async () => {
+      try {
+        const res = await authFetch(`/api/reports/dimensions?${params}`);
+        if (res.ok) {
+          const d = await res.json();
+          setDimSubChannels(d.subChannels ?? []);
+          setDimCategories(d.categories ?? []);
+        } else {
+          setDimSubChannels([]);
+          setDimCategories([]);
+        }
+      } catch {
+        setDimSubChannels([]);
+        setDimCategories([]);
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientId, mainChannelId, selectedSubIds.join(",")]);
+
   // Data requirement checks
   const hasLedger =
     effectiveChannelIds.length > 0 &&
@@ -245,6 +280,8 @@ export default function ReportsPage() {
       if (meYear) params.set("year", String(meYear));
       if (meMonth) params.set("month", String(meMonth));
       if (meWeek) params.set("week", String(meWeek));
+      if (meSubChannels.length) params.set("subChannels", meSubChannels.join(","));
+      if (meCategories.length) params.set("categories", meCategories.join(","));
 
       const res = await authFetch(`/api/reports/month-end?${params}`);
       if (!res.ok) {
@@ -625,6 +662,37 @@ export default function ReportsPage() {
           </div>
         )}
 
+        {/* Dimension filters — Sub-Channel + Category (empty = all) */}
+        {clientId && mainChannelId && (dimSubChannels.length > 0 || dimCategories.length > 0) && (
+          <div className="mb-4 space-y-3 rounded-lg border border-[var(--color-border)] bg-zinc-50 p-3">
+            <p className="text-xs font-semibold text-[var(--color-text-muted)]">
+              Filters — scope every sheet (leave empty for all)
+            </p>
+            {dimSubChannels.length > 0 && (
+              <FilterChips
+                title="Sub-Channel"
+                options={dimSubChannels}
+                selected={meSubChannels}
+                onToggle={(v) =>
+                  setMeSubChannels((p) => (p.includes(v) ? p.filter((x) => x !== v) : [...p, v]))
+                }
+                onClear={() => setMeSubChannels([])}
+              />
+            )}
+            {dimCategories.length > 0 && (
+              <FilterChips
+                title="Category"
+                options={dimCategories}
+                selected={meCategories}
+                onToggle={(v) =>
+                  setMeCategories((p) => (p.includes(v) ? p.filter((x) => x !== v) : [...p, v]))
+                }
+                onClear={() => setMeCategories([])}
+              />
+            )}
+          </div>
+        )}
+
         <div className="flex flex-wrap gap-2">
           <RequirementBadge
             label="Sales Ledger"
@@ -639,6 +707,57 @@ export default function ReportsPage() {
           <RequirementBadge label="LINKS" met={hasLinks} detail={hasLinks ? "Uploaded" : "Not uploaded"} />
           <RequirementBadge label="Store Files" met={true} detail="Optional" />
         </div>
+      </div>
+    </div>
+  );
+}
+
+function FilterChips({
+  title,
+  options,
+  selected,
+  onToggle,
+  onClear,
+}: {
+  title: string;
+  options: string[];
+  selected: string[];
+  onToggle: (v: string) => void;
+  onClear: () => void;
+}) {
+  return (
+    <div>
+      <div className="mb-1 flex items-center gap-2">
+        <label className="text-xs font-medium text-[var(--color-text)]">{title}</label>
+        <span className="text-xs text-[var(--color-text-muted)]">
+          {selected.length === 0 ? "All" : `${selected.length} selected`}
+        </span>
+        {selected.length > 0 && (
+          <button
+            onClick={onClear}
+            className="text-xs text-[var(--color-primary)] hover:underline"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {options.map((opt) => {
+          const active = selected.includes(opt);
+          return (
+            <button
+              key={opt}
+              onClick={() => onToggle(opt)}
+              className={`rounded-full border px-3 py-1 text-xs ${
+                active
+                  ? "border-[var(--color-primary)] bg-[var(--color-primary)] text-white"
+                  : "border-[var(--color-border)] bg-white text-[var(--color-text)] hover:bg-zinc-50"
+              }`}
+            >
+              {opt}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
