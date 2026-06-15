@@ -23,6 +23,7 @@ import { getStatusScenarios } from "@/lib/statusScenarioData";
 import { getMergedStores } from "@/lib/storeFileData";
 import { getProductLookup } from "@/lib/productMasterData";
 import { getControlFileData } from "@/lib/controlFileData";
+import { getClientLogo, getChannelLogo } from "@/lib/logoData";
 
 export const maxDuration = 120;
 
@@ -75,6 +76,9 @@ export async function GET(req: NextRequest) {
     // Which sheets to include (empty = all)
     const includeSheets = (url.searchParams.get("sheets") || "")
       .split(",").map((s) => s.trim()).filter(Boolean);
+
+    // Main channel (for the cover-sheet channel logo)
+    const mainChannelId = url.searchParams.get("mainChannelId") || "";
 
     // 1. Load and merge sales ledgers from all selected channels
     const ledgerResults = await Promise.all(
@@ -178,22 +182,31 @@ export async function GET(req: NextRequest) {
 
     // Numerical Distribution — scenario depends on whether a ranging file exists
     const hasRanging = !!client?.controlFiles?.ranging;
-    const [ndStores, ndProducts, ndRanging] = await Promise.all([
+    const [ndStores, ndProducts, ndRanging, clientLogo, channelLogo] = await Promise.all([
       getMergedStores(),
       getProductLookup(clientId),
       hasRanging ? getControlFileData<Record<string, unknown>>(clientId, "ranging") : Promise.resolve([]),
+      getClientLogo(clientId),
+      mainChannelId ? getChannelLogo(mainChannelId) : Promise.resolve(null),
     ]);
-    const ndAnalysis = buildNumericalDistribution({
-      rows: reportRows,
-      dateColumns,
-      refYear: rYear,
-      refMonth: rMonth,
-      rollingMonths: ndMonths,
-      hasRanging,
-      rangingRows: ndRanging,
-      stores: ndStores,
-      products: ndProducts,
-    });
+    let ndAnalysis;
+    try {
+      ndAnalysis = buildNumericalDistribution({
+        rows: reportRows,
+        dateColumns,
+        refYear: rYear,
+        refMonth: rMonth,
+        rollingMonths: ndMonths,
+        hasRanging,
+        rangingRows: ndRanging,
+        stores: ndStores,
+        products: ndProducts,
+        channelNames,
+      });
+    } catch (e) {
+      console.error("ND build failed — skipping ND sheets", e);
+      ndAnalysis = undefined;
+    }
 
     // 8. Build Excel workbook (Data sheet holds the filtered enriched rows)
     const buf = await buildMonthEndWorkbook(
@@ -211,6 +224,8 @@ export async function GET(req: NextRequest) {
       phantomAnalysis,
       includeSheets,
       ndAnalysis,
+      clientLogo?.dataUrl,
+      channelLogo?.dataUrl,
     );
 
     // 9. Log activity

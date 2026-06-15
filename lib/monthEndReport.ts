@@ -1196,8 +1196,9 @@ export function buildNumericalDistribution(opts: {
   rangingRows: Row[];
   stores: StoreRecord[];
   products: Map<string, ProductMaster>;
+  channelNames?: string[];   // scope Scenario-2 active sites to the report's channels
 }): NDAnalysis {
-  const { rows, dateColumns, refYear, refMonth, rollingMonths, hasRanging, rangingRows, stores, products } = opts;
+  const { rows, dateColumns, refYear, refMonth, rollingMonths, hasRanging, rangingRows, stores, products, channelNames } = opts;
 
   // Rolling window: the N most recent month columns up to the report period.
   const windowCols: string[] = [];
@@ -1306,14 +1307,29 @@ export function buildNumericalDistribution(opts: {
       });
     }
   } else {
-    // Scenario 2 — active SKU × active site
-    const activeSites = stores.filter((st) => String(st.status ?? "").trim().toUpperCase() === "ACTIVE");
+    // Scenario 2 — active SKU × active site, SCOPED to the report's channels
+    // (never the entire store master, which would explode the cartesian).
+    const chSet = new Set((channelNames ?? []).map((c) => c.trim().toUpperCase()).filter(Boolean));
+    let activeSites = stores.filter((st) => String(st.status ?? "").trim().toUpperCase() === "ACTIVE");
+    if (chSet.size) {
+      activeSites = activeSites.filter(
+        (st) => chSet.has(String(st.subChannel ?? "").trim().toUpperCase()) || chSet.has(String(st.channel ?? "").trim().toUpperCase())
+      );
+    }
+    // Fallback: if nothing matched (channel naming mismatch), scope to sites in the data.
+    if (activeSites.length === 0) {
+      const dataSites = new Set(rows.map((r) => String(r["Site"] ?? "").trim().toLowerCase()).filter(Boolean));
+      activeSites = stores.filter(
+        (st) => String(st.status ?? "").trim().toUpperCase() === "ACTIVE" && dataSites.has(String(st.siteNum ?? "").trim().toLowerCase())
+      );
+    }
     const activeProducts = [...products.values()].filter((p) => String(p.status ?? "").trim().toUpperCase() === "ACTIVE");
 
     for (const prod of activeProducts) {
-      const cpid = prod.clientProductId.toLowerCase().trim();
+      const cpid = String(prod.clientProductId ?? "").toLowerCase().trim();
+      if (!cpid) continue;
       for (const st of activeSites) {
-        const site = st.siteNum.toLowerCase().trim();
+        const site = String(st.siteNum ?? "").trim().toLowerCase();
         if (!site) continue;
         const p = bySiteCpid.get(`${site}|${cpid}`) || null;
         const nd = p && p.present ? 1 : 0;

@@ -334,6 +334,7 @@ export default function ReportsPage() {
       if (phLastSold) params.set("phLastSold", String(phLastSold));
       if (phLastReceived) params.set("phLastReceived", String(phLastReceived));
       if (ndMonths) params.set("ndMonths", String(ndMonths));
+      if (mainChannelId) params.set("mainChannelId", mainChannelId);
       if (selectedSheets.length) params.set("sheets", selectedSheets.join(","));
 
       const res = await authFetch(`/api/reports/month-end?${params}`);

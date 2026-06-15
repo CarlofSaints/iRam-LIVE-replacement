@@ -101,6 +101,8 @@ export async function buildMonthEndWorkbook(
   phantomAnalysis?: PhantomAnalysis,
   includeSheets: string[] = [],
   ndAnalysis?: NDAnalysis,
+  clientLogo?: string,
+  channelLogo?: string,
 ): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
   wb.creator = "iRam LIVE Replacement";
@@ -109,6 +111,10 @@ export async function buildMonthEndWorkbook(
   // Which sheets to include (empty = all). Keys: sales, oos, oosDetail,
   // status, statusDetail, margin, phantom, data.
   const want = (key: string) => includeSheets.length === 0 || includeSheets.includes(key);
+
+  // Menu/cover sheet is created first so it lands as the first tab; it's
+  // populated (header, logos, hyperlinks) after all other sheets exist.
+  const menuSheet = wb.addWorksheet("Menu", { properties: { defaultColWidth: 14 } });
 
   // ── Sheet 1: Sales ───────────────────────────────────────────
   const salesSheet = wb.addWorksheet("Sales", {
@@ -356,6 +362,9 @@ export async function buildMonthEndWorkbook(
       if (ws) wb.removeWorksheet(ws.id);
     }
   }
+
+  // Populate the Menu/cover sheet now that all other sheets exist.
+  buildMenuSheet(wb, menuSheet, { clientName, channelLabel, periodLabel, clientLogo, channelLogo });
 
   // Hide gridlines on every sheet (preserve any existing freeze panes)
   for (const ws of wb.worksheets) {
@@ -1151,3 +1160,80 @@ function buildNdFalseSheet(wb: ExcelJS.Workbook, nd: NDAnalysis): void {
 // Helper alias types for keyof access (string-valued columns only)
 type NDDetailRowLite = { subChannel: string; province: string; site: string; siteName: string; productCode: string; article: string; description: string; prst: string; pmfStatus: string; ranging: string };
 type NDFalseRowLite = { subChannel: string; province: string; site: string; siteName: string; productCode: string; article: string; description: string; prst: string; pmfStatus: string };
+
+// ── Menu / cover sheet — header, logos, hyperlinks to every sheet ──
+function addLogoImage(
+  wb: ExcelJS.Workbook,
+  sheet: ExcelJS.Worksheet,
+  dataUrl: string,
+  col: number,
+  row: number,
+): void {
+  const m = /^data:image\/(\w+);base64,(.+)$/i.exec(dataUrl);
+  if (!m) return;
+  let ext = m[1].toLowerCase();
+  if (ext === "jpg") ext = "jpeg";
+  if (ext !== "png" && ext !== "jpeg" && ext !== "gif") return; // exceljs-embeddable only
+  try {
+    const imgId = wb.addImage({ base64: m[2], extension: ext as "png" | "jpeg" | "gif" });
+    sheet.addImage(imgId, { tl: { col, row }, ext: { width: 180, height: 70 } });
+  } catch {
+    /* skip un-embeddable image */
+  }
+}
+
+function buildMenuSheet(
+  wb: ExcelJS.Workbook,
+  sheet: ExcelJS.Worksheet,
+  meta: { clientName: string; channelLabel: string; periodLabel: string; clientLogo?: string; channelLogo?: string },
+): void {
+  sheet.getColumn(1).width = 40;
+  sheet.getColumn(2).width = 30;
+
+  // Logos across the top (client left, channel right)
+  if (meta.clientLogo) addLogoImage(wb, sheet, meta.clientLogo, 0, 0);
+  if (meta.channelLogo) addLogoImage(wb, sheet, meta.channelLogo, 4, 0);
+
+  // Header block (below the logo band)
+  let row = 6;
+  const h1 = sheet.getCell(row, 1);
+  h1.value = meta.clientName;
+  h1.font = { name: "Calibri", size: 20, bold: true, color: { argb: HEADER_BG } };
+  row++;
+  const h2 = sheet.getCell(row, 1);
+  h2.value = "Month-End Report";
+  h2.font = { name: "Calibri", size: 13, bold: true, color: { argb: "828282" } };
+  row += 2;
+
+  const meanLine = (label: string, value: string) => {
+    const a = sheet.getCell(row, 1);
+    a.value = label;
+    a.font = { name: "Calibri", size: 11, bold: true, color: { argb: HEADER_BG } };
+    const b = sheet.getCell(row, 2);
+    b.value = value;
+    b.font = { name: "Calibri", size: 11 };
+    row++;
+  };
+  meanLine("Channel", meta.channelLabel);
+  meanLine("Period", meta.periodLabel);
+  row += 2;
+
+  // Contents — hyperlink to every other sheet
+  const ch = sheet.getCell(row, 1);
+  ch.value = "Contents";
+  ch.font = { name: "Calibri", size: 12, bold: true, color: { argb: HEADER_FG } };
+  ch.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_BG } };
+  sheet.mergeCells(row, 1, row, 2);
+  row++;
+
+  for (const ws of wb.worksheets) {
+    if (ws.name === "Menu") continue;
+    const cell = sheet.getCell(row, 1);
+    cell.value = { text: ws.name, hyperlink: `#'${ws.name}'!A1` };
+    cell.font = { name: "Calibri", size: 11, color: { argb: "0563C1" }, underline: true };
+    cell.border = thinBorder();
+    row++;
+  }
+
+  sheet.views = [{ showGridLines: false }];
+}
