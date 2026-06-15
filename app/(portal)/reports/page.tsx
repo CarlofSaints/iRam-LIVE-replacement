@@ -90,21 +90,40 @@ export default function ReportsPage() {
       if (res.ok) {
         const metas: SalesLedgerMeta[] = await res.json();
         setLedgers(metas);
-        // Default period to the MOST RECENT uploaded period across all ledgers
-        // (latest year, then month, then week — e.g. May 2026 Wk4).
-        const periodScore = (m: SalesLedgerMeta) =>
-          (m.reportYear ?? 0) * 10000 + (m.reportMonth ?? 0) * 100 + (m.reportWeek ?? 0);
-        const withPeriods = metas.filter((m) => m.reportYear);
-        const latest = withPeriods.length
-          ? withPeriods.reduce((best, m) => (periodScore(m) > periodScore(best) ? m : best))
-          : null;
-        if (latest) {
-          setReportYear(latest.reportYear ?? "");
-          setReportMonth(latest.reportMonth ?? "");
-          setReportWeek(latest.reportWeek ?? "");
-          setMeYear(latest.reportYear ?? "");
-          setMeMonth(latest.reportMonth ?? "");
-          setMeWeek(latest.reportWeek ?? "");
+        // Default to the MOST RECENT month/year present in the actual data
+        // (the date columns), since uploads don't always stamp a report period.
+        // Fall back to the latest stamped period; week comes from metadata.
+        const num = (v: unknown) => { const n = Number(v); return isNaN(n) ? 0 : n; };
+        const ymScore = (y: number, m: number) => y * 100 + m;
+        let bestY = 0;
+        let bestM = 0;
+        for (const meta of metas) {
+          for (const col of meta.dateColumns ?? []) {
+            const mm = /^(\d{2})-(\d{4})$/.exec(col);
+            if (mm) {
+              const y = Number(mm[2]);
+              const mo = Number(mm[1]);
+              if (ymScore(y, mo) > ymScore(bestY, bestM)) { bestY = y; bestM = mo; }
+            }
+          }
+          const my = num(meta.reportYear);
+          if (my && ymScore(my, num(meta.reportMonth)) > ymScore(bestY, bestM)) {
+            bestY = my; bestM = num(meta.reportMonth);
+          }
+        }
+        if (bestY > 0) {
+          // Week: latest week stamped on a ledger for the chosen month/year (blank if none)
+          let bestW = 0;
+          for (const meta of metas) {
+            if (num(meta.reportYear) === bestY && num(meta.reportMonth) === bestM) {
+              bestW = Math.max(bestW, num(meta.reportWeek));
+            }
+          }
+          const y: number | "" = bestY;
+          const mo: number | "" = bestM || "";
+          const wk: number | "" = bestW || "";
+          setReportYear(y); setReportMonth(mo); setReportWeek(wk);
+          setMeYear(y); setMeMonth(mo); setMeWeek(wk);
         } else {
           setReportYear("");
           setReportMonth("");
