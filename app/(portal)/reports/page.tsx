@@ -44,6 +44,10 @@ export default function ReportsPage() {
   const [meSubChannels, setMeSubChannels] = useState<string[]>([]);
   const [meCategories, setMeCategories] = useState<string[]>([]);
 
+  // Phantom-stock thresholds (months); "" = Any
+  const [phLastSold, setPhLastSold] = useState<number | "">(3);
+  const [phLastReceived, setPhLastReceived] = useState<number | "">(3);
+
   // Load clients + channels
   useEffect(() => {
     (async () => {
@@ -86,15 +90,21 @@ export default function ReportsPage() {
       if (res.ok) {
         const metas: SalesLedgerMeta[] = await res.json();
         setLedgers(metas);
-        // Default period from latest ledger meta
-        const withPeriod = metas.find((m) => m.reportYear);
-        if (withPeriod) {
-          setReportYear(withPeriod.reportYear ?? "");
-          setReportMonth(withPeriod.reportMonth ?? "");
-          setReportWeek(withPeriod.reportWeek ?? "");
-          setMeYear(withPeriod.reportYear ?? "");
-          setMeMonth(withPeriod.reportMonth ?? "");
-          setMeWeek(withPeriod.reportWeek ?? "");
+        // Default period to the MOST RECENT uploaded period across all ledgers
+        // (latest year, then month, then week — e.g. May 2026 Wk4).
+        const periodScore = (m: SalesLedgerMeta) =>
+          (m.reportYear ?? 0) * 10000 + (m.reportMonth ?? 0) * 100 + (m.reportWeek ?? 0);
+        const withPeriods = metas.filter((m) => m.reportYear);
+        const latest = withPeriods.length
+          ? withPeriods.reduce((best, m) => (periodScore(m) > periodScore(best) ? m : best))
+          : null;
+        if (latest) {
+          setReportYear(latest.reportYear ?? "");
+          setReportMonth(latest.reportMonth ?? "");
+          setReportWeek(latest.reportWeek ?? "");
+          setMeYear(latest.reportYear ?? "");
+          setMeMonth(latest.reportMonth ?? "");
+          setMeWeek(latest.reportWeek ?? "");
         } else {
           setReportYear("");
           setReportMonth("");
@@ -282,6 +292,8 @@ export default function ReportsPage() {
       if (meWeek) params.set("week", String(meWeek));
       if (meSubChannels.length) params.set("subChannels", meSubChannels.join(","));
       if (meCategories.length) params.set("categories", meCategories.join(","));
+      if (phLastSold) params.set("phLastSold", String(phLastSold));
+      if (phLastReceived) params.set("phLastReceived", String(phLastReceived));
 
       const res = await authFetch(`/api/reports/month-end?${params}`);
       if (!res.ok) {
@@ -690,6 +702,45 @@ export default function ReportsPage() {
                 onClear={() => setMeCategories([])}
               />
             )}
+          </div>
+        )}
+
+        {/* Phantom-stock thresholds */}
+        {clientId && mainChannelId && (
+          <div className="mb-4 grid grid-cols-2 gap-3 rounded-lg border border-[var(--color-border)] bg-zinc-50 p-3">
+            <p className="col-span-2 text-xs font-semibold text-[var(--color-text-muted)]">
+              Phantom Stock — flag SOH &gt; 0 with no recent sale / receipt
+            </p>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-[var(--color-text-muted)]">
+                Last sale older than
+              </label>
+              <select
+                value={phLastSold}
+                onChange={(e) => setPhLastSold(e.target.value ? Number(e.target.value) : "")}
+                className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm"
+              >
+                <option value="">Any</option>
+                {[1, 2, 3, 4, 5, 6].map((m) => (
+                  <option key={m} value={m}>{m} month{m > 1 ? "s" : ""} ago</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-[var(--color-text-muted)]">
+                Last received older than
+              </label>
+              <select
+                value={phLastReceived}
+                onChange={(e) => setPhLastReceived(e.target.value ? Number(e.target.value) : "")}
+                className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm"
+              >
+                <option value="">Any</option>
+                {[1, 2, 3, 4, 5, 6].map((m) => (
+                  <option key={m} value={m}>{m} month{m > 1 ? "s" : ""} ago</option>
+                ))}
+              </select>
+            </div>
           </div>
         )}
 

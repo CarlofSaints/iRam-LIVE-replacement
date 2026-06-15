@@ -36,7 +36,7 @@ function effectivePriceExVat(row: Row, inclKey = "Incl SP", promKey = "Prom SP")
 
 // ── Date column classification ─────────────────────────────────
 
-interface DateContext {
+export interface DateContext {
   dateColumns: string[];
   maxYear: number;
   maxMonth: number;
@@ -417,6 +417,7 @@ export interface OOSProductRow {
   article: string;
   description: string;
   category: string;
+  productStatus: string;
   totalStores: number;     // sites where this SKU has stock and/or sales
   oosStores: number;       // those sites where SOH <= 0
   oosPct: number;
@@ -467,6 +468,7 @@ export function buildOOSSummary(rows: Row[], dateColumns: string[]): OOSSummary 
   const productMap = new Map<string, {
     description: string;
     category: string;
+    productStatus: string;
     baseStores: Set<string>;
     oosStores: Set<string>;
   }>();
@@ -495,6 +497,7 @@ export function buildOOSSummary(rows: Row[], dateColumns: string[]): OOSSummary 
         entry = {
           description: String(row["Article Desc"] ?? ""),
           category: String(row["_category"] ?? ""),
+          productStatus: String(row["_productStatus"] ?? ""),
           baseStores: new Set(),
           oosStores: new Set(),
         };
@@ -532,6 +535,7 @@ export function buildOOSSummary(rows: Row[], dateColumns: string[]): OOSSummary 
       article,
       description: entry.description,
       category: entry.category,
+      productStatus: entry.productStatus,
       totalStores: entry.baseStores.size,
       oosStores: entry.oosStores.size,
       oosPct: entry.baseStores.size > 0
@@ -814,6 +818,7 @@ export interface MarginRow {
   nettCost: number;
   inclSP: number;
   prodMargin: number;   // fraction (e.g. 0.29)
+  prodMarginFromDispo: boolean;  // true = taken from DISPO "Prod Marg", false = calculated
   stkMargin: number;    // fraction
   macVsNett: number;    // Nett Cost − MAC
   marginStatus: "RISK" | "OPPORTUNITY";
@@ -835,11 +840,56 @@ export interface MarginAnalysis {
   rows: MarginRow[];
 }
 
+// Per-row sales metrics + margins for the flat Data sheet.
+// YTD = current year Jan→latest month; PY YTD = previous year Jan→same month.
+// Values use the report's selling-price-ex-VAT convention (LY uses price snapshots).
+export interface DataRowExtras {
+  ytdUnits: number;
+  ytdValue: number;
+  pyYtdUnits: number;
+  pyYtdValue: number;
+  unitsGrowth: number | null;   // fraction
+  valueGrowth: number | null;   // fraction
+  stkMargin: number;            // fraction
+  prodMargin: number | null;    // fraction
+}
+
+export function dataRowExtras(row: Row, ctx: DateContext): DataRowExtras {
+  const m = getRowMetrics(row, ctx);
+  const prodMargin = effectiveProdMargin(row).value;
+  return {
+    ytdUnits: r2(m.ytdUnits),
+    ytdValue: r2(m.ytdValue),
+    pyYtdUnits: r2(m.lyYtdUnits),
+    pyYtdValue: r2(m.lyYtdValue),
+    unitsGrowth: m.lyYtdUnits !== 0 ? (m.ytdUnits - m.lyYtdUnits) / m.lyYtdUnits : null,
+    valueGrowth: m.lyYtdValue !== 0 ? (m.ytdValue - m.lyYtdValue) / m.lyYtdValue : null,
+    stkMargin: marginFraction(row["Stock Margin"]),
+    prodMargin,
+  };
+}
+
 // DISPO STK Margin may arrive as a fraction (0.47) or percentage points (47).
 function marginFraction(raw: unknown): number {
   const v = parseNum(raw, 0);
   if (isNaN(v)) return 0;
   return Math.abs(v) > 1 ? v / 100 : v;
+}
+
+// Product Margin: prefer the DISPO's own "Prod Marg" field (canonical
+// "Product Margin") when present; otherwise calculate it from price + cost.
+// Returns the fraction + whether it came from the DISPO (so the Excel cell
+// can show the raw value vs a live formula).
+export function effectiveProdMargin(row: Row): { value: number | null; fromDispo: boolean } {
+  const rawNum = parseNum(row["Product Margin"], NaN);
+  if (!isNaN(rawNum)) {
+    return { value: Math.abs(rawNum) > 1 ? rawNum / 100 : rawNum, fromDispo: true };
+  }
+  const inclSP = parseNum(row["Incl SP"], 0);
+  const inclEx = inclSP > 0 ? inclSP / (1 + VAT_RATE) : 0;
+  const nett = parseNum(row["Nett Cost"], NaN);
+  const value = inclEx > 0 && !isNaN(nett) ? (inclEx - nett) / inclEx : null;
+  return { value, fromDispo: false };
 }
 
 export function buildMarginAnalysis(rows: Row[]): MarginAnalysis {
@@ -864,8 +914,8 @@ export function buildMarginAnalysis(rows: Row[]): MarginAnalysis {
     if (!status) continue; // MAC == Nett → neither
 
     const inclSP = parseNum(row["Incl SP"], 0);
-    const inclEx = inclSP > 0 ? inclSP / (1 + VAT_RATE) : 0;
-    const prodMargin = inclEx > 0 ? (inclEx - nett) / inclEx : 0;
+    const pm = effectiveProdMargin(row);
+    const prodMargin = pm.value ?? 0;
     const stkMargin = marginFraction(row["Stock Margin"]);
 
     let marginSupport: number | null = null;
@@ -895,6 +945,7 @@ export function buildMarginAnalysis(rows: Row[]): MarginAnalysis {
       nettCost: nett,
       inclSP,
       prodMargin,
+      prodMarginFromDispo: pm.fromDispo,
       stkMargin,
       macVsNett: nett - mac,
       marginStatus: status,
@@ -920,5 +971,146 @@ export function buildMarginAnalysis(rows: Row[]): MarginAnalysis {
       totalFreeStockUnits: r2(totalFreeStockUnits),
     },
     rows: out,
+  };
+}
+
+// ── Phantom Stock ──────────────────────────────────────────────
+//
+// A site/SKU is "phantom" when it shows stock (SOH > 0) but has neither
+// sold nor been received recently. "Recently" is two independent thresholds
+// (months) chosen in the UI, compared against Last Sold / Last Recv from DISPO.
+// A blank/unparseable date is treated as "older than the threshold" (i.e. no
+// recent activity) so never-sold dead stock is caught.
+
+function excelSerialToDate(serial: number): Date {
+  return new Date(Math.round((serial - 25569) * 86400 * 1000));
+}
+
+export function parseDispoDate(raw: unknown): Date | null {
+  if (raw == null) return null;
+  if (raw instanceof Date) return isNaN(raw.getTime()) ? null : raw;
+  if (typeof raw === "number") return raw > 1000 && raw < 80000 ? excelSerialToDate(raw) : null;
+  const s = String(raw).trim();
+  if (s === "") return null;
+  if (/^\d+(\.\d+)?$/.test(s)) {
+    const n = Number(s);
+    if (n > 1000 && n < 80000) return excelSerialToDate(n);
+  }
+  // DD/MM/YYYY, DD.MM.YYYY, DD-MM-YYYY (South African day-first). UTC midnight
+  // so the date survives Excel's UTC serialisation without shifting a day.
+  let m = s.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2,4})$/);
+  if (m) {
+    let yr = Number(m[3]);
+    if (yr < 100) yr += 2000;
+    const d = new Date(Date.UTC(yr, Number(m[2]) - 1, Number(m[1])));
+    return isNaN(d.getTime()) ? null : d;
+  }
+  // YYYY-MM-DD / YYYY/MM/DD
+  m = s.match(/^(\d{4})[/.\-](\d{1,2})[/.\-](\d{1,2})$/);
+  if (m) {
+    const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+    return isNaN(d.getTime()) ? null : d;
+  }
+  const t = Date.parse(s);
+  return isNaN(t) ? null : new Date(t);
+}
+
+function minusMonths(d: Date, months: number): Date {
+  const r = new Date(d.getTime());
+  r.setUTCMonth(r.getUTCMonth() - months);
+  return r;
+}
+
+export interface PhantomStatusRow {
+  pmfStatus: string;
+  phantomLines: number;
+  totalLines: number;
+  phantomPct: number;   // phantom / total for this status
+}
+
+export interface PhantomDetailRow {
+  site: string;
+  siteName: string;
+  productCode: string;
+  article: string;
+  prst: string;
+  productStatus: string;
+  soh: number;
+  lastSold: Date | null;
+  lastReceived: Date | null;
+  lastSoldRaw: string;
+  lastReceivedRaw: string;
+}
+
+export interface PhantomAnalysis {
+  totalLines: number;
+  phantomLines: number;
+  lastSoldMonths: number | null;
+  lastReceivedMonths: number | null;
+  byStatus: PhantomStatusRow[];
+  detail: PhantomDetailRow[];
+}
+
+export function buildPhantomAnalysis(
+  rows: Row[],
+  opts: { referenceDate: Date; lastSoldMonths: number | null; lastReceivedMonths: number | null },
+): PhantomAnalysis {
+  const cutoffSold = opts.lastSoldMonths != null ? minusMonths(opts.referenceDate, opts.lastSoldMonths) : null;
+  const cutoffRec = opts.lastReceivedMonths != null ? minusMonths(opts.referenceDate, opts.lastReceivedMonths) : null;
+
+  const totalByStatus = new Map<string, number>();
+  const phantomByStatus = new Map<string, number>();
+  const detail: PhantomDetailRow[] = [];
+  let totalLines = 0;
+  let phantomLines = 0;
+
+  for (const row of rows) {
+    totalLines++;
+    const pmf = pmfStatusDisplay(row);
+    totalByStatus.set(pmf, (totalByStatus.get(pmf) ?? 0) + 1);
+
+    const soh = parseNum(row["SOH"], 0);
+    if (isNaN(soh) || soh <= 0) continue;
+
+    const lastSold = parseDispoDate(row["Last Sold"]);
+    const lastRec = parseDispoDate(row["Last Recv"]);
+
+    const soldOld = cutoffSold === null || lastSold === null || lastSold.getTime() <= cutoffSold.getTime();
+    const recOld = cutoffRec === null || lastRec === null || lastRec.getTime() <= cutoffRec.getTime();
+    if (!soldOld || !recOld) continue;
+
+    phantomLines++;
+    phantomByStatus.set(pmf, (phantomByStatus.get(pmf) ?? 0) + 1);
+    detail.push({
+      site: String(row["Site"] ?? ""),
+      siteName: String(row["_storeName"] || row["Site Name"] || ""),
+      productCode: String(row["_clientProductId"] || ""),
+      article: String(row["Article"] ?? ""),
+      prst: prstDisplay(row),
+      productStatus: pmf,
+      soh,
+      lastSold,
+      lastReceived: lastRec,
+      lastSoldRaw: String(row["Last Sold"] ?? ""),
+      lastReceivedRaw: String(row["Last Recv"] ?? ""),
+    });
+  }
+
+  const byStatus: PhantomStatusRow[] = [];
+  for (const [pmf, total] of totalByStatus) {
+    const ph = phantomByStatus.get(pmf) ?? 0;
+    byStatus.push({ pmfStatus: pmf, phantomLines: ph, totalLines: total, phantomPct: total > 0 ? r2((ph / total) * 100) : 0 });
+  }
+  byStatus.sort((a, b) => b.phantomLines - a.phantomLines || a.pmfStatus.localeCompare(b.pmfStatus));
+
+  detail.sort((a, b) => a.siteName.localeCompare(b.siteName) || a.prst.localeCompare(b.prst));
+
+  return {
+    totalLines,
+    phantomLines,
+    lastSoldMonths: opts.lastSoldMonths,
+    lastReceivedMonths: opts.lastReceivedMonths,
+    byStatus,
+    detail,
   };
 }

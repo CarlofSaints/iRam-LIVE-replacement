@@ -16,7 +16,9 @@ import type {
   StatusSummary,
   StatusDetailRow,
   MarginAnalysis,
+  PhantomAnalysis,
 } from "./monthEndReport";
+import { buildDateContext, dataRowExtras } from "./monthEndReport";
 
 // ── Colors ─────────────────────────────────────────────────────
 
@@ -74,6 +76,7 @@ export async function buildMonthEndWorkbook(
   statusSummary?: StatusSummary,
   statusDetail: StatusDetailRow[] = [],
   marginAnalysis?: MarginAnalysis,
+  phantomAnalysis?: PhantomAnalysis,
 ): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
   wb.creator = "iRam LIVE Replacement";
@@ -212,10 +215,10 @@ export async function buildMonthEndWorkbook(
   if (oosSummary.productSummary.length > 0) {
     writeOosTitle("SKU OOS Summary");
     writeOosTable(
-      ["Article", "Description", "Category", "Total Stores", "OOS Stores", "OOS %"],
-      [14, 32, 18, 12, 12, 10],
-      oosSummary.productSummary.map((p) => [p.article, p.description, p.category, p.totalStores, p.oosStores, p.oosPct / 100]),
-      5,
+      ["Article", "Description", "Category", "Product Status", "Total Stores", "OOS Stores", "OOS %"],
+      [14, 32, 18, 14, 12, 12, 10],
+      oosSummary.productSummary.map((p) => [p.article, p.description, p.category, p.productStatus, p.totalStores, p.oosStores, p.oosPct / 100]),
+      6,
     );
     row += 2; // gap before the next table
   }
@@ -296,10 +299,14 @@ export async function buildMonthEndWorkbook(
   if (statusSummary) buildStatusSheet(wb, statusSummary, clientName, channelLabel, periodLabel);
   if (statusDetail.length > 0) buildStatusDetailSheet(wb, statusDetail);
 
-  // ── Margin + Margin Detail sheets ────────────────────────────
+  // ── Margin Detail sheet (summary block on top of the grid) ───
   if (marginAnalysis) {
-    buildMarginSheet(wb, marginAnalysis, clientName, channelLabel, periodLabel);
-    buildMarginDetailSheet(wb, marginAnalysis);
+    buildMarginDetailSheet(wb, marginAnalysis, clientName, channelLabel, periodLabel);
+  }
+
+  // ── Phantom sheet (summary block on top of the grid) ─────────
+  if (phantomAnalysis) {
+    buildPhantomSheet(wb, phantomAnalysis, clientName, channelLabel, periodLabel);
   }
 
   // ── Data sheet (flat enriched rows + native AutoFilter) ──────
@@ -352,17 +359,31 @@ function buildDataSheet(
     { header: "Act DSC", width: 9, get: (r) => toNum(r["Act DSC"]) },
   ];
 
+  // Computed YTD / prior-year / growth / margin columns (per row).
+  const ctx = buildDateContext(dateColumns);
+  const extraDefs: { header: string; width: number; fmt: string; get: (x: ReturnType<typeof dataRowExtras>) => number | null }[] = [
+    { header: "YTD Units", width: 12, fmt: "#,##0", get: (x) => x.ytdUnits },
+    { header: "YTD Value", width: 14, fmt: "#,##0.00", get: (x) => x.ytdValue },
+    { header: "PY YTD Units", width: 13, fmt: "#,##0", get: (x) => x.pyYtdUnits },
+    { header: "PY YTD Value", width: 14, fmt: "#,##0.00", get: (x) => x.pyYtdValue },
+    { header: "Units Growth %", width: 13, fmt: "0.0%", get: (x) => x.unitsGrowth },
+    { header: "Value Growth %", width: 13, fmt: "0.0%", get: (x) => x.valueGrowth },
+    { header: "STK Margin", width: 11, fmt: "0.0%", get: (x) => x.stkMargin },
+    { header: "Prod. Margin", width: 12, fmt: "0.0%", get: (x) => x.prodMargin },
+  ];
+
   // Header row
-  const headers = [...fixedCols.map((c) => c.header), ...sortedDates, ...tailCols.map((c) => c.header)];
+  const headers = [...fixedCols.map((c) => c.header), ...sortedDates, ...tailCols.map((c) => c.header), ...extraDefs.map((c) => c.header)];
   headers.forEach((h, i) => {
     const cell = sheet.getCell(1, i + 1);
     cell.value = h;
     cell.font = headerFont();
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_BG } };
     cell.border = thinBorder();
+    cell.alignment = { wrapText: true };
   });
   // Column widths
-  [...fixedCols.map((c) => c.width), ...sortedDates.map(() => 9), ...tailCols.map((c) => c.width)]
+  [...fixedCols.map((c) => c.width), ...sortedDates.map(() => 9), ...tailCols.map((c) => c.width), ...extraDefs.map((c) => c.width)]
     .forEach((w, i) => { sheet.getColumn(i + 1).width = w; });
 
   // Data rows
@@ -384,6 +405,14 @@ function buildDataSheet(
       const cell = sheet.getCell(r, c++);
       cell.value = col.get(row);
       cell.numFmt = "#,##0.00";
+      cell.font = bodyFont();
+    }
+    const extras = dataRowExtras(row, ctx);
+    for (const def of extraDefs) {
+      const cell = sheet.getCell(r, c++);
+      const v = def.get(extras);
+      cell.value = v === null || v === undefined ? "" : v;
+      cell.numFmt = def.fmt;
       cell.font = bodyFont();
     }
     r++;
@@ -534,88 +563,77 @@ function buildStatusDetailSheet(wb: ExcelJS.Workbook, rows: StatusDetailRow[]): 
   sheet.views = [{ state: "frozen", ySplit: 1 }];
 }
 
-// ── Margin sheet — opportunity / risk summary ───────────────────
-function buildMarginSheet(
+// ── Margin Detail — opportunity/risk summary block on top of the grid ──
+function buildMarginDetailSheet(
   wb: ExcelJS.Workbook,
   m: MarginAnalysis,
   clientName: string,
   channelLabel: string,
   periodLabel: string,
 ): void {
-  const sheet = wb.addWorksheet("Margin", { properties: { defaultColWidth: 16 } });
-  let row = 1;
-
-  const title = sheet.getCell(row, 1);
-  title.value = `Margin Opportunity & Risk — ${clientName} — ${channelLabel} — ${periodLabel}`;
-  title.font = { name: "Calibri", size: 14, bold: true, color: { argb: HEADER_BG } };
-  sheet.mergeCells(row, 1, row, 4);
-  row += 2;
-
-  const bl = sheet.getCell(row, 1);
-  bl.value = "Base (SKU×store, SOH>0, valid cost)";
-  bl.font = bodyFont(true);
-  bl.border = thinBorder();
-  const bv = sheet.getCell(row, 2);
-  bv.value = m.summary.base;
-  bv.numFmt = "#,##0";
-  bv.font = bodyFont();
-  bv.border = thinBorder();
-  row += 2;
-
-  const headers = ["Margin Status", "Count", "Total Margin Support (R)", "Total Free Stock Units"];
-  const widths = [18, 12, 24, 22];
-  headers.forEach((h, i) => {
-    const c = sheet.getCell(row, i + 1);
-    c.value = h;
-    c.font = headerFont();
-    c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_BG } };
-    c.border = thinBorder();
-    c.alignment = { horizontal: i === 0 ? "left" : "center", wrapText: true };
-    sheet.getColumn(i + 1).width = widths[i];
-  });
-  row++;
-
-  const summaryRows = [
-    { label: "OPPORTUNITY", count: m.summary.opportunityCount, support: null as number | null, free: null as number | null, fill: GROWTH_GREEN },
-    { label: "RISK", count: m.summary.riskCount, support: m.summary.totalMarginSupport, free: m.summary.totalFreeStockUnits, fill: GROWTH_RED },
-  ];
-  for (const sr of summaryRows) {
-    const a = sheet.getCell(row, 1);
-    a.value = sr.label; a.font = bodyFont(true); a.border = thinBorder();
-    a.fill = { type: "pattern", pattern: "solid", fgColor: { argb: sr.fill } };
-    const c = sheet.getCell(row, 2);
-    c.value = sr.count; c.numFmt = "#,##0"; c.font = bodyFont(); c.border = thinBorder(); c.alignment = { horizontal: "center" };
-    const s = sheet.getCell(row, 3);
-    s.value = sr.support === null ? "" : sr.support; if (sr.support !== null) s.numFmt = "#,##0.00";
-    s.font = bodyFont(); s.border = thinBorder(); s.alignment = { horizontal: "right" };
-    const f = sheet.getCell(row, 4);
-    f.value = sr.free === null ? "" : sr.free; if (sr.free !== null) f.numFmt = "#,##0.00";
-    f.font = bodyFont(); f.border = thinBorder(); f.alignment = { horizontal: "right" };
-    row++;
-  }
-}
-
-// ── Margin Detail — one row per opportunity / risk, calculations live ──
-function buildMarginDetailSheet(wb: ExcelJS.Workbook, m: MarginAnalysis): void {
-  const sheet = wb.addWorksheet("Margin Detail", { properties: { defaultColWidth: 14 } });
+  const sheet = wb.addWorksheet("Margin", { properties: { defaultColWidth: 14 } });
   const headers = [
     "Site", "Site Name", "Product Code", "Article", "Product Status", "PR ST",
     "SOH", "MAC", "Nett Cost", "Incl SP", "Prod. Margin", "STK Margin",
     "MAC vs Nett Cost", "Margin Status", "Margin Support (R)", "Free Stock Units", "Suggested SP (Incl VAT)",
   ];
   const widths = [10, 22, 14, 12, 14, 10, 8, 10, 10, 10, 12, 11, 15, 14, 16, 14, 18];
-  headers.forEach((h, i) => {
-    const c = sheet.getCell(1, i + 1);
-    c.value = h;
-    c.font = headerFont();
+
+  let cur = 1;
+  // Title
+  const title = sheet.getCell(cur, 1);
+  title.value = `Margin Opportunity & Risk — ${clientName} — ${channelLabel} — ${periodLabel}`;
+  title.font = { name: "Calibri", size: 14, bold: true, color: { argb: HEADER_BG } };
+  sheet.mergeCells(cur, 1, cur, headers.length);
+  cur += 2;
+
+  // Base stat
+  const bl = sheet.getCell(cur, 1);
+  bl.value = "Base (SKU×store, SOH>0, valid cost)"; bl.font = bodyFont(true); bl.border = thinBorder();
+  const bv = sheet.getCell(cur, 2);
+  bv.value = m.summary.base; bv.numFmt = "#,##0"; bv.font = bodyFont(); bv.border = thinBorder();
+  cur += 2;
+
+  // Summary table
+  ["Margin Status", "Count", "Total Margin Support (R)", "Total Free Stock Units"].forEach((h, i) => {
+    const c = sheet.getCell(cur, i + 1);
+    c.value = h; c.font = headerFont();
     c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_BG } };
-    c.border = thinBorder();
-    c.alignment = { horizontal: "center", wrapText: true };
+    c.border = thinBorder(); c.alignment = { horizontal: i === 0 ? "left" : "center", wrapText: true };
+  });
+  cur++;
+  const summaryRows = [
+    { label: "OPPORTUNITY", count: m.summary.opportunityCount, support: null as number | null, free: null as number | null, fill: GROWTH_GREEN },
+    { label: "RISK", count: m.summary.riskCount, support: m.summary.totalMarginSupport, free: m.summary.totalFreeStockUnits, fill: GROWTH_RED },
+  ];
+  for (const sr of summaryRows) {
+    const a = sheet.getCell(cur, 1);
+    a.value = sr.label; a.font = bodyFont(true); a.border = thinBorder();
+    a.fill = { type: "pattern", pattern: "solid", fgColor: { argb: sr.fill } };
+    const c = sheet.getCell(cur, 2);
+    c.value = sr.count; c.numFmt = "#,##0"; c.font = bodyFont(); c.border = thinBorder(); c.alignment = { horizontal: "center" };
+    const s = sheet.getCell(cur, 3);
+    s.value = sr.support === null ? "" : sr.support; if (sr.support !== null) s.numFmt = "#,##0.00";
+    s.font = bodyFont(); s.border = thinBorder(); s.alignment = { horizontal: "right" };
+    const f = sheet.getCell(cur, 4);
+    f.value = sr.free === null ? "" : sr.free; if (sr.free !== null) f.numFmt = "#,##0.00";
+    f.font = bodyFont(); f.border = thinBorder(); f.alignment = { horizontal: "right" };
+    cur++;
+  }
+  cur += 1; // gap before the grid
+
+  // Detail grid header
+  const headerRow = cur;
+  headers.forEach((h, i) => {
+    const c = sheet.getCell(headerRow, i + 1);
+    c.value = h; c.font = headerFont();
+    c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_BG } };
+    c.border = thinBorder(); c.alignment = { horizontal: "center", wrapText: true };
     sheet.getColumn(i + 1).width = widths[i];
   });
 
-  let r = 2;
-  for (const row of m.rows) {
+  let r = headerRow + 1;
+  for (const dr of m.rows) {
     const text = (col: number, val: string) => {
       const c = sheet.getCell(r, col); c.value = val; c.font = bodyFont(); c.border = thinBorder(); return c;
     };
@@ -626,38 +644,42 @@ function buildMarginDetailSheet(wb: ExcelJS.Workbook, m: MarginAnalysis): void {
       const c = sheet.getCell(r, col); c.value = { formula: f, result }; c.numFmt = fmt; c.font = bodyFont(); c.border = thinBorder(); c.alignment = { horizontal: "right" }; return c;
     };
 
-    text(1, row.site);
-    text(2, row.siteName);
-    text(3, row.productCode);
-    text(4, row.article);
-    text(5, row.productStatus);
-    text(6, row.prst);
-    num(7, row.soh, "#,##0");
-    num(8, row.mac, "#,##0.00");
-    num(9, row.nettCost, "#,##0.00");
-    num(10, row.inclSP, "#,##0.00");
-    // Prod. Margin = ((Incl SP/1.15) − Nett) / (Incl SP/1.15)
-    formula(11, `IF(J${r}=0,0,((J${r}/1.15)-I${r})/(J${r}/1.15))`, row.prodMargin, "0.0%").alignment = { horizontal: "center" };
-    num(12, row.stkMargin, "0.0%").alignment = { horizontal: "center" };
+    text(1, dr.site);
+    text(2, dr.siteName);
+    text(3, dr.productCode);
+    text(4, dr.article);
+    text(5, dr.productStatus);
+    text(6, dr.prst);
+    num(7, dr.soh, "#,##0");
+    num(8, dr.mac, "#,##0.00");
+    num(9, dr.nettCost, "#,##0.00");
+    num(10, dr.inclSP, "#,##0.00");
+    // Prod. Margin — DISPO value if supplied, else calculated from price + cost
+    if (dr.prodMarginFromDispo) {
+      num(11, dr.prodMargin, "0.0%").alignment = { horizontal: "center" };
+    } else {
+      formula(11, `IF(J${r}=0,0,((J${r}/1.15)-I${r})/(J${r}/1.15))`, dr.prodMargin, "0.0%").alignment = { horizontal: "center" };
+    }
+    num(12, dr.stkMargin, "0.0%").alignment = { horizontal: "center" };
     // MAC vs Nett Cost = Nett − MAC
-    formula(13, `I${r}-H${r}`, row.macVsNett, "#,##0.00");
+    formula(13, `I${r}-H${r}`, dr.macVsNett, "#,##0.00");
     // Margin Status (coloured)
-    const st = text(14, row.marginStatus);
+    const st = text(14, dr.marginStatus);
     st.font = bodyFont(true); st.alignment = { horizontal: "center" };
-    st.fill = { type: "pattern", pattern: "solid", fgColor: { argb: row.marginStatus === "RISK" ? GROWTH_RED : GROWTH_GREEN } };
+    st.fill = { type: "pattern", pattern: "solid", fgColor: { argb: dr.marginStatus === "RISK" ? GROWTH_RED : GROWTH_GREEN } };
     // Margin Support (R) = RISK: SOH × (MAC − Nett)
-    formula(15, `IF(N${r}="RISK",G${r}*(H${r}-I${r}),"")`, row.marginSupport === null ? "" : row.marginSupport, "#,##0.00");
+    formula(15, `IF(N${r}="RISK",G${r}*(H${r}-I${r}),"")`, dr.marginSupport === null ? "" : dr.marginSupport, "#,##0.00");
     // Free Stock Units = RISK: Margin Support / Nett
-    formula(16, `IF(AND(N${r}="RISK",I${r}<>0),O${r}/I${r},"")`, row.freeStockUnits === null ? "" : row.freeStockUnits, "#,##0.00");
+    formula(16, `IF(AND(N${r}="RISK",I${r}<>0),O${r}/I${r},"")`, dr.freeStockUnits === null ? "" : dr.freeStockUnits, "#,##0.00");
     // Suggested SP (Incl VAT) = OPPORTUNITY: MAC / (1 − Prod. Margin) × 1.15
-    formula(17, `IF(AND(N${r}="OPPORTUNITY",(1-K${r})<>0),H${r}/(1-K${r})*1.15,"")`, row.suggestedSP === null ? "" : row.suggestedSP, "#,##0.00");
+    formula(17, `IF(AND(N${r}="OPPORTUNITY",(1-K${r})<>0),H${r}/(1-K${r})*1.15,"")`, dr.suggestedSP === null ? "" : dr.suggestedSP, "#,##0.00");
     r++;
   }
 
   if (m.rows.length > 0) {
-    sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: m.rows.length + 1, column: headers.length } };
+    sheet.autoFilter = { from: { row: headerRow, column: 1 }, to: { row: headerRow + m.rows.length, column: headers.length } };
   }
-  sheet.views = [{ state: "frozen", ySplit: 1 }];
+  sheet.views = [{ state: "frozen", ySplit: headerRow }];
 }
 
 // ── Write a single summary table ───────────────────────────────
@@ -790,4 +812,102 @@ function writeSummaryDataRow(
   });
 
   return row + 1;
+}
+
+// ── Phantom sheet — phantom-stock summary on top of the detail grid ──
+function buildPhantomSheet(
+  wb: ExcelJS.Workbook,
+  p: PhantomAnalysis,
+  clientName: string,
+  channelLabel: string,
+  periodLabel: string,
+): void {
+  const sheet = wb.addWorksheet("Phantom", { properties: { defaultColWidth: 14 } });
+  const detailHeaders = ["Site", "Site Name", "Product Code", "Article", "PR ST", "Product Status", "SOH", "Date Last Sold", "Date Last Received"];
+  const detailWidths = [14, 22, 14, 12, 10, 14, 8, 15, 17];
+
+  let cur = 1;
+  // Title
+  const title = sheet.getCell(cur, 1);
+  title.value = `Phantom Stock — ${clientName} — ${channelLabel} — ${periodLabel}`;
+  title.font = { name: "Calibri", size: 14, bold: true, color: { argb: HEADER_BG } };
+  sheet.mergeCells(cur, 1, cur, detailHeaders.length);
+  cur++;
+
+  // Filter context
+  const soldTxt = p.lastSoldMonths != null ? `> ${p.lastSoldMonths} month(s)` : "Any";
+  const recTxt = p.lastReceivedMonths != null ? `> ${p.lastReceivedMonths} month(s)` : "Any";
+  const sub = sheet.getCell(cur, 1);
+  sub.value = `Phantom = SOH > 0, last sold ${soldTxt} ago AND last received ${recTxt} ago`;
+  sub.font = { name: "Calibri", size: 10, italic: true, color: { argb: "828282" } };
+  sheet.mergeCells(cur, 1, cur, detailHeaders.length);
+  cur += 2;
+
+  // Overall stats
+  const stat = (label: string, value: number | null, isPct: boolean, formula?: { formula: string; result: number }) => {
+    const a = sheet.getCell(cur, 1); a.value = label; a.font = bodyFont(true); a.border = thinBorder();
+    const b = sheet.getCell(cur, 2);
+    b.value = formula ? formula : (value as number);
+    b.numFmt = isPct ? "0.0%" : "#,##0"; b.font = bodyFont(); b.border = thinBorder(); b.alignment = { horizontal: "right" };
+    const rowNum = cur; cur++; return rowNum;
+  };
+  const totalRow = stat("Total Lines", p.totalLines, false);
+  const phantomRow = stat("Phantom Lines", p.phantomLines, false);
+  stat("Phantom %", null, true, { formula: `IF(B${totalRow}=0,0,B${phantomRow}/B${totalRow})`, result: p.totalLines > 0 ? p.phantomLines / p.totalLines : 0 });
+  cur += 1;
+
+  // By-status table
+  ["PMF Status", "Phantom Lines", "Total Lines", "Phantom %"].forEach((h, i) => {
+    const c = sheet.getCell(cur, i + 1);
+    c.value = h; c.font = headerFont();
+    c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_BG } };
+    c.border = thinBorder(); c.alignment = { horizontal: i === 0 ? "left" : "center" };
+  });
+  cur++;
+  for (const s of p.byStatus) {
+    const a = sheet.getCell(cur, 1); a.value = s.pmfStatus; a.font = bodyFont(); a.border = thinBorder();
+    const ph = sheet.getCell(cur, 2); ph.value = s.phantomLines; ph.numFmt = "#,##0"; ph.font = bodyFont(); ph.border = thinBorder(); ph.alignment = { horizontal: "center" };
+    const tot = sheet.getCell(cur, 3); tot.value = s.totalLines; tot.numFmt = "#,##0"; tot.font = bodyFont(); tot.border = thinBorder(); tot.alignment = { horizontal: "center" };
+    const pct = sheet.getCell(cur, 4);
+    pct.value = { formula: `IF(C${cur}=0,0,B${cur}/C${cur})`, result: s.phantomPct / 100 };
+    pct.numFmt = "0.0%"; pct.font = bodyFont(); pct.border = thinBorder(); pct.alignment = { horizontal: "center" };
+    cur++;
+  }
+  cur += 1;
+
+  // Detail grid
+  const headerRow = cur;
+  detailHeaders.forEach((h, i) => {
+    const c = sheet.getCell(headerRow, i + 1);
+    c.value = h; c.font = headerFont();
+    c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_BG } };
+    c.border = thinBorder(); c.alignment = { horizontal: "center", wrapText: true };
+    sheet.getColumn(i + 1).width = detailWidths[i];
+  });
+
+  let r = headerRow + 1;
+  for (const d of p.detail) {
+    const text = (col: number, val: string) => {
+      const c = sheet.getCell(r, col); c.value = val; c.font = bodyFont(); c.border = thinBorder(); return c;
+    };
+    text(1, d.site);
+    text(2, d.siteName);
+    text(3, d.productCode);
+    text(4, d.article);
+    text(5, d.prst);
+    text(6, d.productStatus);
+    const soh = sheet.getCell(r, 7); soh.value = d.soh; soh.numFmt = "#,##0"; soh.font = bodyFont(); soh.border = thinBorder(); soh.alignment = { horizontal: "right" };
+    const ls = sheet.getCell(r, 8);
+    if (d.lastSold) { ls.value = d.lastSold; ls.numFmt = "dd/mm/yyyy"; } else { ls.value = d.lastSoldRaw; }
+    ls.font = bodyFont(); ls.border = thinBorder(); ls.alignment = { horizontal: "center" };
+    const lr = sheet.getCell(r, 9);
+    if (d.lastReceived) { lr.value = d.lastReceived; lr.numFmt = "dd/mm/yyyy"; } else { lr.value = d.lastReceivedRaw; }
+    lr.font = bodyFont(); lr.border = thinBorder(); lr.alignment = { horizontal: "center" };
+    r++;
+  }
+
+  if (p.detail.length > 0) {
+    sheet.autoFilter = { from: { row: headerRow, column: 1 }, to: { row: headerRow + p.detail.length, column: detailHeaders.length } };
+  }
+  sheet.views = [{ state: "frozen", ySplit: headerRow }];
 }

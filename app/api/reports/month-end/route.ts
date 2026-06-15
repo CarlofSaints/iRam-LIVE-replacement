@@ -13,6 +13,7 @@ import {
   buildStatusSummary,
   buildStatusDetail,
   buildMarginAnalysis,
+  buildPhantomAnalysis,
 } from "@/lib/monthEndReport";
 import { buildMonthEndWorkbook } from "@/lib/monthEndExcel";
 import { calcMonthLastSold } from "@/lib/vitalSigns";
@@ -54,6 +55,14 @@ export async function GET(req: NextRequest) {
       .split(",").map((s) => s.trim()).filter(Boolean);
     const catFilter = (url.searchParams.get("categories") || "")
       .split(",").map((s) => s.trim()).filter(Boolean);
+
+    // Phantom thresholds in months (blank / 0 → no constraint on that dimension)
+    const parseMonths = (v: string | null): number | null => {
+      const n = v ? parseInt(v, 10) : NaN;
+      return !isNaN(n) && n > 0 ? n : null;
+    };
+    const phLastSold = parseMonths(url.searchParams.get("phLastSold"));
+    const phLastReceived = parseMonths(url.searchParams.get("phLastReceived"));
 
     // 1. Load and merge sales ledgers from all selected channels
     const ledgerResults = await Promise.all(
@@ -147,6 +156,14 @@ export async function GET(req: NextRequest) {
     const periodLabel = `${monthNames[rMonth] || rMonth} ${rYear} Wk${rWeek}`;
     const channelLabel = channelNames.join(", ") || channelIds.join(", ");
 
+    // Phantom: reference date = last day of the report month (UTC, relative "months ago")
+    const referenceDate = new Date(Date.UTC(rYear, rMonth, 0));
+    const phantomAnalysis = buildPhantomAnalysis(reportRows, {
+      referenceDate,
+      lastSoldMonths: phLastSold,
+      lastReceivedMonths: phLastReceived,
+    });
+
     // 8. Build Excel workbook (Data sheet holds the filtered enriched rows)
     const buf = await buildMonthEndWorkbook(
       salesSummary,
@@ -160,6 +177,7 @@ export async function GET(req: NextRequest) {
       statusSummary,
       statusDetail,
       marginAnalysis,
+      phantomAnalysis,
     );
 
     // 9. Log activity
