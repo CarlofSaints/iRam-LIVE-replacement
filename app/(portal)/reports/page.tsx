@@ -12,6 +12,9 @@ interface ReportStats {
   totalStores: number;
 }
 
+// Sub-channels pre-selected by default on the report (others must be ticked in).
+const DEFAULT_SUBCHANNELS = ["MAKRO", "BWH", "BEX", "BTD", "SS"];
+
 const REPORT_SHEETS = [
   { key: "sales", label: "Sales" },
   { key: "oos", label: "OOS" },
@@ -230,8 +233,12 @@ export default function ReportsPage() {
         const res = await authFetch(`/api/reports/dimensions?${params}`);
         if (res.ok) {
           const d = await res.json();
-          setDimSubChannels(d.subChannels ?? []);
+          const subs: string[] = d.subChannels ?? [];
+          setDimSubChannels(subs);
           setDimCategories(d.categories ?? []);
+          // Default-select the standard sub-channels that exist (else leave all)
+          const def = subs.filter((s) => DEFAULT_SUBCHANNELS.includes(String(s).trim().toUpperCase()));
+          setMeSubChannels(def);
         } else {
           setDimSubChannels([]);
           setDimCategories([]);
