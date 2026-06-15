@@ -98,10 +98,15 @@ export async function buildMonthEndWorkbook(
   statusDetail: StatusDetailRow[] = [],
   marginAnalysis?: MarginAnalysis,
   phantomAnalysis?: PhantomAnalysis,
+  includeSheets: string[] = [],
 ): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
   wb.creator = "iRam LIVE Replacement";
   wb.created = new Date();
+
+  // Which sheets to include (empty = all). Keys: sales, oos, oosDetail,
+  // status, statusDetail, margin, phantom, data.
+  const want = (key: string) => includeSheets.length === 0 || includeSheets.includes(key);
 
   // ── Sheet 1: Sales ───────────────────────────────────────────
   const salesSheet = wb.addWorksheet("Sales", {
@@ -317,22 +322,30 @@ export async function buildMonthEndWorkbook(
   detailSheet.views = [{ state: "frozen", ySplit: 1 }];
 
   // ── Status + Status Detail sheets ────────────────────────────
-  if (statusSummary) buildStatusSheet(wb, statusSummary, clientName, channelLabel, periodLabel);
-  if (statusDetail.length > 0) buildStatusDetailSheet(wb, statusDetail);
+  if (statusSummary && want("status")) buildStatusSheet(wb, statusSummary, clientName, channelLabel, periodLabel);
+  if (statusDetail.length > 0 && want("statusDetail")) buildStatusDetailSheet(wb, statusDetail);
 
   // ── Margin Detail sheet (summary block on top of the grid) ───
-  if (marginAnalysis) {
+  if (marginAnalysis && want("margin")) {
     buildMarginDetailSheet(wb, marginAnalysis, clientName, channelLabel, periodLabel);
   }
 
   // ── Phantom sheet (summary block on top of the grid) ─────────
-  if (phantomAnalysis) {
+  if (phantomAnalysis && want("phantom")) {
     buildPhantomSheet(wb, phantomAnalysis, clientName, channelLabel, periodLabel);
   }
 
   // ── Data sheet (flat enriched rows + native AutoFilter) ──────
-  if (dataRows.length > 0) {
+  if (dataRows.length > 0 && want("data")) {
     buildDataSheet(wb, dataRows, dateColumns);
+  }
+
+  // Remove the always-built inline sheets if they weren't selected.
+  for (const [name, key] of [["Sales", "sales"], ["OOS", "oos"], ["OOS Detail", "oosDetail"]] as const) {
+    if (!want(key)) {
+      const ws = wb.getWorksheet(name);
+      if (ws) wb.removeWorksheet(ws.id);
+    }
   }
 
   // Hide gridlines on every sheet (preserve any existing freeze panes)

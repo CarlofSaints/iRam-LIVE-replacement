@@ -64,6 +64,10 @@ export async function GET(req: NextRequest) {
     const phLastSold = parseMonths(url.searchParams.get("phLastSold"));
     const phLastReceived = parseMonths(url.searchParams.get("phLastReceived"));
 
+    // Which sheets to include (empty = all)
+    const includeSheets = (url.searchParams.get("sheets") || "")
+      .split(",").map((s) => s.trim()).filter(Boolean);
+
     // 1. Load and merge sales ledgers from all selected channels
     const ledgerResults = await Promise.all(
       channelIds.map(async (chId) => {
@@ -178,6 +182,7 @@ export async function GET(req: NextRequest) {
       statusDetail,
       marginAnalysis,
       phantomAnalysis,
+      includeSheets,
     );
 
     // 9. Log activity

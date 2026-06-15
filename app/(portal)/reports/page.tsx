@@ -12,6 +12,17 @@ interface ReportStats {
   totalStores: number;
 }
 
+const REPORT_SHEETS = [
+  { key: "sales", label: "Sales" },
+  { key: "oos", label: "OOS" },
+  { key: "oosDetail", label: "OOS Detail" },
+  { key: "status", label: "Status" },
+  { key: "statusDetail", label: "Status Detail" },
+  { key: "margin", label: "Margin" },
+  { key: "phantom", label: "Phantom" },
+  { key: "data", label: "Data" },
+];
+
 export default function ReportsPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
@@ -47,6 +58,9 @@ export default function ReportsPage() {
   // Phantom-stock thresholds (months); "" = Any
   const [phLastSold, setPhLastSold] = useState<number | "">(3);
   const [phLastReceived, setPhLastReceived] = useState<number | "">(3);
+
+  // Which sheets to include in the Month-End workbook (default: all)
+  const [selectedSheets, setSelectedSheets] = useState<string[]>(REPORT_SHEETS.map((s) => s.key));
 
   // Load clients + channels
   useEffect(() => {
@@ -313,6 +327,7 @@ export default function ReportsPage() {
       if (meCategories.length) params.set("categories", meCategories.join(","));
       if (phLastSold) params.set("phLastSold", String(phLastSold));
       if (phLastReceived) params.set("phLastReceived", String(phLastReceived));
+      if (selectedSheets.length) params.set("sheets", selectedSheets.join(","));
 
       const res = await authFetch(`/api/reports/month-end?${params}`);
       if (!res.ok) {
@@ -632,13 +647,62 @@ export default function ReportsPage() {
               downloadingMonthEnd ||
               !clientId ||
               effectiveChannelIds.length === 0 ||
-              !hasLedger
+              !hasLedger ||
+              selectedSheets.length === 0
             }
             className="rounded-lg bg-[var(--color-primary)] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)] disabled:opacity-50"
           >
             {downloadingMonthEnd ? "Generating..." : "Download Excel"}
           </button>
         </div>
+
+        {/* Sheets to include */}
+        {clientId && mainChannelId && (
+          <div className="mb-4">
+            <label className="mb-1 block text-xs font-medium text-[var(--color-text-muted)]">
+              Sheets to include
+            </label>
+            <details className="relative inline-block">
+              <summary className="cursor-pointer select-none rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm">
+                {selectedSheets.length === REPORT_SHEETS.length
+                  ? "All sheets"
+                  : `${selectedSheets.length} of ${REPORT_SHEETS.length} sheets`}
+              </summary>
+              <div className="absolute z-20 mt-1 w-56 rounded-lg border border-[var(--color-border)] bg-white p-2 shadow-lg">
+                <div className="mb-1 flex gap-3 border-b border-[var(--color-border)] pb-1">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedSheets(REPORT_SHEETS.map((s) => s.key))}
+                    className="text-xs text-[var(--color-primary)] hover:underline"
+                  >
+                    Select all
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedSheets([])}
+                    className="text-xs text-[var(--color-primary)] hover:underline"
+                  >
+                    Clear
+                  </button>
+                </div>
+                {REPORT_SHEETS.map((s) => (
+                  <label key={s.key} className="flex cursor-pointer items-center gap-2 px-1 py-1 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={selectedSheets.includes(s.key)}
+                      onChange={() =>
+                        setSelectedSheets((prev) =>
+                          prev.includes(s.key) ? prev.filter((x) => x !== s.key) : [...prev, s.key]
+                        )
+                      }
+                    />
+                    {s.label}
+                  </label>
+                ))}
+              </div>
+            </details>
+          </div>
+        )}
 
         {/* Period selectors — Month-End */}
         {clientId && mainChannelId && (
