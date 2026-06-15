@@ -25,7 +25,9 @@ export default function ClientDetailPage() {
   const [cams, setCams] = useState<CAM[]>([]);
   const [uploads, setUploads] = useState<UploadMeta[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"details" | "control" | "uploads">("details");
+  const [tab, setTab] = useState<"details" | "control" | "uploads" | "logo">("details");
+  const [logo, setLogo] = useState<string | null>(null);
+  const [logoBusy, setLogoBusy] = useState(false);
   const [uploading, setUploading] = useState<ControlFileType | null>(null);
   const [toast, setToast] = useState("");
   const [editing, setEditing] = useState(false);
@@ -60,20 +62,57 @@ export default function ClientDetailPage() {
 
   async function load() {
     const t = Date.now();
-    const [cRes, chRes, camRes, uRes] = await Promise.all([
+    const [cRes, chRes, camRes, uRes, logoRes] = await Promise.all([
       authFetch(`/api/clients/${id}?t=${t}`),
       authFetch(`/api/channels?t=${t}`),
       authFetch("/api/cams"),
       authFetch(`/api/uploads?clientId=${id}`),
+      authFetch(`/api/clients/${id}/logo?t=${t}`),
     ]);
     if (cRes.ok) setClient(await cRes.json());
     if (chRes.ok) setChannels(await chRes.json());
     if (camRes.ok) setCams(await camRes.json());
     if (uRes.ok) setUploads(await uRes.json());
+    if (logoRes.ok) { const d = await logoRes.json(); setLogo(d?.dataUrl ?? null); }
     setLoading(false);
   }
 
   useEffect(() => { load(); }, [id]);
+
+  async function handleLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (file.size > 1.5 * 1024 * 1024) {
+      setToast("Image too large (max 1.5MB)"); setTimeout(() => setToast(""), 3000); return;
+    }
+    setLogoBusy(true);
+    try {
+      const dataUrl: string = await new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(String(r.result));
+        r.onerror = () => reject(new Error("read failed"));
+        r.readAsDataURL(file);
+      });
+      const res = await authFetch(`/api/clients/${id}/logo`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dataUrl }),
+      });
+      if (res.ok) { setLogo(dataUrl); setToast("Logo uploaded"); }
+      else { const er = await res.json().catch(() => ({})); setToast(er.error || "Upload failed"); }
+    } catch {
+      setToast("Upload failed");
+    }
+    setTimeout(() => setToast(""), 3000);
+    setLogoBusy(false);
+  }
+
+  async function handleLogoDelete() {
+    setLogoBusy(true);
+    const res = await authFetch(`/api/clients/${id}/logo`, { method: "DELETE" });
+    if (res.ok) { setLogo(null); setToast("Logo removed"); }
+    setTimeout(() => setToast(""), 3000);
+    setLogoBusy(false);
+  }
 
   // Load product mapping data when client is loaded and has PMF
   const hasPmf = !!client?.controlFiles?.pmf;
@@ -374,13 +413,45 @@ export default function ClientDetailPage() {
 
       {/* Tabs */}
       <div className="mb-6 flex gap-1 border-b border-[var(--color-border)]">
-        {(["details", "control", "uploads"] as const).map((t) => (
+        {(["details", "control", "uploads", "logo"] as const).map((t) => (
           <button key={t} onClick={() => setTab(t)}
             className={`px-4 py-2.5 text-sm font-medium transition-colors ${tab === t ? "border-b-2 border-[var(--color-primary)] text-[var(--color-primary)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
-            {t === "details" ? "Details" : t === "control" ? "Control Files" : "Uploads"}
+            {t === "details" ? "Details" : t === "control" ? "Control Files" : t === "uploads" ? "Uploads" : "Logo"}
           </button>
         ))}
       </div>
+
+      {tab === "logo" && (
+        <div className="rounded-xl border border-[var(--color-border)] bg-white p-6">
+          <h3 className="mb-1 text-lg font-semibold text-[var(--color-text)]">Client Logo</h3>
+          <p className="mb-4 text-sm text-[var(--color-text-muted)]">
+            Shown on the Month-End report cover (Menu) sheet. PNG / JPG / GIF, max ~1.5MB.
+          </p>
+          {logo ? (
+            <div className="mb-4">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={logo} alt="Client logo" className="max-h-32 rounded border border-[var(--color-border)] bg-white p-2" />
+            </div>
+          ) : (
+            <p className="mb-4 text-sm text-[var(--color-text-muted)]">No logo uploaded.</p>
+          )}
+          {isAdmin && (
+            <div className="flex items-center gap-3">
+              <label className="cursor-pointer rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)]">
+                {logoBusy ? "Uploading…" : logo ? "Replace Logo" : "Upload Logo"}
+                <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" className="hidden"
+                  onChange={handleLogoUpload} disabled={logoBusy} />
+              </label>
+              {logo && (
+                <button onClick={handleLogoDelete} disabled={logoBusy}
+                  className="rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm hover:bg-zinc-50">
+                  Remove
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {tab === "details" && !editing && (
         <div className="rounded-xl border border-[var(--color-border)] bg-white p-6">

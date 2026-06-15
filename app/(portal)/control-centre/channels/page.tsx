@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, FormEvent } from "react";
+import { useEffect, useState, FormEvent, ChangeEvent } from "react";
 import { authFetch } from "@/lib/useAuth";
 import type { Channel } from "@/lib/types";
 
@@ -12,14 +12,51 @@ export default function ChannelsPage() {
   const [error, setError] = useState("");
   const [editId, setEditId] = useState<string | null>(null);
   const [editIsSub, setEditIsSub] = useState(false);
+  const [logos, setLogos] = useState<Record<string, string>>({});
 
   async function load() {
     const res = await authFetch("/api/channels");
-    if (res.ok) setChannels(await res.json());
+    let chs: Channel[] = [];
+    if (res.ok) { chs = await res.json(); setChannels(chs); }
     setLoading(false);
+    // Load logos for main channels (generic, used on report cover sheets)
+    const mains = chs.filter((c) => !c.parentId);
+    const entries = await Promise.all(
+      mains.map(async (m): Promise<[string, string | null]> => {
+        const r = await authFetch(`/api/channels/${m.id}/logo`);
+        if (r.ok) { const d = await r.json(); return [m.id, d?.dataUrl ?? null]; }
+        return [m.id, null];
+      })
+    );
+    const map: Record<string, string> = {};
+    for (const [cid, url] of entries) if (url) map[cid] = url;
+    setLogos(map);
   }
 
   useEffect(() => { load(); }, []);
+
+  async function uploadChannelLogo(channelId: string, e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (file.size > 1.5 * 1024 * 1024) { alert("Image too large (max 1.5MB)"); return; }
+    const dataUrl: string = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result));
+      r.onerror = () => reject(new Error("read failed"));
+      r.readAsDataURL(file);
+    });
+    const res = await authFetch(`/api/channels/${channelId}/logo`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dataUrl }),
+    });
+    if (res.ok) setLogos((p) => ({ ...p, [channelId]: dataUrl }));
+    else { const er = await res.json().catch(() => ({})); alert(er.error || "Upload failed"); }
+  }
+
+  async function deleteChannelLogo(channelId: string) {
+    const res = await authFetch(`/api/channels/${channelId}/logo`, { method: "DELETE" });
+    if (res.ok) setLogos((p) => { const n = { ...p }; delete n[channelId]; return n; });
+  }
 
   const mainChannels = channels.filter((c) => !c.parentId);
   const getSubChannels = (parentId: string) =>
@@ -154,8 +191,20 @@ export default function ChannelsPage() {
                       MAIN
                     </span>
                     <span className="font-medium text-[var(--color-text)]">{main.name}</span>
+                    {logos[main.id] && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={logos[main.id]} alt="" className="h-7 rounded border border-[var(--color-border)] bg-white px-1" />
+                    )}
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex items-center gap-2">
+                    <label className="cursor-pointer text-xs text-[var(--color-primary)] hover:underline">
+                      {logos[main.id] ? "Replace logo" : "Add logo"}
+                      <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" className="hidden"
+                        onChange={(e) => uploadChannelLogo(main.id, e)} />
+                    </label>
+                    {logos[main.id] && (
+                      <button onClick={() => deleteChannelLogo(main.id)} className="text-xs text-red-500 hover:underline">Remove logo</button>
+                    )}
                     <button onClick={() => startEdit(main)} className="text-xs text-[var(--color-primary)] hover:underline">Edit</button>
                     <button onClick={() => handleDelete(main.id)} className="text-xs text-red-500 hover:underline">Delete</button>
                   </div>
