@@ -20,6 +20,9 @@ const REPORT_SHEETS = [
   { key: "statusDetail", label: "Status Detail" },
   { key: "margin", label: "Margin" },
   { key: "phantom", label: "Phantom" },
+  { key: "nd", label: "ND" },
+  { key: "ndDetail", label: "ND Detail" },
+  { key: "ndFalse", label: "ND False" },
   { key: "data", label: "Data" },
 ];
 
@@ -58,6 +61,9 @@ export default function ReportsPage() {
   // Phantom-stock thresholds (months); "" = Any
   const [phLastSold, setPhLastSold] = useState<number | "">(3);
   const [phLastReceived, setPhLastReceived] = useState<number | "">(3);
+
+  // ND rolling window in months (1–24, default 6)
+  const [ndMonths, setNdMonths] = useState<number>(6);
 
   // Which sheets to include in the Month-End workbook (default: all)
   const [selectedSheets, setSelectedSheets] = useState<string[]>(REPORT_SHEETS.map((s) => s.key));
@@ -327,6 +333,7 @@ export default function ReportsPage() {
       if (meCategories.length) params.set("categories", meCategories.join(","));
       if (phLastSold) params.set("phLastSold", String(phLastSold));
       if (phLastReceived) params.set("phLastReceived", String(phLastReceived));
+      if (ndMonths) params.set("ndMonths", String(ndMonths));
       if (selectedSheets.length) params.set("sheets", selectedSheets.join(","));
 
       const res = await authFetch(`/api/reports/month-end?${params}`);
@@ -824,6 +831,24 @@ export default function ReportsPage() {
                 ))}
               </select>
             </div>
+          </div>
+        )}
+
+        {/* Numerical Distribution rolling window */}
+        {clientId && mainChannelId && (
+          <div className="mb-4 rounded-lg border border-[var(--color-border)] bg-zinc-50 p-3">
+            <label className="mb-1 block text-xs font-semibold text-[var(--color-text-muted)]">
+              Numerical Distribution — rolling window
+            </label>
+            <select
+              value={ndMonths}
+              onChange={(e) => setNdMonths(Number(e.target.value))}
+              className="w-56 rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm"
+            >
+              {Array.from({ length: 24 }, (_, i) => i + 1).map((m) => (
+                <option key={m} value={m}>Most recent {m} month{m > 1 ? "s" : ""}</option>
+              ))}
+            </select>
           </div>
         )}
 

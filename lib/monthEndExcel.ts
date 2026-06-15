@@ -17,6 +17,7 @@ import type {
   StatusDetailRow,
   MarginAnalysis,
   PhantomAnalysis,
+  NDAnalysis,
 } from "./monthEndReport";
 import { buildDateContext, dataRowExtras } from "./monthEndReport";
 
@@ -99,6 +100,7 @@ export async function buildMonthEndWorkbook(
   marginAnalysis?: MarginAnalysis,
   phantomAnalysis?: PhantomAnalysis,
   includeSheets: string[] = [],
+  ndAnalysis?: NDAnalysis,
 ): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
   wb.creator = "iRam LIVE Replacement";
@@ -333,6 +335,13 @@ export async function buildMonthEndWorkbook(
   // ── Phantom sheet (summary block on top of the grid) ─────────
   if (phantomAnalysis && want("phantom")) {
     buildPhantomSheet(wb, phantomAnalysis, clientName, channelLabel, periodLabel);
+  }
+
+  // ── Numerical Distribution sheets ────────────────────────────
+  if (ndAnalysis) {
+    if (want("nd")) buildNdSheet(wb, ndAnalysis, clientName, channelLabel, periodLabel);
+    if (want("ndDetail")) buildNdDetailSheet(wb, ndAnalysis);
+    if (ndAnalysis.hasRanging && ndAnalysis.falseDetail.length > 0 && want("ndFalse")) buildNdFalseSheet(wb, ndAnalysis);
   }
 
   // ── Data sheet (flat enriched rows + native AutoFilter) ──────
@@ -970,3 +979,175 @@ function buildPhantomSheet(
   }
   sheet.views = [{ state: "frozen", ySplit: headerRow }];
 }
+
+// ── Numerical Distribution summary (4 cascading rollup tables) ──
+function buildNdSheet(
+  wb: ExcelJS.Workbook,
+  nd: NDAnalysis,
+  clientName: string,
+  channelLabel: string,
+  periodLabel: string,
+): void {
+  const sheet = wb.addWorksheet("ND", { properties: { defaultColWidth: 14 } });
+  let cur = 1;
+
+  const title = sheet.getCell(cur, 1);
+  title.value = `Numerical Distribution — ${clientName} — ${channelLabel} — ${periodLabel}`;
+  title.font = { name: "Calibri", size: 14, bold: true, color: { argb: HEADER_BG } };
+  sheet.mergeCells(cur, 1, cur, 4);
+  cur += 1;
+
+  const note = sheet.getCell(cur, 1);
+  note.value = nd.hasRanging
+    ? "You have a ranging file loaded, so numerical distribution takes your ranging into account."
+    : "You do not have a ranging file loaded, so numerical distribution is calculated assuming all ACTIVE SKU's go into all sites.";
+  note.font = { name: "Calibri", size: 10, italic: true, color: { argb: nd.hasRanging ? "1F4E79" : "C00000" } };
+  sheet.mergeCells(cur, 1, cur, 4);
+  cur += 1;
+
+  const win = sheet.getCell(cur, 1);
+  win.value = `Rolling window: ${nd.windowLabel}  •  ND = 1 when a ranged SKU/site has sales (window) or any stock`;
+  win.font = { name: "Calibri", size: 10, italic: true, color: { argb: "828282" } };
+  sheet.mergeCells(cur, 1, cur, 4);
+  cur += 2;
+
+  sheet.getColumn(1).width = 34;
+  sheet.getColumn(2).width = 12;
+  sheet.getColumn(3).width = 12;
+  sheet.getColumn(4).width = 10;
+
+  const writeTable = (dimLabel: string, rows: typeof nd.bySubChannel) => {
+    // Sub-header bar
+    const sub = sheet.getCell(cur, 1);
+    sub.value = `${dimLabel} — Numerical Distribution`;
+    sub.font = { name: "Calibri", size: 11, bold: true, color: { argb: HEADER_BG } };
+    sub.fill = { type: "pattern", pattern: "solid", fgColor: { argb: SUBHEADER_BG } };
+    sheet.mergeCells(cur, 1, cur, 4);
+    for (let c = 1; c <= 4; c++) sheet.getCell(cur, c).border = thinBorder();
+    cur++;
+    // Header
+    [dimLabel, "Expected", "Present", "ND %"].forEach((h, i) => {
+      const c = sheet.getCell(cur, i + 1);
+      c.value = h; c.font = headerFont();
+      c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_BG } };
+      c.border = thinBorder(); c.alignment = { horizontal: i === 0 ? "left" : "center" };
+    });
+    cur++;
+    for (const row of rows) {
+      const a = sheet.getCell(cur, 1); a.value = row.name; a.font = bodyFont(); a.border = thinBorder();
+      const e = sheet.getCell(cur, 2); e.value = row.expected; e.numFmt = "#,##0"; e.font = bodyFont(); e.border = thinBorder(); e.alignment = { horizontal: "center" };
+      const pr = sheet.getCell(cur, 3); pr.value = row.present; pr.numFmt = "#,##0"; pr.font = bodyFont(); pr.border = thinBorder(); pr.alignment = { horizontal: "center" };
+      const pct = sheet.getCell(cur, 4);
+      pct.value = { formula: `IF(B${cur}=0,0,C${cur}/B${cur})`, result: row.ndPct / 100 };
+      pct.numFmt = "0.0%"; pct.font = bodyFont(); pct.border = thinBorder(); pct.alignment = { horizontal: "center" };
+      if (row.ndPct < 60) pct.fill = { type: "pattern", pattern: "solid", fgColor: { argb: GROWTH_RED } };
+      else if (row.ndPct >= 90) pct.fill = { type: "pattern", pattern: "solid", fgColor: { argb: GROWTH_GREEN } };
+      cur++;
+    }
+    cur += 2;
+  };
+
+  writeTable("Sub-Channel", nd.bySubChannel);
+  writeTable("Province", nd.byProvince);
+  writeTable("SKU", nd.bySku);
+  writeTable("Site", nd.bySite);
+}
+
+// ── ND Detail — one row per ranged (or active) SKU/site, ND 1/0 ──
+function buildNdDetailSheet(wb: ExcelJS.Workbook, nd: NDAnalysis): void {
+  const sheet = wb.addWorksheet("ND Detail", { properties: { defaultColWidth: 14 } });
+  const cols: { header: string; width: number; key: keyof NDDetailRowLite }[] = [
+    { header: "Sub-Channel", width: 14, key: "subChannel" },
+    { header: "Province", width: 14, key: "province" },
+    { header: "Site", width: 10, key: "site" },
+    { header: "Site Name", width: 22, key: "siteName" },
+    { header: "Product Code", width: 14, key: "productCode" },
+    { header: "Article", width: 12, key: "article" },
+    { header: "Description", width: 30, key: "description" },
+    { header: "PR ST", width: 9, key: "prst" },
+    { header: "PMF Status", width: 13, key: "pmfStatus" },
+    { header: "Ranging", width: 10, key: "ranging" },
+  ];
+  cols.forEach((c, i) => {
+    const cell = sheet.getCell(1, i + 1);
+    cell.value = c.header; cell.font = headerFont();
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_BG } };
+    cell.border = thinBorder(); cell.alignment = { horizontal: "center", wrapText: true };
+    sheet.getColumn(i + 1).width = c.width;
+  });
+  // ND column header
+  const ndCol = cols.length + 1;
+  const ndHdr = sheet.getCell(1, ndCol);
+  ndHdr.value = "ND"; ndHdr.font = headerFont();
+  ndHdr.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_BG } };
+  ndHdr.border = thinBorder(); ndHdr.alignment = { horizontal: "center" };
+  sheet.getColumn(ndCol).width = 7;
+
+  let r = 2;
+  for (const row of nd.detail) {
+    cols.forEach((c, i) => {
+      const cell = sheet.getCell(r, i + 1);
+      cell.value = row[c.key];
+      cell.font = bodyFont(); cell.border = thinBorder();
+    });
+    const ndCell = sheet.getCell(r, ndCol);
+    ndCell.value = row.nd; ndCell.numFmt = "0"; ndCell.font = bodyFont(); ndCell.border = thinBorder();
+    ndCell.alignment = { horizontal: "center" };
+    ndCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: row.nd === 1 ? GROWTH_GREEN : GROWTH_RED } };
+    r++;
+  }
+  if (nd.detail.length > 0) {
+    sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: nd.detail.length + 1, column: ndCol } };
+  }
+  sheet.views = [{ state: "frozen", ySplit: 1 }];
+}
+
+// ── ND False — stock (SOH>0) in NON-ranged SKU/site combos ──────
+function buildNdFalseSheet(wb: ExcelJS.Workbook, nd: NDAnalysis): void {
+  const sheet = wb.addWorksheet("ND False", { properties: { defaultColWidth: 14 } });
+  const cols: { header: string; width: number; key: keyof NDFalseRowLite }[] = [
+    { header: "Sub-Channel", width: 14, key: "subChannel" },
+    { header: "Province", width: 14, key: "province" },
+    { header: "Site", width: 10, key: "site" },
+    { header: "Site Name", width: 22, key: "siteName" },
+    { header: "Product Code", width: 14, key: "productCode" },
+    { header: "Article", width: 12, key: "article" },
+    { header: "Description", width: 30, key: "description" },
+    { header: "PR ST", width: 9, key: "prst" },
+    { header: "PMF Status", width: 13, key: "pmfStatus" },
+  ];
+  cols.forEach((c, i) => {
+    const cell = sheet.getCell(1, i + 1);
+    cell.value = c.header; cell.font = headerFont();
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_BG } };
+    cell.border = thinBorder(); cell.alignment = { horizontal: "center", wrapText: true };
+    sheet.getColumn(i + 1).width = c.width;
+  });
+  const sohCol = cols.length + 1;
+  const sohHdr = sheet.getCell(1, sohCol);
+  sohHdr.value = "SOH"; sohHdr.font = headerFont();
+  sohHdr.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_BG } };
+  sohHdr.border = thinBorder(); sohHdr.alignment = { horizontal: "center" };
+  sheet.getColumn(sohCol).width = 9;
+
+  let r = 2;
+  for (const row of nd.falseDetail) {
+    cols.forEach((c, i) => {
+      const cell = sheet.getCell(r, i + 1);
+      cell.value = row[c.key];
+      cell.font = bodyFont(); cell.border = thinBorder();
+    });
+    const sohCell = sheet.getCell(r, sohCol);
+    sohCell.value = row.soh; sohCell.numFmt = "#,##0"; sohCell.font = bodyFont(); sohCell.border = thinBorder();
+    sohCell.alignment = { horizontal: "right" };
+    r++;
+  }
+  if (nd.falseDetail.length > 0) {
+    sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: nd.falseDetail.length + 1, column: sohCol } };
+  }
+  sheet.views = [{ state: "frozen", ySplit: 1 }];
+}
+
+// Helper alias types for keyof access (string-valued columns only)
+type NDDetailRowLite = { subChannel: string; province: string; site: string; siteName: string; productCode: string; article: string; description: string; prst: string; pmfStatus: string; ranging: string };
+type NDFalseRowLite = { subChannel: string; province: string; site: string; siteName: string; productCode: string; article: string; description: string; prst: string; pmfStatus: string };

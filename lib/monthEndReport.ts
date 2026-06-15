@@ -13,7 +13,7 @@
    Also computes OOS summary + detail data.
    ────────────────────────────────────────────────────────────── */
 
-import type { StatusDefinition, StatusScenario, StatusClassification } from "./types";
+import type { StatusDefinition, StatusScenario, StatusClassification, StoreRecord, ProductMaster } from "./types";
 import { evaluateScenarios } from "./statusScenarioData";
 
 type Row = Record<string, unknown>;
@@ -1112,5 +1112,246 @@ export function buildPhantomAnalysis(
     lastReceivedMonths: opts.lastReceivedMonths,
     byStatus,
     detail,
+  };
+}
+
+// ── Numerical Distribution (ND) ────────────────────────────────
+//
+// ND measures, of the SKU/site combinations that SHOULD stock a product,
+// how many actually showed presence (sales in the rolling window OR any
+// stock) over the period.
+//   Scenario 1 — ranging file: universe = ranging rows where RangeIndicator
+//     is TRUE.
+//   Scenario 2 — no ranging file: universe = active PMF SKUs × active sites,
+//     assuming every ACTIVE SKU is ranged in every ACTIVE store.
+
+export interface NDRollupRow {
+  name: string;
+  expected: number;   // universe count (ranged / active combos)
+  present: number;    // combos with ND = 1
+  ndPct: number;
+}
+
+export interface NDDetailRow {
+  subChannel: string;
+  province: string;
+  site: string;
+  siteName: string;
+  productCode: string;
+  article: string;
+  description: string;
+  prst: string;
+  pmfStatus: string;
+  ranging: string;    // "TRUE" | "FALSE" | "N/A"
+  nd: number;         // 1 | 0
+}
+
+export interface NDFalseRow {
+  subChannel: string;
+  province: string;
+  site: string;
+  siteName: string;
+  productCode: string;
+  article: string;
+  description: string;
+  prst: string;
+  pmfStatus: string;
+  soh: number;
+}
+
+export interface NDAnalysis {
+  hasRanging: boolean;
+  rollingMonths: number;
+  windowLabel: string;
+  bySubChannel: NDRollupRow[];
+  byProvince: NDRollupRow[];
+  bySku: NDRollupRow[];
+  bySite: NDRollupRow[];
+  detail: NDDetailRow[];
+  falseDetail: NDFalseRow[];
+}
+
+// Resolve a ranging-file field, tolerating Helper/Mandatory prefixes + spacing.
+function rangingField(row: Row, targets: string[]): string {
+  for (const [k, v] of Object.entries(row)) {
+    let nk = k.trim().toLowerCase().replace(/^helper/, "").replace(/^mandatory/, "");
+    nk = nk.replace(/[\s_]+/g, "");
+    if (targets.includes(nk)) return v == null ? "" : String(v).trim();
+  }
+  return "";
+}
+
+function isTrueRange(v: string): boolean {
+  const s = v.trim().toUpperCase();
+  return s === "TRUE" || s === "T" || s === "1" || s === "Y" || s === "YES";
+}
+
+export function buildNumericalDistribution(opts: {
+  rows: Row[];
+  dateColumns: string[];
+  refYear: number;
+  refMonth: number;
+  rollingMonths: number;
+  hasRanging: boolean;
+  rangingRows: Row[];
+  stores: StoreRecord[];
+  products: Map<string, ProductMaster>;
+}): NDAnalysis {
+  const { rows, dateColumns, refYear, refMonth, rollingMonths, hasRanging, rangingRows, stores, products } = opts;
+
+  // Rolling window: the N most recent month columns up to the report period.
+  const windowCols: string[] = [];
+  for (let i = 0; i < rollingMonths; i++) {
+    let m = refMonth - i;
+    let y = refYear;
+    while (m <= 0) { m += 12; y -= 1; }
+    const col = `${String(m).padStart(2, "0")}-${y}`;
+    if (dateColumns.includes(col)) windowCols.push(col);
+  }
+  const sortedWin = [...windowCols].sort();
+  const windowLabel = sortedWin.length
+    ? `${rollingMonths} months (${sortedWin[0]} … ${sortedWin[sortedWin.length - 1]})`
+    : `${rollingMonths} months`;
+
+  // DISPO presence lookup, keyed by site|article and site|cpid.
+  interface Presence { present: boolean; prst: string; article: string; soh: number; }
+  const bySiteArticle = new Map<string, Presence>();
+  const bySiteCpid = new Map<string, Presence>();
+  const stockRows: { site: string; article: string; cpid: string; soh: number; prst: string }[] = [];
+
+  for (const row of rows) {
+    const site = String(row["Site"] ?? "").trim().toLowerCase();
+    const article = String(row["Article"] ?? "").trim().toLowerCase();
+    const cpid = String(row["_clientProductId"] ?? "").trim().toLowerCase();
+    if (!site) continue;
+
+    let windowSales = 0;
+    for (const col of windowCols) {
+      const v = parseNum(row[col], 0);
+      if (!isNaN(v)) windowSales += v;
+    }
+    const soh = parseNum(row["SOH"], 0);
+    const soo = parseNum(row["SOO"], 0);
+    const sit = parseNum(row["SIT"], 0);
+    const hasStock = (soh > 0) || (soo > 0) || (sit > 0);
+    const present = windowSales > 0 || hasStock;
+    const prst = String(row["Status"] ?? row["PR ST"] ?? "").trim();
+    const p: Presence = { present, prst, article, soh: isNaN(soh) ? 0 : soh };
+
+    if (article) bySiteArticle.set(`${site}|${article}`, p);
+    if (cpid) bySiteCpid.set(`${site}|${cpid}`, p);
+    if (soh > 0) stockRows.push({ site, article, cpid, soh, prst });
+  }
+
+  // Rollup accumulators
+  const mk = () => new Map<string, { expected: number; present: number; label: string }>();
+  const subAcc = mk(), provAcc = mk(), skuAcc = mk(), siteAcc = mk();
+  const bump = (acc: ReturnType<typeof mk>, key: string, label: string, nd: number) => {
+    if (!key) return;
+    let e = acc.get(key);
+    if (!e) { e = { expected: 0, present: 0, label }; acc.set(key, e); }
+    e.expected++;
+    e.present += nd;
+  };
+
+  const detail: NDDetailRow[] = [];
+  const falseDetail: NDFalseRow[] = [];
+
+  if (hasRanging && rangingRows.length > 0) {
+    const rangedKeys = new Set<string>();
+    for (const rr of rangingRows) {
+      const indicator = rangingField(rr, ["rangeindicator", "range"]);
+      if (!isTrueRange(indicator)) continue;
+
+      const cpid = rangingField(rr, ["productid"]).toLowerCase();
+      const article = rangingField(rr, ["articlechannelcode", "article"]).toLowerCase();
+      const site = rangingField(rr, ["sitecode", "site"]).toLowerCase();
+      const subCh = rangingField(rr, ["subchannel"]) || "Unknown";
+      const prov = rangingField(rr, ["province"]) || "Unknown";
+      const siteName = rangingField(rr, ["storename"]);
+      const desc = rangingField(rr, ["productdescription", "description"]);
+      if (!site || (!article && !cpid)) continue;
+
+      if (article) rangedKeys.add(`${site}|${article}`);
+      if (cpid) rangedKeys.add(`${site}|${cpid}`);
+
+      const p = (article && bySiteArticle.get(`${site}|${article}`)) || (cpid && bySiteCpid.get(`${site}|${cpid}`)) || null;
+      const nd = p && p.present ? 1 : 0;
+      const pmf = products.get(cpid)?.status ?? "";
+
+      detail.push({
+        subChannel: subCh, province: prov, site, siteName,
+        productCode: cpid.toUpperCase(), article: (p?.article || article).toUpperCase(),
+        description: desc || products.get(cpid)?.description || "",
+        prst: p?.prst ?? "", pmfStatus: pmf, ranging: "TRUE", nd,
+      });
+
+      bump(subAcc, subCh, subCh, nd);
+      bump(provAcc, prov, prov, nd);
+      bump(skuAcc, cpid, `${cpid.toUpperCase()} — ${desc || products.get(cpid)?.description || ""}`, nd);
+      bump(siteAcc, site, `${site.toUpperCase()} — ${siteName}`, nd);
+    }
+
+    // ND False — SOH>0 in combinations that are NOT ranged TRUE
+    for (const s of stockRows) {
+      const isRanged = (s.article && rangedKeys.has(`${s.site}|${s.article}`)) || (s.cpid && rangedKeys.has(`${s.site}|${s.cpid}`));
+      if (isRanged) continue;
+      const store = stores.find((st) => st.siteNum.toLowerCase().trim() === s.site);
+      const prod = products.get(s.cpid);
+      falseDetail.push({
+        subChannel: store?.subChannel || "", province: store?.province || "",
+        site: s.site.toUpperCase(), siteName: store?.storeName || "",
+        productCode: s.cpid.toUpperCase(), article: s.article.toUpperCase(),
+        description: prod?.description || "", prst: s.prst, pmfStatus: prod?.status || "", soh: s.soh,
+      });
+    }
+  } else {
+    // Scenario 2 — active SKU × active site
+    const activeSites = stores.filter((st) => String(st.status ?? "").trim().toUpperCase() === "ACTIVE");
+    const activeProducts = [...products.values()].filter((p) => String(p.status ?? "").trim().toUpperCase() === "ACTIVE");
+
+    for (const prod of activeProducts) {
+      const cpid = prod.clientProductId.toLowerCase().trim();
+      for (const st of activeSites) {
+        const site = st.siteNum.toLowerCase().trim();
+        if (!site) continue;
+        const p = bySiteCpid.get(`${site}|${cpid}`) || null;
+        const nd = p && p.present ? 1 : 0;
+        const subCh = st.subChannel || "Unknown";
+        const prov = st.province || "Unknown";
+
+        detail.push({
+          subChannel: subCh, province: prov, site: st.siteNum, siteName: st.storeName,
+          productCode: prod.clientProductId, article: (p?.article || "").toUpperCase(),
+          description: prod.description || "", prst: p?.prst ?? "",
+          pmfStatus: prod.status || "", ranging: "N/A", nd,
+        });
+
+        bump(subAcc, subCh, subCh, nd);
+        bump(provAcc, prov, prov, nd);
+        bump(skuAcc, cpid, `${prod.clientProductId} — ${prod.description || ""}`, nd);
+        bump(siteAcc, site, `${st.siteNum} — ${st.storeName}`, nd);
+      }
+    }
+  }
+
+  const toRollup = (acc: ReturnType<typeof mk>): NDRollupRow[] =>
+    [...acc.values()]
+      .map((e) => ({ name: e.label, expected: e.expected, present: e.present, ndPct: e.expected > 0 ? r2((e.present / e.expected) * 100) : 0 }))
+      .sort((a, b) => a.ndPct - b.ndPct || b.expected - a.expected);
+
+  detail.sort((a, b) => a.subChannel.localeCompare(b.subChannel) || a.siteName.localeCompare(b.siteName) || a.description.localeCompare(b.description));
+  falseDetail.sort((a, b) => a.subChannel.localeCompare(b.subChannel) || a.siteName.localeCompare(b.siteName));
+
+  return {
+    hasRanging: hasRanging && rangingRows.length > 0,
+    rollingMonths,
+    windowLabel,
+    bySubChannel: toRollup(subAcc),
+    byProvince: toRollup(provAcc),
+    bySku: toRollup(skuAcc),
+    bySite: toRollup(siteAcc),
+    detail,
+    falseDetail,
   };
 }

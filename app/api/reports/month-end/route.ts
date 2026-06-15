@@ -14,11 +14,15 @@ import {
   buildStatusDetail,
   buildMarginAnalysis,
   buildPhantomAnalysis,
+  buildNumericalDistribution,
 } from "@/lib/monthEndReport";
 import { buildMonthEndWorkbook } from "@/lib/monthEndExcel";
 import { calcMonthLastSold } from "@/lib/vitalSigns";
 import { getStatusDefinitions } from "@/lib/statusData";
 import { getStatusScenarios } from "@/lib/statusScenarioData";
+import { getMergedStores } from "@/lib/storeFileData";
+import { getProductLookup } from "@/lib/productMasterData";
+import { getControlFileData } from "@/lib/controlFileData";
 
 export const maxDuration = 120;
 
@@ -63,6 +67,10 @@ export async function GET(req: NextRequest) {
     };
     const phLastSold = parseMonths(url.searchParams.get("phLastSold"));
     const phLastReceived = parseMonths(url.searchParams.get("phLastReceived"));
+
+    // ND rolling window in months (1–24, default 6)
+    const ndMonthsRaw = parseInt(url.searchParams.get("ndMonths") || "", 10);
+    const ndMonths = !isNaN(ndMonthsRaw) && ndMonthsRaw >= 1 && ndMonthsRaw <= 24 ? ndMonthsRaw : 6;
 
     // Which sheets to include (empty = all)
     const includeSheets = (url.searchParams.get("sheets") || "")
@@ -168,6 +176,25 @@ export async function GET(req: NextRequest) {
       lastReceivedMonths: phLastReceived,
     });
 
+    // Numerical Distribution — scenario depends on whether a ranging file exists
+    const hasRanging = !!client?.controlFiles?.ranging;
+    const [ndStores, ndProducts, ndRanging] = await Promise.all([
+      getMergedStores(),
+      getProductLookup(clientId),
+      hasRanging ? getControlFileData<Record<string, unknown>>(clientId, "ranging") : Promise.resolve([]),
+    ]);
+    const ndAnalysis = buildNumericalDistribution({
+      rows: reportRows,
+      dateColumns,
+      refYear: rYear,
+      refMonth: rMonth,
+      rollingMonths: ndMonths,
+      hasRanging,
+      rangingRows: ndRanging,
+      stores: ndStores,
+      products: ndProducts,
+    });
+
     // 8. Build Excel workbook (Data sheet holds the filtered enriched rows)
     const buf = await buildMonthEndWorkbook(
       salesSummary,
@@ -183,6 +210,7 @@ export async function GET(req: NextRequest) {
       marginAnalysis,
       phantomAnalysis,
       includeSheets,
+      ndAnalysis,
     );
 
     // 9. Log activity
