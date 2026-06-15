@@ -33,6 +33,27 @@ const GROWTH_RED = "FFC7CE";
 const UNCLASS_BG = "E7E6E6";   // grey
 const MIXED_BG = "FFF2CC";     // amber
 
+// Emoji "icons" prepended to column headings (keyed by lower-cased header text).
+const HEADER_ICONS: Record<string, string> = {
+  "sub-channel": "🔗", province: "📍", category: "🏷️", "sub-category": "🏷️",
+  site: "🏬", store: "🏬", "site name": "🏬", product: "📦", article: "📦",
+  "product code": "#️⃣", description: "📝", brand: "🏷️",
+  "pr st": "🔖", status: "🔖", "product status": "✅", "pmf status": "✅",
+  soh: "📦", soo: "🚚", sit: "🚛",
+  ytd: "📈", "ytd units": "📈", "ytd value": "💰", "py ytd units": "📉", "py ytd value": "💵",
+  "ly ytd": "📉", "current month": "📅", "same month ly": "🗓️", "last month": "📆",
+  "units growth %": "📊", "value growth %": "📊",
+  "growth ytd %": "📊", "growth vs lm %": "📊", "growth vs pym %": "📊",
+  "contribution %": "🥧", "# stores": "🏬", "number of sku's": "🔢", count: "🔢",
+  "total stores": "🏬", "oos stores": "⚠️", "oos %": "⚠️", "total skus": "🔢", "oos skus": "⚠️",
+  mac: "💲", "nett cost": "💲", "incl sp": "💲", "prom sp": "💲",
+  "prod. margin": "📐", "stk margin": "📐", "mac vs nett cost": "⚖️", "margin status": "⚖️",
+  "margin support (r)": "💰", "free stock units": "📦", "suggested sp (incl vat)": "💲",
+  "phantom lines": "👻", "total lines": "🔢", "phantom %": "👻",
+  "date last sold": "📅", "date last received": "📅", ranging: "📋", classification: "🏷️",
+  "act dsc": "⏳",
+};
+
 function thinBorder(): Partial<ExcelJS.Borders> {
   const side: Partial<ExcelJS.Border> = { style: "thin", color: { argb: BORDER_COLOR } };
   return { top: side, bottom: side, left: side, right: side };
@@ -312,6 +333,31 @@ export async function buildMonthEndWorkbook(
   // ── Data sheet (flat enriched rows + native AutoFilter) ──────
   if (dataRows.length > 0) {
     buildDataSheet(wb, dataRows, dateColumns);
+  }
+
+  // Hide gridlines on every sheet (preserve any existing freeze panes)
+  for (const ws of wb.worksheets) {
+    ws.views = ws.views && ws.views.length
+      ? ws.views.map((v) => ({ ...v, showGridLines: false }))
+      : [{ showGridLines: false }];
+  }
+
+  // Centre every column heading (cells filled with the header colour) both
+  // horizontally and vertically, and prepend an icon where one is mapped.
+  for (const ws of wb.worksheets) {
+    ws.eachRow((row) => {
+      row.eachCell((cell) => {
+        const fill = cell.fill as { type?: string; fgColor?: { argb?: string } } | undefined;
+        if (fill?.type === "pattern" && fill.fgColor?.argb === HEADER_BG) {
+          const wrapText = cell.alignment?.wrapText ?? false;
+          cell.alignment = { horizontal: "center", vertical: "middle", wrapText };
+          if (typeof cell.value === "string") {
+            const icon = HEADER_ICONS[cell.value.trim().toLowerCase()];
+            if (icon && !cell.value.startsWith(icon)) cell.value = `${icon} ${cell.value}`;
+          }
+        }
+      });
+    });
   }
 
   // ── Generate buffer ──────────────────────────────────────────
