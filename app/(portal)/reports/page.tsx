@@ -23,6 +23,8 @@ const REPORT_SHEETS = [
   { key: "statusDetail", label: "Status Detail" },
   { key: "margin", label: "Margin" },
   { key: "phantom", label: "Phantom" },
+  { key: "oto", label: "OTO" },
+  { key: "otoDetail", label: "OTO Detail" },
   { key: "nd", label: "ND" },
   { key: "ndDetail", label: "ND Detail" },
   { key: "ndFalse", label: "ND False" },

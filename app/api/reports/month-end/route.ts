@@ -16,6 +16,7 @@ import {
   buildMarginAnalysis,
   buildPhantomAnalysis,
   buildNumericalDistribution,
+  buildOpenToOrder,
 } from "@/lib/monthEndReport";
 import { buildMonthEndWorkbook } from "@/lib/monthEndExcel";
 import { calcMonthLastSold } from "@/lib/vitalSigns";
@@ -209,6 +210,16 @@ export async function GET(req: NextRequest) {
       ndAnalysis = undefined;
     }
 
+    // Open to Order — suggested replenishment for out-of-stock, orderable lines
+    const otoAnalysis = buildOpenToOrder({
+      rows: reportRows,
+      statusDefs,
+      statusScenarios,
+      otoMultipliers: config.otoMultipliers,
+      hasRanging,
+      rangingRows: ndRanging,
+    });
+
     // 8. Build Excel workbook (Data sheet holds the filtered enriched rows)
     const buf = await buildMonthEndWorkbook(
       salesSummary,
@@ -227,6 +238,7 @@ export async function GET(req: NextRequest) {
       ndAnalysis,
       clientLogo?.dataUrl,
       channelLogo?.dataUrl,
+      otoAnalysis,
     );
 
     // 9. Log activity

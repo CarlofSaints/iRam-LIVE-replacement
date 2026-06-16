@@ -15,6 +15,7 @@
 
 import type { StatusDefinition, StatusScenario, StatusClassification, StoreRecord, ProductMaster } from "./types";
 import { evaluateScenarios } from "./statusScenarioData";
+import { calcOpenToOrder } from "./vitalSigns";
 
 type Row = Record<string, unknown>;
 
@@ -1369,5 +1370,143 @@ export function buildNumericalDistribution(opts: {
     bySite: toRollup(siteAcc),
     detail,
     falseDetail,
+  };
+}
+
+// ── Open to Order (OTO) ─────────────────────────────────────────
+// Suggested replenishment for SKU/site lines that are out of stock AND
+// orderable. A line qualifies only when SOH = 0, nothing is on order or in
+// transit (SOO = SIT = 0), the DISPO status classifies POSITIVE, and the PMF
+// product status is ACTIVE. OTO Units = category multiplier × R. Profile;
+// OTO Value = OTO Units × Nett Cost. (Logic shared with the Vital Signs report
+// via calcOpenToOrder.) Because every qualifying line meets the same
+// conditions, the detail sheet omits SOH/SOO/SIT/Status columns.
+
+export interface OTOSummaryRow {
+  name: string;
+  lines: number;
+  units: number;
+  value: number;
+  contributionPct: number; // share of total OTO value within its table
+}
+
+export interface OTODetailRow {
+  site: string;
+  siteName: string;
+  productCode: string;
+  article: string;
+  rangeIndicator: string; // "TRUE" | "FALSE" | "N/A" (when no ranging file)
+  description: string;
+  units: number;
+  value: number;
+}
+
+export interface OTOAnalysis {
+  hasRanging: boolean;
+  totalLines: number;
+  totalUnits: number;
+  totalValue: number;
+  bySubChannel: OTOSummaryRow[];
+  byCategory: OTOSummaryRow[];
+  bySku: OTOSummaryRow[];
+  bySite: OTOSummaryRow[];
+  detail: OTODetailRow[];
+}
+
+export function buildOpenToOrder(opts: {
+  rows: Row[];
+  statusDefs: StatusDefinition[];
+  statusScenarios: StatusScenario[];
+  otoMultipliers: Record<string, number>;
+  hasRanging: boolean;
+  rangingRows: Row[];
+}): OTOAnalysis {
+  const { rows, statusDefs, statusScenarios, otoMultipliers, hasRanging, rangingRows } = opts;
+
+  // Ranged set (site|article and site|cpid) — only used to label the detail
+  // rows' Range Indicator when a ranging file exists.
+  const rangedKeys = new Set<string>();
+  if (hasRanging) {
+    for (const rr of rangingRows) {
+      if (!isTrueRange(rangingField(rr, ["rangeindicator", "range"]))) continue;
+      const cpid = rangingField(rr, ["productid"]).toLowerCase();
+      const article = rangingField(rr, ["articlechannelcode", "article"]).toLowerCase();
+      const site = rangingField(rr, ["sitecode", "site"]).toLowerCase();
+      if (!site) continue;
+      if (article) rangedKeys.add(`${site}|${article}`);
+      if (cpid) rangedKeys.add(`${site}|${cpid}`);
+    }
+  }
+
+  const detail: OTODetailRow[] = [];
+  const mk = () => new Map<string, { units: number; value: number; lines: number; label: string }>();
+  const subAcc = mk(), catAcc = mk(), skuAcc = mk(), siteAcc = mk();
+  const bump = (acc: ReturnType<typeof mk>, key: string, label: string, units: number, value: number) => {
+    if (!key) return;
+    let e = acc.get(key);
+    if (!e) { e = { units: 0, value: 0, lines: 0, label }; acc.set(key, e); }
+    e.units += units; e.value += value; e.lines++;
+  };
+
+  let totalUnits = 0, totalValue = 0;
+
+  for (const row of rows) {
+    const category = String(row["_category"] ?? "").trim().toLowerCase();
+    const multiplier = (category && otoMultipliers[category]) || 1;
+    const { oto, otoValue } = calcOpenToOrder(row, statusDefs, multiplier, statusScenarios);
+    if (oto <= 0) continue; // only qualifying lines with a positive suggested order
+
+    const site = String(row["Site"] ?? "").trim();
+    const article = String(row["Article"] ?? "").trim();
+    const cpid = String(row["_clientProductId"] ?? "").trim();
+    const siteKey = site.toLowerCase(), artKey = article.toLowerCase(), cpidKey = cpid.toLowerCase();
+
+    const rangeIndicator = !hasRanging
+      ? "N/A"
+      : (artKey && rangedKeys.has(`${siteKey}|${artKey}`)) || (cpidKey && rangedKeys.has(`${siteKey}|${cpidKey}`))
+        ? "TRUE"
+        : "FALSE";
+
+    const subCh = String(row["_storeSubChannel"] || row["_storeChannel"] || "Unknown");
+    const catName = String(row["_category"] || "Unknown");
+    const siteName = String(row["_storeName"] || "");
+    const desc = String(row["_productDescription"] || row["Article Desc"] || "");
+
+    detail.push({ site, siteName, productCode: cpid, article, rangeIndicator, description: desc, units: oto, value: otoValue });
+
+    bump(subAcc, subCh, subCh, oto, otoValue);
+    bump(catAcc, catName, catName, oto, otoValue);
+    bump(skuAcc, cpidKey || artKey, `${cpid || article}${desc ? ` — ${desc}` : ""}`, oto, otoValue);
+    bump(siteAcc, siteKey, `${site}${siteName ? ` — ${siteName}` : ""}`, oto, otoValue);
+
+    totalUnits += oto;
+    totalValue += otoValue;
+  }
+
+  const toRows = (acc: ReturnType<typeof mk>): OTOSummaryRow[] => {
+    const total = [...acc.values()].reduce((s, e) => s + e.value, 0);
+    return [...acc.values()]
+      .map((e) => ({
+        name: e.label,
+        lines: e.lines,
+        units: r2(e.units),
+        value: r2(e.value),
+        contributionPct: total > 0 ? r2((e.value / total) * 100) : 0,
+      }))
+      .sort((a, b) => b.value - a.value);
+  };
+
+  detail.sort((a, b) => b.value - a.value);
+
+  return {
+    hasRanging,
+    totalLines: detail.length,
+    totalUnits: r2(totalUnits),
+    totalValue: r2(totalValue),
+    bySubChannel: toRows(subAcc),
+    byCategory: toRows(catAcc),
+    bySku: toRows(skuAcc),
+    bySite: toRows(siteAcc),
+    detail,
   };
 }

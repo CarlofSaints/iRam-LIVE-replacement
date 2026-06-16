@@ -18,6 +18,7 @@ import type {
   MarginAnalysis,
   PhantomAnalysis,
   NDAnalysis,
+  OTOAnalysis,
 } from "./monthEndReport";
 import { buildDateContext, dataRowExtras } from "./monthEndReport";
 
@@ -138,6 +139,7 @@ export async function buildMonthEndWorkbook(
   ndAnalysis?: NDAnalysis,
   clientLogo?: string,
   channelLogo?: string,
+  otoAnalysis?: OTOAnalysis,
 ): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
   wb.creator = "iRam LIVE Replacement";
@@ -379,6 +381,12 @@ export async function buildMonthEndWorkbook(
     buildPhantomSheet(wb, phantomAnalysis, clientName, channelLabel, periodLabel);
   }
 
+  // ── Open to Order sheets (summary cascade + detail) ──────────
+  if (otoAnalysis) {
+    if (want("oto")) buildOtoSummarySheet(wb, otoAnalysis, clientName, channelLabel, periodLabel);
+    if (want("otoDetail")) buildOtoDetailSheet(wb, otoAnalysis, clientName, channelLabel, periodLabel);
+  }
+
   // ── Numerical Distribution sheets ────────────────────────────
   if (ndAnalysis) {
     if (want("nd")) buildNdSheet(wb, ndAnalysis, clientName, channelLabel, periodLabel);
@@ -409,19 +417,34 @@ export async function buildMonthEndWorkbook(
       : [{ showGridLines: false }];
   }
 
-  // Centre every column heading (cells filled with the header colour) both
-  // horizontally and vertically, and prepend an icon where one is mapped.
+  // Centre + wrap every column heading (cells filled with the header colour),
+  // prepend an icon where mapped, and wrap section title-bars, titles and
+  // notes too so their text always fits instead of being clipped.
   for (const ws of wb.worksheets) {
     ws.eachRow((row) => {
       row.eachCell((cell) => {
         const fill = cell.fill as { type?: string; fgColor?: { argb?: string } } | undefined;
-        if (fill?.type === "pattern" && fill.fgColor?.argb === HEADER_BG) {
-          const wrapText = cell.alignment?.wrapText ?? false;
-          cell.alignment = { horizontal: "center", vertical: "middle", wrapText };
+        const fillArgb = fill?.type === "pattern" ? fill.fgColor?.argb : undefined;
+        const font = cell.font as Partial<ExcelJS.Font> | undefined;
+        const align = cell.alignment ?? {};
+
+        if (fillArgb === HEADER_BG) {
+          // Column header — centre + wrap, add icon.
+          cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
           if (typeof cell.value === "string") {
             const icon = HEADER_ICONS[cell.value.trim().toLowerCase()];
             if (icon && !cell.value.startsWith(icon)) cell.value = `${icon} ${cell.value}`;
           }
+        } else if (fillArgb === SUBHEADER_BG) {
+          // Section title bar — keep its alignment, just wrap.
+          cell.alignment = { ...align, wrapText: true };
+        } else if (
+          typeof cell.value === "string" &&
+          (font?.italic === true ||
+            (font?.color?.argb === HEADER_BG && (font?.size ?? 0) >= 12))
+        ) {
+          // Title or italic note cell — keep alignment, wrap.
+          cell.alignment = { ...align, wrapText: true };
         }
       });
     });
@@ -1226,6 +1249,175 @@ function buildNdFalseSheet(wb: ExcelJS.Workbook, nd: NDAnalysis): void {
 // Helper alias types for keyof access (string-valued columns only)
 type NDDetailRowLite = { subChannel: string; province: string; site: string; siteName: string; productCode: string; article: string; description: string; prst: string; pmfStatus: string; ranging: string };
 type NDFalseRowLite = { subChannel: string; province: string; site: string; siteName: string; productCode: string; article: string; description: string; prst: string; pmfStatus: string };
+
+// ── Open to Order (OTO) sheets ──────────────────────────────────
+const OTO_NOTE =
+  "Open to Order (OTO) = suggested replenishment for SKU/site lines that are out of stock and orderable. " +
+  "A line qualifies only when SOH = 0, nothing is on order or in transit (SOO = SIT = 0), the DISPO status classifies as POSITIVE, " +
+  "and the PMF product status is ACTIVE. OTO Units = category multiplier × R. Profile; OTO Value = OTO Units × Nett Cost. " +
+  "Because every line below meets these same conditions, the SOH / SOO / SIT / Status / Product Status columns are omitted — they would be identical on every row.";
+
+// OTO Summary — cascading rollups by Sub-Channel, Category, SKU, then Site.
+function buildOtoSummarySheet(
+  wb: ExcelJS.Workbook,
+  oto: OTOAnalysis,
+  clientName: string,
+  channelLabel: string,
+  periodLabel: string,
+): void {
+  const sheet = wb.addWorksheet("OTO", { properties: { defaultColWidth: 14 } });
+  let cur = 1;
+
+  const title = sheet.getCell(cur, 1);
+  title.value = `Open to Order — ${clientName} — ${channelLabel} — ${periodLabel}`;
+  title.font = { name: "Calibri", size: 14, bold: true, color: { argb: HEADER_BG } };
+  sheet.mergeCells(cur, 1, cur, 5);
+  cur += 1;
+
+  const note = sheet.getCell(cur, 1);
+  note.value = OTO_NOTE;
+  note.font = { name: "Calibri", size: 10, italic: true, color: { argb: "828282" } };
+  note.alignment = { wrapText: true, vertical: "top" };
+  sheet.mergeCells(cur, 1, cur, 5);
+  sheet.getRow(cur).height = 80;
+  cur += 2;
+
+  sheet.getColumn(1).width = 34;
+  sheet.getColumn(2).width = 12;
+  sheet.getColumn(3).width = 14;
+  sheet.getColumn(4).width = 16;
+  sheet.getColumn(5).width = 13;
+
+  // Overall stats
+  const stat = (label: string, value: number, fmt: string) => {
+    const a = sheet.getCell(cur, 1); a.value = label; a.font = bodyFont(true); a.border = thinBorder();
+    const b = sheet.getCell(cur, 2); b.value = value; b.numFmt = fmt; b.font = bodyFont(); b.border = thinBorder(); b.alignment = { horizontal: "right" };
+    cur++;
+  };
+  stat("Total Lines", oto.totalLines, "#,##0");
+  stat("Total OTO Units", oto.totalUnits, "#,##0");
+  stat("Total OTO Value", oto.totalValue, RAND_FMT);
+  cur += 1;
+
+  const writeTable = (dimLabel: string, rows: OTOAnalysis["bySubChannel"]) => {
+    const sub = sheet.getCell(cur, 1);
+    sub.value = `${dimLabel} — Open to Order`;
+    sub.font = { name: "Calibri", size: 11, bold: true, color: { argb: HEADER_BG } };
+    sub.fill = { type: "pattern", pattern: "solid", fgColor: { argb: SUBHEADER_BG } };
+    sheet.mergeCells(cur, 1, cur, 5);
+    for (let c = 1; c <= 5; c++) sheet.getCell(cur, c).border = thinBorder();
+    cur++;
+
+    [dimLabel, "Lines", "OTO Units", "OTO Value", "% Value"].forEach((h, i) => {
+      const c = sheet.getCell(cur, i + 1);
+      c.value = h; c.font = headerFont();
+      c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_BG } };
+      c.border = thinBorder(); c.alignment = { horizontal: i === 0 ? "left" : "center" };
+    });
+    cur++;
+
+    const dataStart = cur;
+    const dataEnd = cur + rows.length - 1;
+    const valRange = `$D$${dataStart}:$D$${dataEnd}`;
+    for (const row of rows) {
+      const a = sheet.getCell(cur, 1); a.value = row.name; a.font = bodyFont(); a.border = thinBorder();
+      const l = sheet.getCell(cur, 2); l.value = row.lines; l.numFmt = "#,##0"; l.font = bodyFont(); l.border = thinBorder(); l.alignment = { horizontal: "center" };
+      const u = sheet.getCell(cur, 3); u.value = row.units; u.numFmt = "#,##0"; u.font = bodyFont(); u.border = thinBorder(); u.alignment = { horizontal: "right" };
+      const v = sheet.getCell(cur, 4); v.value = row.value; v.numFmt = RAND_FMT; v.font = bodyFont(); v.border = thinBorder(); v.alignment = { horizontal: "right" };
+      const p = sheet.getCell(cur, 5);
+      p.value = { formula: `IF(SUM(${valRange})=0,0,D${cur}/SUM(${valRange}))`, result: row.contributionPct / 100 };
+      p.numFmt = "0.0%"; p.font = bodyFont(); p.border = thinBorder(); p.alignment = { horizontal: "center" };
+      cur++;
+    }
+
+    // Total row (live SUMs)
+    if (rows.length > 0) {
+      const tot = (col: number, letter: string, fmt: string, align: "center" | "right") => {
+        const c = sheet.getCell(cur, col);
+        c.value = { formula: `SUM(${letter}${dataStart}:${letter}${dataEnd})`, result: 0 };
+        c.numFmt = fmt; c.font = bodyFont(true); c.border = thinBorder(); c.alignment = { horizontal: align };
+        c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: TOTAL_BG } };
+      };
+      const a = sheet.getCell(cur, 1); a.value = "Total"; a.font = bodyFont(true); a.border = thinBorder();
+      a.fill = { type: "pattern", pattern: "solid", fgColor: { argb: TOTAL_BG } };
+      tot(2, "B", "#,##0", "center");
+      tot(3, "C", "#,##0", "right");
+      tot(4, "D", RAND_FMT, "right");
+      const p = sheet.getCell(cur, 5); p.value = ""; p.border = thinBorder();
+      p.fill = { type: "pattern", pattern: "solid", fgColor: { argb: TOTAL_BG } };
+      cur++;
+    }
+    cur += 2;
+  };
+
+  writeTable("Sub-Channel", oto.bySubChannel);
+  writeTable("Category", oto.byCategory);
+  writeTable("SKU", oto.bySku);
+  writeTable("Site", oto.bySite);
+}
+
+// OTO Detail — one row per qualifying SKU/site line.
+function buildOtoDetailSheet(
+  wb: ExcelJS.Workbook,
+  oto: OTOAnalysis,
+  clientName: string,
+  channelLabel: string,
+  periodLabel: string,
+): void {
+  const sheet = wb.addWorksheet("OTO Detail", { properties: { defaultColWidth: 14 } });
+  const cols: { header: string; width: number; key: keyof OTOAnalysis["detail"][number]; fmt?: string; align?: "right" }[] = [
+    { header: "Site Num", width: 12, key: "site" },
+    { header: "Site Name", width: 24, key: "siteName" },
+    { header: "Product Code", width: 14, key: "productCode" },
+    { header: "Article", width: 12, key: "article" },
+    { header: "Range Indicator", width: 14, key: "rangeIndicator" },
+    { header: "Product Description", width: 32, key: "description" },
+    { header: "OTO Units", width: 12, key: "units", fmt: "#,##0", align: "right" },
+    { header: "OTO Value", width: 14, key: "value", fmt: RAND_FMT, align: "right" },
+  ];
+
+  let cur = 1;
+  const title = sheet.getCell(cur, 1);
+  title.value = `Open to Order — Detail — ${clientName} — ${channelLabel} — ${periodLabel}`;
+  title.font = { name: "Calibri", size: 14, bold: true, color: { argb: HEADER_BG } };
+  sheet.mergeCells(cur, 1, cur, cols.length);
+  cur += 1;
+
+  const note = sheet.getCell(cur, 1);
+  note.value = OTO_NOTE;
+  note.font = { name: "Calibri", size: 10, italic: true, color: { argb: "828282" } };
+  note.alignment = { wrapText: true, vertical: "top" };
+  sheet.mergeCells(cur, 1, cur, cols.length);
+  sheet.getRow(cur).height = 64;
+  cur += 2;
+
+  const headerRow = cur;
+  cols.forEach((c, i) => {
+    const cell = sheet.getCell(headerRow, i + 1);
+    cell.value = c.header; cell.font = headerFont();
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_BG } };
+    cell.border = thinBorder(); cell.alignment = { horizontal: "center", wrapText: true };
+    sheet.getColumn(i + 1).width = c.width;
+  });
+
+  let r = headerRow + 1;
+  for (const d of oto.detail) {
+    cols.forEach((c, i) => {
+      const cell = sheet.getCell(r, i + 1);
+      cell.value = d[c.key];
+      if (c.fmt) cell.numFmt = c.fmt;
+      if (c.align) cell.alignment = { horizontal: c.align };
+      cell.font = bodyFont();
+      cell.border = thinBorder();
+    });
+    r++;
+  }
+
+  if (oto.detail.length > 0) {
+    sheet.autoFilter = { from: { row: headerRow, column: 1 }, to: { row: headerRow + oto.detail.length, column: cols.length } };
+  }
+  sheet.views = [{ state: "frozen", ySplit: headerRow }];
+}
 
 // ── Menu / cover sheet — header, logos, hyperlinks to every sheet ──
 function addLogoImage(
