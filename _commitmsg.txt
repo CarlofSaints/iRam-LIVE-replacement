@@ -1,0 +1,17 @@
+Month-End: home button, Sales Summary header, native colour scales
+
+- Add a "🏠 Menu" hyperlink (→ Menu!A1) on every sheet so the reader can
+  jump back to the cover/menu sheet; placed at the right end of row 1 so it
+  never collides with content or shifts any live formula row references.
+- Rename the Sales sheet header from "Month-End Report" to "Sales Summary"
+  (the report title now lives only on the Menu cover sheet).
+- Replace the hardcoded binary red/green fills on the numeric gradient %
+  columns with Excel's native 3-colour scale (red ↔ amber ↔ green),
+  relative per table (min / percentile-50 / max):
+    * Sales — Growth YTD / vs LM / vs PYM %  (high = green)
+    * OOS   — OOS % (SKU + Store tables)      (high = red)
+    * ND    — ND % (all four rollup tables)   (high = green)
+  Categorical fills (Status classification, Margin status, ND-detail 1/0)
+  stay as discrete colours — a numeric scale has no meaning for labels.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>

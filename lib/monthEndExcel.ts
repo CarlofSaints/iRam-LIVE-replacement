@@ -68,6 +68,38 @@ function bodyFont(bold = false): Partial<ExcelJS.Font> {
   return { name: "Calibri", size: 10, bold };
 }
 
+// Conditional-formatting rule priorities must be set; a per-workbook counter
+// keeps them unique. Reset at the start of each build for determinism.
+let nextCfPriority = 1;
+
+// Apply Excel's native 3-colour scale (red ↔ amber ↔ green) across `ref`,
+// relative to the values in that range (Excel recomputes min/mid/max live).
+//   dir "highGood": low = red,   high = green  (e.g. ND %, growth %)
+//   dir "highBad":  low = green, high = red    (e.g. OOS %)
+// Blank/text cells in the range are ignored by the scale.
+function addColorScale(
+  sheet: ExcelJS.Worksheet,
+  ref: string,
+  dir: "highGood" | "highBad",
+): void {
+  const RED = "FFF8696B", AMBER = "FFFFEB84", GREEN = "FF63BE7B";
+  const color =
+    dir === "highGood"
+      ? [{ argb: RED }, { argb: AMBER }, { argb: GREEN }]
+      : [{ argb: GREEN }, { argb: AMBER }, { argb: RED }];
+  sheet.addConditionalFormatting({
+    ref,
+    rules: [
+      {
+        type: "colorScale",
+        cfvo: [{ type: "min" }, { type: "percentile", value: 50 }, { type: "max" }],
+        color,
+        priority: nextCfPriority++,
+      },
+    ],
+  });
+}
+
 // ── Summary table column definitions ───────────────────────────
 
 const SUMMARY_COLS = [
@@ -107,6 +139,7 @@ export async function buildMonthEndWorkbook(
   const wb = new ExcelJS.Workbook();
   wb.creator = "iRam LIVE Replacement";
   wb.created = new Date();
+  nextCfPriority = 1; // reset CF rule priorities per workbook
 
   // Which sheets to include (empty = all). Keys: sales, oos, oosDetail,
   // status, statusDetail, margin, phantom, data.
@@ -124,7 +157,7 @@ export async function buildMonthEndWorkbook(
   // Title row
   let row = 1;
   const titleCell = salesSheet.getCell(row, 1);
-  titleCell.value = `Month-End Report — ${clientName} — ${channelLabel} — ${periodLabel}`;
+  titleCell.value = `Sales Summary — ${clientName} — ${channelLabel} — ${periodLabel}`;
   titleCell.font = { name: "Calibri", size: 14, bold: true, color: { argb: HEADER_BG } };
   salesSheet.mergeCells(row, 1, row, SUMMARY_COLS.length);
   row += 2;
@@ -224,6 +257,8 @@ export async function buildMonthEndWorkbook(
     // OOS % = OOS count / base count, as a live formula referencing this row.
     const totalL = String.fromCharCode(65 + (pctColIndex - 2));
     const oosL = String.fromCharCode(65 + (pctColIndex - 1));
+    const pctL = String.fromCharCode(65 + pctColIndex);
+    const dataStart = row;
     for (const vals of dataRows) {
       vals.forEach((val, i) => {
         const cell = oosSheet.getCell(row, i + 1);
@@ -236,13 +271,11 @@ export async function buildMonthEndWorkbook(
         }
         cell.font = bodyFont();
         cell.border = thinBorder();
-        // Conditional: red background when OOS % > 50
-        if (i === pctColIndex && typeof val === "number" && val > 0.5) {
-          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: GROWTH_RED } };
-        }
       });
       row++;
     }
+    // Native colour scale on the OOS % column (high OOS = red).
+    if (row - 1 >= dataStart) addColorScale(oosSheet, `${pctL}${dataStart}:${pctL}${row - 1}`, "highBad");
   };
 
   // SKU OOS Summary (per product)
@@ -391,9 +424,30 @@ export async function buildMonthEndWorkbook(
     });
   }
 
+  // Home button — a hyperlink back to the Menu sheet on every other sheet.
+  // Added last so the header icon/centre pass above doesn't touch it.
+  for (const ws of wb.worksheets) {
+    if (ws.name === "Menu") continue;
+    addHomeButton(ws);
+  }
+
   // ── Generate buffer ──────────────────────────────────────────
   const buffer = await wb.xlsx.writeBuffer();
   return Buffer.from(buffer);
+}
+
+// Add a "🏠 Menu" hyperlink so the reader can jump back to the Menu/cover
+// sheet. Placed at the right end of the title/header row so it never collides
+// with existing content or shifts any of the live formula row references.
+function addHomeButton(sheet: ExcelJS.Worksheet): void {
+  const col = (sheet.columnCount || 1) + 2;
+  const cell = sheet.getCell(1, col);
+  cell.value = { text: "🏠 Menu", hyperlink: "#'Menu'!A1" };
+  cell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "0563C1" }, underline: true };
+  cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: SUBHEADER_BG } };
+  cell.border = thinBorder();
+  cell.alignment = { horizontal: "center", vertical: "middle" };
+  sheet.getColumn(col).width = 14;
 }
 
 // ── Flat data sheet — every enriched row, with Excel AutoFilter so the
@@ -810,6 +864,18 @@ function writeSummaryTable(
   // Total row
   row = writeSummaryDataRow(sheet, row, totalRow, isValue, true, ctx);
 
+  // Native colour scales on the growth % columns (relative to this table;
+  // higher growth = greener). Covers the data rows plus the total row.
+  if (dataRows.length > 0) {
+    const growthCols = SUMMARY_COLS
+      .map((col, i) => ({ col, i }))
+      .filter(({ col }) => typeof col.key === "string" && col.key.startsWith("growth"))
+      .map(({ i }) => String.fromCharCode(65 + i));
+    for (const L of growthCols) {
+      addColorScale(sheet, `${L}${firstDataRow}:${L}${totalRowNum}`, "highGood");
+    }
+  }
+
   return row;
 }
 
@@ -866,12 +932,8 @@ function writeSummaryDataRow(
       cell.value = { formula, result };
       cell.numFmt = "0.0%";
       cell.alignment = { horizontal: "center" };
-
-      // Conditional formatting: green for positive, red for negative
-      if (typeof rawVal === "number") {
-        if (rawVal > 0) cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: GROWTH_GREEN } };
-        else if (rawVal < 0) cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: GROWTH_RED } };
-      }
+      // Colour handled by a native colour scale applied per table in
+      // writeSummaryTable (red ↔ amber ↔ green).
     } else {
       cell.value = rawVal as number;
       cell.numFmt = valueFmt;
@@ -1042,6 +1104,7 @@ function buildNdSheet(
       c.border = thinBorder(); c.alignment = { horizontal: i === 0 ? "left" : "center" };
     });
     cur++;
+    const dataStart = cur;
     for (const row of rows) {
       const a = sheet.getCell(cur, 1); a.value = row.name; a.font = bodyFont(); a.border = thinBorder();
       const e = sheet.getCell(cur, 2); e.value = row.expected; e.numFmt = "#,##0"; e.font = bodyFont(); e.border = thinBorder(); e.alignment = { horizontal: "center" };
@@ -1049,10 +1112,10 @@ function buildNdSheet(
       const pct = sheet.getCell(cur, 4);
       pct.value = { formula: `IF(B${cur}=0,0,C${cur}/B${cur})`, result: row.ndPct / 100 };
       pct.numFmt = "0.0%"; pct.font = bodyFont(); pct.border = thinBorder(); pct.alignment = { horizontal: "center" };
-      if (row.ndPct < 60) pct.fill = { type: "pattern", pattern: "solid", fgColor: { argb: GROWTH_RED } };
-      else if (row.ndPct >= 90) pct.fill = { type: "pattern", pattern: "solid", fgColor: { argb: GROWTH_GREEN } };
       cur++;
     }
+    // Native colour scale on the ND % column (high ND = green).
+    if (cur - 1 >= dataStart) addColorScale(sheet, `D${dataStart}:D${cur - 1}`, "highGood");
     cur += 2;
   };
 
