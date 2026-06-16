@@ -21,8 +21,18 @@ interface ChartsResponse {
   monthlyBars: { month: string; cyValue: number; pyValue: number; cyVolume: number; pyVolume: number }[];
   subChannelSeries: DimSeries;
   categorySeries: DimSeries;
+  filterOptions: {
+    subChannels: string[];
+    categories: string[];
+    provinces: string[];
+    skus: { value: string; label: string }[];
+    sites: { value: string; label: string }[];
+  };
   meta: { clientName: string; channelLabel: string; periodLabel: string; rowCount: number };
 }
+
+type Opt = { value: string; label: string };
+const toOpts = (xs: string[]): Opt[] => xs.map((x) => ({ value: x, label: x }));
 
 const LINE_COLORS = ["#1F4E79", "#2E75B6", "#C00000", "#548235", "#BF9000", "#7030A0", "#0070C0", "#843C0C", "#385723", "#D6604D"];
 const TOP_SERIES = 10;
@@ -54,6 +64,15 @@ export default function ChartsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  // Dimension filters
+  const [fSub, setFSub] = useState<string[]>([]);
+  const [fCat, setFCat] = useState<string[]>([]);
+  const [fProv, setFProv] = useState<string[]>([]);
+  const [fSku, setFSku] = useState<string[]>([]);
+  const [fSite, setFSite] = useState<string[]>([]);
+  const clearFilters = () => { setFSub([]); setFCat([]); setFProv([]); setFSku([]); setFSite([]); };
+  const activeFilterCount = fSub.length + fCat.length + fProv.length + fSku.length + fSite.length;
+
   useEffect(() => {
     (async () => {
       const [cRes, chRes] = await Promise.all([authFetch("/api/clients"), authFetch("/api/channels")]);
@@ -82,8 +101,9 @@ export default function ChartsPage() {
     return [mainChannelId, ...subs];
   }, [mainChannelId, channels]);
 
-  // Reset main channel when client changes
-  useEffect(() => { setMainChannelId(""); setData(null); }, [clientId]);
+  // Reset main channel + filters when client changes; reset filters on channel change
+  useEffect(() => { setMainChannelId(""); setData(null); clearFilters(); }, [clientId]);
+  useEffect(() => { clearFilters(); }, [mainChannelId]);
 
   useEffect(() => {
     if (!clientId || effectiveChannelIds.length === 0) { setData(null); return; }
@@ -91,13 +111,18 @@ export default function ChartsPage() {
     (async () => {
       try {
         const params = new URLSearchParams({ clientId, channelIds: effectiveChannelIds.join(",") });
+        if (fSub.length) params.set("subChannels", fSub.join(","));
+        if (fCat.length) params.set("categories", fCat.join(","));
+        if (fProv.length) params.set("provinces", fProv.join(","));
+        if (fSku.length) params.set("skus", fSku.join(","));
+        if (fSite.length) params.set("sites", fSite.join(","));
         const res = await authFetch(`/api/reports/charts?${params.toString()}`);
         if (res.ok) { setData(await res.json()); }
         else { const j = await res.json().catch(() => ({})); setError(j.error || "Failed to load charts"); setData(null); }
       } catch { setError("Failed to load charts"); setData(null); }
       finally { setLoading(false); }
     })();
-  }, [clientId, effectiveChannelIds]);
+  }, [clientId, effectiveChannelIds, fSub, fCat, fProv, fSku, fSite]);
 
   return (
     <div className="p-8">
@@ -123,6 +148,21 @@ export default function ChartsPage() {
           </div>
         )}
       </div>
+
+      {/* Dimension filters */}
+      {data && (
+        <div className="mb-8 flex flex-wrap items-center gap-3">
+          <span className="text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]">Filters</span>
+          <MultiSelect label="Sub-Channel" options={toOpts(data.filterOptions.subChannels)} selected={fSub} onChange={setFSub} />
+          <MultiSelect label="Category" options={toOpts(data.filterOptions.categories)} selected={fCat} onChange={setFCat} />
+          <MultiSelect label="SKU" options={data.filterOptions.skus} selected={fSku} onChange={setFSku} />
+          <MultiSelect label="Site" options={data.filterOptions.sites} selected={fSite} onChange={setFSite} />
+          <MultiSelect label="Province" options={toOpts(data.filterOptions.provinces)} selected={fProv} onChange={setFProv} />
+          {activeFilterCount > 0 && (
+            <button onClick={clearFilters} className="text-xs font-medium text-[var(--color-primary)] underline">Clear all ({activeFilterCount})</button>
+          )}
+        </div>
+      )}
 
       {loading && <div className="text-sm text-[var(--color-text-muted)]">Loading charts…</div>}
       {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
@@ -204,6 +244,54 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <span className="text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]">{label}</span>
       {children}
     </label>
+  );
+}
+
+function MultiSelect({ label, options, selected, onChange }: {
+  label: string;
+  options: Opt[];
+  selected: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const filtered = q ? options.filter((o) => o.label.toLowerCase().includes(q.toLowerCase())) : options;
+  const toggle = (v: string) => onChange(selected.includes(v) ? selected.filter((x) => x !== v) : [...selected, v]);
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className={`flex items-center gap-1 rounded-lg border px-3 py-1.5 text-sm ${selected.length ? "border-[var(--color-primary)] bg-[var(--color-primary)]/5 font-medium" : "border-[var(--color-border)] bg-white"}`}
+      >
+        {label}{selected.length ? ` · ${selected.length}` : ""}
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9" /></svg>
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute z-20 mt-1 w-72 rounded-lg border border-[var(--color-border)] bg-white p-2 shadow-lg">
+            <input
+              autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Search ${label.toLowerCase()}…`}
+              className="mb-2 w-full rounded-md border border-[var(--color-border)] px-2 py-1 text-sm"
+            />
+            <div className="mb-1 flex justify-between px-1 text-xs">
+              <button type="button" onClick={() => onChange(Array.from(new Set([...selected, ...filtered.map((o) => o.value)])))} className="text-[var(--color-primary)] hover:underline">Select shown</button>
+              <button type="button" onClick={() => onChange([])} className="text-[var(--color-text-muted)] hover:underline">Clear</button>
+            </div>
+            <div className="max-h-60 overflow-y-auto">
+              {filtered.length === 0 && <div className="px-1 py-2 text-xs text-[var(--color-text-muted)]">No matches</div>}
+              {filtered.map((o) => (
+                <label key={o.value} className="flex items-center gap-2 rounded px-1 py-1 text-sm hover:bg-[var(--color-bg-subtle,#f5f5f5)]">
+                  <input type="checkbox" checked={selected.includes(o.value)} onChange={() => toggle(o.value)} />
+                  <span className="truncate" title={o.label}>{o.label}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 

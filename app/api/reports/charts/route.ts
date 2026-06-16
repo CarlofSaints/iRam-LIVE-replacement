@@ -41,8 +41,12 @@ export async function GET(req: NextRequest) {
 
     const yearParam = url.searchParams.get("year");
     const monthParam = url.searchParams.get("month");
-    const subChFilter = (url.searchParams.get("subChannels") || "").split(",").map((s) => s.trim()).filter(Boolean);
-    const catFilter = (url.searchParams.get("categories") || "").split(",").map((s) => s.trim()).filter(Boolean);
+    const listParam = (k: string) => (url.searchParams.get(k) || "").split(",").map((s) => s.trim()).filter(Boolean);
+    const subChFilter = listParam("subChannels");
+    const catFilter = listParam("categories");
+    const provFilter = listParam("provinces");
+    const skuFilter = listParam("skus");
+    const siteFilter = listParam("sites");
 
     const parseMonths = (v: string | null): number | null => {
       const n = v ? parseInt(v, 10) : NaN;
@@ -87,14 +91,48 @@ export async function GET(req: NextRequest) {
       _dateLastSold: calcMonthLastSold(row, dateColumns),
     }));
 
-    // 2b. Optional sub-channel / category filters
-    const subSet = new Set(subChFilter), catSet = new Set(catFilter);
-    const reportRows = (subSet.size || catSet.size)
+    // 2b. Distinct filter options (from the UNfiltered rows, so the dropdowns
+    // always offer the full set regardless of what's currently selected).
+    const subOpts = new Set<string>(), catOpts = new Set<string>(), provOpts = new Set<string>();
+    const skuMap = new Map<string, string>(), siteMap = new Map<string, string>();
+    const subOf = (r: Record<string, unknown>) => String(r["_storeSubChannel"] || r["_storeChannel"] || "").trim();
+    const catOf = (r: Record<string, unknown>) => String(r["_category"] || "").trim();
+    const provOf = (r: Record<string, unknown>) => String(r["_province"] || "").trim();
+    const skuOf = (r: Record<string, unknown>) => String(r["Article"] ?? "").trim();
+    const siteOf = (r: Record<string, unknown>) => String(r["Site"] ?? "").trim();
+    for (const row of enrichedRows) {
+      const sub = subOf(row), cat = catOf(row), prov = provOf(row), article = skuOf(row), site = siteOf(row);
+      if (sub) subOpts.add(sub);
+      if (cat) catOpts.add(cat);
+      if (prov) provOpts.add(prov);
+      if (article && !skuMap.has(article)) {
+        const desc = String(row["_productDescription"] || row["Article Desc"] || "").trim();
+        skuMap.set(article, desc ? `${article} — ${desc}` : article);
+      }
+      if (site && !siteMap.has(site)) {
+        const name = String(row["_storeName"] || row["Site Name"] || "").trim();
+        siteMap.set(site, name ? `${site} — ${name}` : site);
+      }
+    }
+    const filterOptions = {
+      subChannels: [...subOpts].sort(),
+      categories: [...catOpts].sort(),
+      provinces: [...provOpts].sort(),
+      skus: [...skuMap.entries()].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label)),
+      sites: [...siteMap.entries()].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label)),
+    };
+
+    // 2c. Apply the five optional dimension filters.
+    const subSet = new Set(subChFilter), catSet = new Set(catFilter), provSet = new Set(provFilter);
+    const skuSet = new Set(skuFilter), siteSet = new Set(siteFilter);
+    const anyFilter = subSet.size || catSet.size || provSet.size || skuSet.size || siteSet.size;
+    const reportRows = anyFilter
       ? enrichedRows.filter((row) => {
-          const sub = String(row["_storeSubChannel"] || row["_storeChannel"] || "");
-          const cat = String(row["_category"] || "");
-          if (subSet.size && !subSet.has(sub)) return false;
-          if (catSet.size && !catSet.has(cat)) return false;
+          if (subSet.size && !subSet.has(subOf(row))) return false;
+          if (catSet.size && !catSet.has(catOf(row))) return false;
+          if (provSet.size && !provSet.has(provOf(row))) return false;
+          if (skuSet.size && !skuSet.has(skuOf(row))) return false;
+          if (siteSet.size && !siteSet.has(siteOf(row))) return false;
           return true;
         })
       : enrichedRows;
@@ -155,6 +193,7 @@ export async function GET(req: NextRequest) {
     return Response.json(
       {
         ...charts,
+        filterOptions,
         meta: {
           clientName: clientName || client?.name || "",
           channelLabel: channelNames.join(", ") || channelIds.join(", "),
