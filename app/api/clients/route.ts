@@ -5,8 +5,14 @@ import { addLog } from "@/lib/activityLog";
 
 export async function GET(req: NextRequest) {
   try {
-    requireLogin(req);
-    return Response.json(await getClients(), { headers: noCacheHeaders() });
+    const session = requireLogin(req);
+    let clients = await getClients();
+    // Client-scoped users only ever see their assigned clients.
+    if (session.clientIds && session.clientIds.length > 0) {
+      const allowed = new Set(session.clientIds);
+      clients = clients.filter((c) => allowed.has(c.id));
+    }
+    return Response.json(clients, { headers: noCacheHeaders() });
   } catch (err) {
     return handleAuthError(err);
   }

@@ -21,6 +21,7 @@ export async function POST(req: NextRequest) {
     await updateUser(user.id, { lastLoginAt: new Date().toISOString() });
     const session: SessionPayload = {
       userId: user.id, email: user.email, name: user.name, role: user.role, forcePasswordChange: user.forcePasswordChange,
+      clientIds: user.clientIds && user.clientIds.length > 0 ? user.clientIds : undefined,
     };
     const encoded = encodeSession(session);
     const cookieOpts = sessionCookieOptions();

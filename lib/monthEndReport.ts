@@ -1510,3 +1510,196 @@ export function buildOpenToOrder(opts: {
     detail,
   };
 }
+
+// ── Charts summary (web dashboard) ──────────────────────────────
+// Aggregates the headline metrics + time series for the in-app Charts page.
+// Opportunity values are all in Rands at Nett Cost (the user's definition):
+//   OTO       — total OTO Value (suggested replenishment for orderable OOS).
+//   ND        — 1 unit × Nett Cost for every active SKU/site combo NOT
+//               distributed (ND = 0); uses the ranging universe when present.
+//   OOS       — OTO-default order (category multiplier × R. Profile) × Nett
+//               Cost for every out-of-stock line.
+//   Phantom   — OTO-default order × Nett Cost for every phantom line with
+//               SOH < 5 (treated as written off and reordered).
+
+const MON_ABBR = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+export interface ChartsDimSeries {
+  months: string[]; // x-axis labels, e.g. "Jan26"
+  series: { name: string; values: number[] }[];
+}
+
+export interface ChartsData {
+  cards: {
+    unitSalesMonth: number;
+    unitSalesYtd: number;
+    valueSalesMonth: number;
+    valueSalesYtd: number;
+    growthYtdPct: number | null;
+    growthSameMonthLyPct: number | null;
+  };
+  opportunity: { oto: number; nd: number; oos: number; phantom: number; total: number };
+  risk: { marginSupport: number };
+  cyLabel: string;
+  pyLabel: string;
+  monthlyBars: { month: string; cyValue: number; pyValue: number; cyVolume: number; pyVolume: number }[];
+  subChannelSeries: ChartsDimSeries; // rolling 24 months, value
+  categorySeries: ChartsDimSeries;   // rolling 24 months, value
+}
+
+// Price for a row's units in a given calendar year — uses that year's price
+// snapshot if captured, else the current effective selling price ex-VAT.
+function priceForYear(row: Row, year: number, basePrice: number): number {
+  return effectivePriceExVat(row, `_inclSP_${year}`, `_promSP_${year}`) || basePrice;
+}
+
+function rollingMonths(endYear: number, endMonth: number, count: number): { key: string; label: string }[] {
+  const out: { key: string; label: string }[] = [];
+  for (let i = count - 1; i >= 0; i--) {
+    let m = endMonth - i, y = endYear;
+    while (m <= 0) { m += 12; y -= 1; }
+    out.push({ key: `${String(m).padStart(2, "0")}-${y}`, label: `${MON_ABBR[m]}${String(y).slice(-2)}` });
+  }
+  return out;
+}
+
+// Value-by-month for one dimension, across the rolling window.
+function dimensionSeries(
+  rows: Row[],
+  months: { key: string; label: string }[],
+  accessor: (row: Row) => string,
+): ChartsDimSeries {
+  const idx = new Map(months.map((m, i) => [m.key, i]));
+  const byDim = new Map<string, number[]>();
+  for (const row of rows) {
+    const base = effectivePriceExVat(row);
+    const name = accessor(row) || "Unknown";
+    let arr = byDim.get(name);
+    if (!arr) { arr = new Array(months.length).fill(0); byDim.set(name, arr); }
+    for (const m of months) {
+      const units = Number(row[m.key]);
+      if (isNaN(units) || units === 0) continue;
+      const year = Number(m.key.split("-")[1]);
+      arr[idx.get(m.key)!] += units * priceForYear(row, year, base);
+    }
+  }
+  const series = [...byDim.entries()]
+    .map(([name, values]) => ({ name, values: values.map(r2), total: values.reduce((s, v) => s + v, 0) }))
+    .sort((a, b) => b.total - a.total)
+    .map(({ name, values }) => ({ name, values }));
+  return { months: months.map((m) => m.label), series };
+}
+
+export function buildChartsData(opts: {
+  rows: Row[];
+  dateColumns: string[];
+  ctx: DateContext;
+  salesSummary: SalesSummaryLevel[];
+  otoTotalValue: number;
+  marginSupport: number;
+  ndDetail: NDDetailRow[];
+  otoMultipliers: Record<string, number>;
+  referenceDate: Date;
+  phLastSold: number | null;
+  phLastReceived: number | null;
+}): ChartsData {
+  const { rows, dateColumns, ctx, salesSummary, otoTotalValue, marginSupport, ndDetail, otoMultipliers, referenceDate, phLastSold, phLastReceived } = opts;
+
+  // ── Sales cards (value growth) — from the grand-total summary row ──
+  const top = salesSummary[0];
+  const vol = top?.volumeTotal;
+  const val = top?.valueTotal;
+  const cards = {
+    unitSalesMonth: vol?.currentMonth ?? 0,
+    unitSalesYtd: vol?.ytd ?? 0,
+    valueSalesMonth: val?.currentMonth ?? 0,
+    valueSalesYtd: val?.ytd ?? 0,
+    growthYtdPct: val?.growthYtdPct ?? null,
+    growthSameMonthLyPct: val?.growthVsPymPct ?? null,
+  };
+
+  // ── Opportunity: OOS + Phantom (row scan) + Nett-cost lookup for ND ──
+  const cutoffSold = phLastSold != null ? minusMonths(referenceDate, phLastSold) : null;
+  const cutoffRec = phLastReceived != null ? minusMonths(referenceDate, phLastReceived) : null;
+  const nettByCpid = new Map<string, number>();
+  const nettByArticle = new Map<string, number>();
+  let oosOpp = 0, phantomOpp = 0;
+
+  for (const row of rows) {
+    const nett = parseNum(row["Nett Cost"], 0);
+    const ncost = isNaN(nett) ? 0 : nett;
+    const cpid = String(row["_clientProductId"] ?? "").toLowerCase().trim();
+    const article = String(row["Article"] ?? "").toLowerCase().trim();
+    if (ncost > 0) {
+      if (cpid && !nettByCpid.has(cpid)) nettByCpid.set(cpid, ncost);
+      if (article && !nettByArticle.has(article)) nettByArticle.set(article, ncost);
+    }
+
+    const category = String(row["_category"] ?? "").toLowerCase().trim();
+    const mult = (category && otoMultipliers[category]) || 1;
+    const rp = parseNum(row["R. Profile"], 0);
+    const otoUnits = mult * (isNaN(rp) ? 0 : rp);
+    if (otoUnits <= 0 || ncost <= 0) continue;
+
+    // OOS opportunity — order the OTO default for every out-of-stock line
+    if (classifyOOS(row, dateColumns).isOOS) oosOpp += otoUnits * ncost;
+
+    // Phantom opportunity — phantom line (SOH > 0, stale sale + receipt) with SOH < 5
+    const soh = parseNum(row["SOH"], 0);
+    if (!isNaN(soh) && soh > 0 && soh < 5) {
+      const lastSold = parseDispoDate(row["Last Sold"]);
+      const lastRec = parseDispoDate(row["Last Recv"]);
+      const soldOld = cutoffSold === null || lastSold === null || lastSold.getTime() <= cutoffSold.getTime();
+      const recOld = cutoffRec === null || lastRec === null || lastRec.getTime() <= cutoffRec.getTime();
+      if (soldOld && recOld) phantomOpp += otoUnits * ncost;
+    }
+  }
+
+  // ND opportunity — 1 unit × Nett Cost for each not-distributed combo (ND = 0)
+  let ndOpp = 0;
+  for (const d of ndDetail) {
+    if (d.nd !== 0) continue;
+    const nc = nettByCpid.get(String(d.productCode ?? "").toLowerCase()) ??
+      nettByArticle.get(String(d.article ?? "").toLowerCase()) ?? 0;
+    ndOpp += nc;
+  }
+
+  const oto = r2(otoTotalValue);
+  const nd = r2(ndOpp);
+  const oos = r2(oosOpp);
+  const phantom = r2(phantomOpp);
+  const opportunity = { oto, nd, oos, phantom, total: r2(oto + nd + oos + phantom) };
+
+  // ── Monthly bars: CY vs PY, value + volume ──
+  const maxYear = ctx.maxYear, pyYear = maxYear - 1;
+  const monthlyBars: ChartsData["monthlyBars"] = [];
+  for (let m = 1; m <= 12; m++) {
+    const cyCol = `${String(m).padStart(2, "0")}-${maxYear}`;
+    const pyCol = `${String(m).padStart(2, "0")}-${pyYear}`;
+    const hasCy = dateColumns.includes(cyCol), hasPy = dateColumns.includes(pyCol);
+    if (!hasCy && !hasPy) continue;
+    let cyVol = 0, pyVol = 0, cyVal = 0, pyVal = 0;
+    for (const row of rows) {
+      const base = effectivePriceExVat(row);
+      if (hasCy) { const u = Number(row[cyCol]) || 0; cyVol += u; cyVal += u * base; }
+      if (hasPy) { const u = Number(row[pyCol]) || 0; pyVol += u; pyVal += u * priceForYear(row, pyYear, base); }
+    }
+    monthlyBars.push({ month: MON_ABBR[m], cyValue: r2(cyVal), pyValue: r2(pyVal), cyVolume: r2(cyVol), pyVolume: r2(pyVol) });
+  }
+
+  // ── Rolling 24-month line series by sub-channel + category (value) ──
+  const window = rollingMonths(maxYear, ctx.maxMonth || 12, 24);
+  const subChannelSeries = dimensionSeries(rows, window, (r) => String(r["_storeSubChannel"] || r["_storeChannel"] || ""));
+  const categorySeries = dimensionSeries(rows, window, (r) => String(r["_category"] || ""));
+
+  return {
+    cards,
+    opportunity,
+    risk: { marginSupport: r2(marginSupport) },
+    cyLabel: String(maxYear),
+    pyLabel: String(pyYear),
+    monthlyBars,
+    subChannelSeries,
+    categorySeries,
+  };
+}

@@ -68,6 +68,18 @@ export async function requirePermission(
   return session;
 }
 
+/**
+ * Enforce client scoping. If the session is restricted to specific client IDs
+ * (external "client" accounts), reject any request for a client outside that
+ * set. Unrestricted sessions (empty/undefined clientIds) pass through.
+ */
+export function assertClientAccess(session: SessionPayload, clientId: string): void {
+  const allowed = session.clientIds;
+  if (allowed && allowed.length > 0 && !allowed.includes(clientId)) {
+    throw new AuthError("You do not have access to this client", 403);
+  }
+}
+
 export function sessionCookieOptions(maxAge = 60 * 60 * 24) {
   return {
     name: COOKIE_NAME,

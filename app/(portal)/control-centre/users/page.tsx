@@ -10,9 +10,10 @@ type UserSafe = Omit<User, "password">;
 export default function UsersPage() {
   const { user: me } = useAuth();
   const [users, setUsers] = useState<UserSafe[]>([]);
+  const [clients, setClients] = useState<{ id: string; name: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ name: "", email: "", password: "", role: "cam", forcePasswordChange: true, receiveStoreAlerts: false });
+  const [form, setForm] = useState({ name: "", email: "", password: "", role: "cam", forcePasswordChange: true, receiveStoreAlerts: false, clientIds: [] as string[] });
   const [error, setError] = useState("");
   const [editId, setEditId] = useState<string | null>(null);
 
@@ -23,6 +24,19 @@ export default function UsersPage() {
   }
 
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    (async () => {
+      const res = await authFetch("/api/clients");
+      if (res.ok) {
+        const all: { id: string; name: string }[] = await res.json();
+        setClients(all);
+      }
+    })();
+  }, []);
+
+  const blankForm = { name: "", email: "", password: "", role: "cam", forcePasswordChange: true, receiveStoreAlerts: false, clientIds: [] as string[] };
+  const toggleFormClient = (id: string) =>
+    setForm((f) => ({ ...f, clientIds: f.clientIds.includes(id) ? f.clientIds.filter((c) => c !== id) : [...f.clientIds, id] }));
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -38,13 +52,13 @@ export default function UsersPage() {
     }
     setShowForm(false);
     setEditId(null);
-    setForm({ name: "", email: "", password: "", role: "cam", forcePasswordChange: true, receiveStoreAlerts: false });
+    setForm(blankForm);
     load();
   }
 
   function startEdit(u: UserSafe) {
     setEditId(u.id);
-    setForm({ name: u.name, email: u.email, password: "", role: u.role, forcePasswordChange: u.forcePasswordChange, receiveStoreAlerts: u.receiveStoreAlerts ?? false });
+    setForm({ name: u.name, email: u.email, password: "", role: u.role, forcePasswordChange: u.forcePasswordChange, receiveStoreAlerts: u.receiveStoreAlerts ?? false, clientIds: u.clientIds ?? [] });
     setShowForm(true);
     setError("");
   }
@@ -62,7 +76,7 @@ export default function UsersPage() {
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-bold text-[var(--color-text)]">Users</h1>
         <button
-          onClick={() => { setShowForm(!showForm); setEditId(null); setError(""); setForm({ name: "", email: "", password: "", role: "cam", forcePasswordChange: true, receiveStoreAlerts: false }); }}
+          onClick={() => { setShowForm(!showForm); setEditId(null); setError(""); setForm(blankForm); }}
           className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)]"
         >
           {showForm ? "Cancel" : "+ Add User"}
@@ -92,6 +106,28 @@ export default function UsersPage() {
               <input type="checkbox" checked={form.receiveStoreAlerts} onChange={(e) => setForm({ ...form, receiveStoreAlerts: e.target.checked })} />
               Receive missing store alerts
             </label>
+
+            {/* Client scoping — restrict this account to specific clients */}
+            <div className="col-span-2">
+              <div className="mb-1 text-sm font-medium text-[var(--color-text)]">Client access</div>
+              <p className="mb-2 text-xs text-[var(--color-text-muted)]">
+                Leave empty for internal staff (sees all clients). Select one or more clients to restrict this account — a
+                client account (role <span className="font-mono">Client</span>) will only ever see the selected clients&apos; data.
+              </p>
+              <div className="flex max-h-40 flex-wrap gap-x-4 gap-y-1 overflow-y-auto rounded-lg border border-[var(--color-border)] p-3">
+                {clients.length === 0 && <span className="text-xs text-[var(--color-text-muted)]">No clients available.</span>}
+                {clients.map((c) => (
+                  <label key={c.id} className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={form.clientIds.includes(c.id)} onChange={() => toggleFormClient(c.id)} />
+                    {c.name}
+                  </label>
+                ))}
+              </div>
+              {form.role === "client" && form.clientIds.length === 0 && (
+                <p className="mt-1 text-xs text-amber-600">A Client account with no clients selected will see nothing — select at least one.</p>
+              )}
+            </div>
+
             <button type="submit" className="col-span-2 rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)]">
               {editId ? "Save Changes" : "Create User"}
             </button>

@@ -27,6 +27,7 @@ export async function createUser(data: {
   password: string;
   role: User["role"];
   forcePasswordChange: boolean;
+  clientIds?: string[];
 }): Promise<User> {
   const users = await getUsers();
   if (users.some((u) => u.email.toLowerCase() === data.email.toLowerCase())) {
@@ -42,6 +43,7 @@ export async function createUser(data: {
     forcePasswordChange: data.forcePasswordChange,
     active: true,
     createdAt: new Date().toISOString(),
+    clientIds: data.clientIds && data.clientIds.length > 0 ? data.clientIds : undefined,
   };
   users.push(user);
   await writeJson(USERS_KEY, users);
@@ -61,6 +63,7 @@ export async function updateUser(
       | "lastLoginAt"
       | "profilePicUrl"
       | "receiveStoreAlerts"
+      | "clientIds"
     >
   >
 ): Promise<User> {

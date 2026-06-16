@@ -32,6 +32,7 @@ export const ALL_PERMISSIONS = [
   { key: "view_dashboard" as const, label: "View Dashboard" },
   { key: "view_uploads" as const, label: "View Uploads" },
   { key: "view_activity_log" as const, label: "View Activity Log" },
+  { key: "view_charts" as const, label: "View Charts" },
   { key: "export_data" as const, label: "Export Data" },
 ] as const;
 
@@ -58,7 +59,7 @@ export const ROLE_DEFINITIONS: RoleDefinition[] = [
     permissions: [
       "manage_users", "manage_channels", "manage_clients", "manage_cams",
       "manage_store_files", "manage_statuses", "upload_data", "manage_control_files",
-      "delete_uploads", "view_dashboard", "view_uploads", "view_activity_log", "export_data",
+      "delete_uploads", "view_dashboard", "view_uploads", "view_activity_log", "view_charts", "export_data",
     ],
   },
   {
@@ -66,14 +67,20 @@ export const ROLE_DEFINITIONS: RoleDefinition[] = [
     label: "CAM",
     description: "Upload data and manage client control files",
     permissions: [
-      "upload_data", "manage_control_files", "view_dashboard", "view_uploads",
+      "upload_data", "manage_control_files", "view_dashboard", "view_uploads", "view_charts",
     ],
   },
   {
     role: "viewer",
     label: "Viewer",
     description: "Read-only access to dashboards and uploads",
-    permissions: ["view_dashboard", "view_uploads"],
+    permissions: ["view_dashboard", "view_uploads", "view_charts"],
+  },
+  {
+    role: "client",
+    label: "Client",
+    description: "External client — charts for their assigned client(s) only",
+    permissions: ["view_charts"],
   },
 ];
 
@@ -96,6 +103,9 @@ export interface User {
   lastLoginAt?: string; // ISO
   profilePicUrl?: string;
   receiveStoreAlerts?: boolean;
+  // Client scoping — when non-empty, this user may only see data for these
+  // client IDs (external "client" accounts). Empty/undefined = all clients.
+  clientIds?: string[];
 }
 
 export interface SessionPayload {
@@ -105,6 +115,7 @@ export interface SessionPayload {
   role: string;
   forcePasswordChange?: boolean;
   profilePicUrl?: string;
+  clientIds?: string[];
 }
 
 // ── Password Reset ──

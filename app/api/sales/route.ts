@@ -1,11 +1,11 @@
 import { NextRequest } from "next/server";
-import { requireLogin, noCacheHeaders, handleAuthError } from "@/lib/auth";
+import { requireLogin, assertClientAccess, noCacheHeaders, handleAuthError } from "@/lib/auth";
 import { getSalesLedger, getSalesLedgerMeta, getAllSalesLedgers } from "@/lib/salesData";
 import { enrichLedger } from "@/lib/enrichment";
 
 export async function GET(req: NextRequest) {
   try {
-    requireLogin(req);
+    const session = requireLogin(req);
 
     const url = new URL(req.url);
     const clientId = url.searchParams.get("clientId");
@@ -18,6 +18,8 @@ export async function GET(req: NextRequest) {
         { status: 400, headers: noCacheHeaders() },
       );
     }
+    // Client-scoped users may only query their assigned client(s).
+    assertClientAccess(session, clientId);
 
     // If channelId provided, return the merged sales data for that ledger
     if (channelId) {
