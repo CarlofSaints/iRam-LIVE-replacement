@@ -29,6 +29,9 @@ const SUBHEADER_BG = "D6E4F0"; // light blue
 const TOTAL_BG = "E2EFDA";     // light green
 const BORDER_COLOR = "B4C6E7";
 
+// South African Rand number format for monetary (value) cells.
+const RAND_FMT = '"R "#,##0.00';
+
 const GROWTH_GREEN = "C6EFCE";
 const GROWTH_RED = "FFC7CE";
 const UNCLASS_BG = "E7E6E6";   // grey
@@ -483,20 +486,20 @@ function buildDataSheet(
     { header: "SOO", width: 8, get: (r) => toNum(r["SOO"]) },
     { header: "SIT", width: 8, get: (r) => toNum(r["SIT"]) },
   ];
-  const tailCols: { header: string; width: number; get: (r: Record<string, unknown>) => string | number }[] = [
-    { header: "Incl SP", width: 10, get: (r) => toNum(r["Incl SP"]) },
-    { header: "Prom SP", width: 10, get: (r) => toNum(r["Prom SP"]) },
-    { header: "Nett Cost", width: 10, get: (r) => toNum(r["Nett Cost"]) },
-    { header: "Act DSC", width: 9, get: (r) => toNum(r["Act DSC"]) },
+  const tailCols: { header: string; width: number; fmt: string; get: (r: Record<string, unknown>) => string | number }[] = [
+    { header: "Incl SP", width: 10, fmt: RAND_FMT, get: (r) => toNum(r["Incl SP"]) },
+    { header: "Prom SP", width: 10, fmt: RAND_FMT, get: (r) => toNum(r["Prom SP"]) },
+    { header: "Nett Cost", width: 10, fmt: RAND_FMT, get: (r) => toNum(r["Nett Cost"]) },
+    { header: "Act DSC", width: 9, fmt: "#,##0.00", get: (r) => toNum(r["Act DSC"]) },
   ];
 
   // Computed YTD / prior-year / growth / margin columns (per row).
   const ctx = buildDateContext(dateColumns);
   const extraDefs: { header: string; width: number; fmt: string; get: (x: ReturnType<typeof dataRowExtras>) => number | null }[] = [
     { header: "YTD Units", width: 12, fmt: "#,##0", get: (x) => x.ytdUnits },
-    { header: "YTD Value", width: 14, fmt: "#,##0.00", get: (x) => x.ytdValue },
+    { header: "YTD Value", width: 14, fmt: RAND_FMT, get: (x) => x.ytdValue },
     { header: "PY YTD Units", width: 13, fmt: "#,##0", get: (x) => x.pyYtdUnits },
-    { header: "PY YTD Value", width: 14, fmt: "#,##0.00", get: (x) => x.pyYtdValue },
+    { header: "PY YTD Value", width: 14, fmt: RAND_FMT, get: (x) => x.pyYtdValue },
     { header: "Units Growth %", width: 13, fmt: "0.0%", get: (x) => x.unitsGrowth },
     { header: "Value Growth %", width: 13, fmt: "0.0%", get: (x) => x.valueGrowth },
     { header: "STK Margin", width: 11, fmt: "0.0%", get: (x) => x.stkMargin },
@@ -535,7 +538,7 @@ function buildDataSheet(
     for (const col of tailCols) {
       const cell = sheet.getCell(r, c++);
       cell.value = col.get(row);
-      cell.numFmt = "#,##0.00";
+      cell.numFmt = col.fmt;
       cell.font = bodyFont();
     }
     const extras = dataRowExtras(row, ctx);
@@ -744,7 +747,7 @@ function buildMarginDetailSheet(
     const c = sheet.getCell(cur, 2);
     c.value = sr.count; c.numFmt = "#,##0"; c.font = bodyFont(); c.border = thinBorder(); c.alignment = { horizontal: "center" };
     const s = sheet.getCell(cur, 3);
-    s.value = sr.support === null ? "" : sr.support; if (sr.support !== null) s.numFmt = "#,##0.00";
+    s.value = sr.support === null ? "" : sr.support; if (sr.support !== null) s.numFmt = RAND_FMT;
     s.font = bodyFont(); s.border = thinBorder(); s.alignment = { horizontal: "right" };
     const f = sheet.getCell(cur, 4);
     f.value = sr.free === null ? "" : sr.free; if (sr.free !== null) f.numFmt = "#,##0.00";
@@ -782,9 +785,9 @@ function buildMarginDetailSheet(
     text(5, dr.productStatus);
     text(6, dr.prst);
     num(7, dr.soh, "#,##0");
-    num(8, dr.mac, "#,##0.00");
-    num(9, dr.nettCost, "#,##0.00");
-    num(10, dr.inclSP, "#,##0.00");
+    num(8, dr.mac, RAND_FMT);
+    num(9, dr.nettCost, RAND_FMT);
+    num(10, dr.inclSP, RAND_FMT);
     // Prod. Margin — DISPO value if supplied, else calculated from price + cost
     if (dr.prodMarginFromDispo) {
       num(11, dr.prodMargin, "0.0%").alignment = { horizontal: "center" };
@@ -793,17 +796,17 @@ function buildMarginDetailSheet(
     }
     num(12, dr.stkMargin, "0.0%").alignment = { horizontal: "center" };
     // MAC vs Nett Cost = Nett − MAC
-    formula(13, `I${r}-H${r}`, dr.macVsNett, "#,##0.00");
+    formula(13, `I${r}-H${r}`, dr.macVsNett, RAND_FMT);
     // Margin Status (coloured)
     const st = text(14, dr.marginStatus);
     st.font = bodyFont(true); st.alignment = { horizontal: "center" };
     st.fill = { type: "pattern", pattern: "solid", fgColor: { argb: dr.marginStatus === "RISK" ? GROWTH_RED : GROWTH_GREEN } };
     // Margin Support (R) = RISK: SOH × (MAC − Nett)
-    formula(15, `IF(N${r}="RISK",G${r}*(H${r}-I${r}),"")`, dr.marginSupport === null ? "" : dr.marginSupport, "#,##0.00");
+    formula(15, `IF(N${r}="RISK",G${r}*(H${r}-I${r}),"")`, dr.marginSupport === null ? "" : dr.marginSupport, RAND_FMT);
     // Free Stock Units = RISK: Margin Support / Nett
     formula(16, `IF(AND(N${r}="RISK",I${r}<>0),O${r}/I${r},"")`, dr.freeStockUnits === null ? "" : dr.freeStockUnits, "#,##0.00");
     // Suggested SP (Incl VAT) = OPPORTUNITY: MAC / (1 − Prod. Margin) × 1.15
-    formula(17, `IF(AND(N${r}="OPPORTUNITY",(1-K${r})<>0),H${r}/(1-K${r})*1.15,"")`, dr.suggestedSP === null ? "" : dr.suggestedSP, "#,##0.00");
+    formula(17, `IF(AND(N${r}="OPPORTUNITY",(1-K${r})<>0),H${r}/(1-K${r})*1.15,"")`, dr.suggestedSP === null ? "" : dr.suggestedSP, RAND_FMT);
     r++;
   }
 
@@ -889,7 +892,7 @@ function writeSummaryDataRow(
   isTotal: boolean,
   ctx: { totalRowNum: number; firstDataRow: number; lastDataRow: number },
 ): number {
-  const valueFmt = isValue ? "#,##0.00" : "#,##0";
+  const valueFmt = isValue ? RAND_FMT : "#,##0";
   const hasData = ctx.lastDataRow >= ctx.firstDataRow;
   const T = ctx.totalRowNum;
   // Column letters (fixed layout): C=YTD D=LY YTD E=Current Month F=Same Month LY G=Last Month

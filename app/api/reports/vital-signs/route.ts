@@ -123,6 +123,23 @@ export async function GET(req: NextRequest) {
       wch: Math.max(col.length, 10),
     }));
 
+    // Format monetary (Rand) columns as Rands. Rand columns are the value
+    // columns (any "… Value" header, incl. monthly + OTO + Curr Y/S) plus the
+    // price/cost columns. Units, counts, %, DSC and rankings are left alone.
+    const RAND_FMT = '"R "#,##0.00';
+    const isRandCol = (name: string) =>
+      name.includes("Value") || ["MAC", "Nett Cost", "Incl SP", "Promo SP"].includes(name);
+    const randColIdx = columnOrder
+      .map((c, i) => (isRandCol(c) ? i : -1))
+      .filter((i) => i >= 0);
+    for (let rIdx = 1; rIdx < sheetData.length; rIdx++) {
+      for (const ci of randColIdx) {
+        const ref = XLSX.utils.encode_cell({ r: rIdx, c: ci });
+        const cell = ws[ref];
+        if (cell && cell.t === "n") cell.z = RAND_FMT;
+      }
+    }
+
     XLSX.utils.book_append_sheet(wb, ws, "Vital Signs");
 
     const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });

@@ -334,3 +334,23 @@ Each feature smoke-tested with `npx tsx` scripts (mock data → `buildMonthEndWo
 
 ---
 
+## Session Work (Jun 16, 2026) — all DEPLOYED to master (`f4f3a47`, Vercel auto-deploys)
+
+**TEST CLIENT IS MAJORTECH** (no ranging file) — NOT Henkel. The report must (and does) work in both ND scenarios; Majortech exercises Scenario 2.
+
+### Ranging parse fix (commit `2cf0212`)
+- `parseRangingSheet` (`lib/controlFileData.ts`) and the `_rangingStatus` lookup in `lib/enrichment.ts` now resolve ProductID / ArticleChannelCode via a tolerant resolver that strips `Helper`/`Mandatory` header prefixes + spacing/underscores (mirrors `rangingField()` in `lib/monthEndReport.ts`). Previously every ranging row was filtered out → empty `ranging.json` → ND always fell to Scenario 2.
+- **Scenario 1 only triggers once a ranging file is RE-UPLOADED** (old stored data was discarded at parse time). Majortech has none → Scenario 2, which is correct.
+
+### Dashboard rebuilt (commit `2cf0212`)
+- Removed "Recent Uploads" (duplicated each client's own page). New **per-client grid**: SKUs, YTD Units, YTD Value, Contribution %, DISPO count, Aged-Stock count, Vital Signs runs, Month-End runs (sorted by YTD value).
+- New `app/api/dashboard/clients/route.ts` (aggregate, `view_dashboard`, no-store). YTD Value = units × (`Prom SP` if >0 else `Incl SP`/1.15) — matches the reports' value-of-sales convention. Contribution = client YTD value ÷ all-clients total.
+- New `lib/reportCounts.ts` — durable per-client report-run counters (`report-counts.json`); Vital Signs + Month-End routes increment on successful download. Counters start at 0 (future runs only — past downloads weren't tracked).
+
+### Month-End Excel polish (commits `18340ee`)
+- **Home button**: 🏠 Menu hyperlink (→ `Menu!A1`) on every non-Menu sheet, placed at the right end of row 1 via post-pass (no formula-row shifting).
+- **Sales header**: "Month-End Report — …" → "Sales Summary — …" (report title now only on the Menu cover sheet).
+- **Native 3-colour scales** (red↔amber↔green, relative per table via `addColorScale()` helper) replace the binary red/green fills on the numeric gradient % columns: Sales Growth YTD/LM/PYM % (high=green), OOS % (high=red), ND % all 4 rollups (high=green). Categorical fills (Status classification, Margin status, ND-detail 1/0) stay discrete — a numeric scale is meaningless for labels.
+
+---
+
