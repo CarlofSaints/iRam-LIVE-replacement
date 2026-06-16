@@ -105,14 +105,12 @@ export default function ChartsPage() {
 
       {/* Selectors */}
       <div className="mb-8 flex flex-wrap items-end gap-4">
-        {clients.length > 1 && (
-          <Field label="Client">
-            <select value={clientId} onChange={(e) => setClientId(e.target.value)} className="select">
-              <option value="">Select a client…</option>
-              {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          </Field>
-        )}
+        <Field label="Client">
+          <select value={clientId} onChange={(e) => setClientId(e.target.value)} className="select">
+            <option value="">Select a client…</option>
+            {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </Field>
         <Field label="Channel">
           <select value={mainChannelId} onChange={(e) => setMainChannelId(e.target.value)} className="select" disabled={!clientId}>
             <option value="">Select a channel…</option>
