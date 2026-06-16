@@ -352,5 +352,32 @@ Each feature smoke-tested with `npx tsx` scripts (mock data → `buildMonthEndWo
 - **Sales header**: "Month-End Report — …" → "Sales Summary — …" (report title now only on the Menu cover sheet).
 - **Native 3-colour scales** (red↔amber↔green, relative per table via `addColorScale()` helper) replace the binary red/green fills on the numeric gradient % columns: Sales Growth YTD/LM/PYM % (high=green), OOS % (high=red), ND % all 4 rollups (high=green). Categorical fills (Status classification, Margin status, ND-detail 1/0) stay discrete — a numeric scale is meaningless for labels.
 
+### Rand formatting (commit `9adb5bb`)
+- All monetary (value) columns now show Rands via `RAND_FMT = '"R "#,##0.00'`. Month-End (`lib/monthEndExcel.ts`): Sales value tables, Margin (MAC/Nett/Incl SP/MAC-vs-Nett/Margin Support/Suggested SP + summary support), Data (Incl SP/Prom SP/Nett Cost/YTD Value/PY YTD Value). Vital Signs (`app/api/reports/vital-signs/route.ts`, SheetJS): sets `.z` on any "… Value" column + MAC/Nett Cost/Incl SP/Promo SP. Units/counts/%/DSC/Free-Stock-Units left plain. UI (Reports cards, dashboard grid) already showed R.
+
+### Header/note wrapping (commit `18340ee`)
+- The workbook post-pass now force-wraps all column headers (Excel auto-fits the header row) and also wraps section title-bars (SUBHEADER_BG), titles, and italic notes.
+
+### Open to Order sheets (commit `3528aa6`)
+- `buildOpenToOrder()` in `lib/monthEndReport.ts` reuses Vital Signs `calcOpenToOrder()` (SOH=0, SOO=SIT=0, status POSITIVE, PMF ACTIVE; OTO Units = category mult × R. Profile; OTO Value = Units × Nett Cost). Two new sheets (after Phantom, before ND): **OTO** (cascading Sub-Channel→Category→SKU→Site, Lines/Units/Value/%Value + totals) and **OTO Detail** (Site Num, Site Name, Product Code, Article, Range Indicator [N/A w/o ranging else TRUE/FALSE], Product Description, OTO Units, OTO Value). Note at top of both explains OTO + why SOH/SOO/SIT/Status are omitted. Sheet keys `oto`/`otoDetail` added to the reports-page sheet selector.
+
+### Charts page (web dashboard) + client-scoped access control (commits `cf87551`, `6c35341`, `2ebd9da`)
+- **`/charts`** page (Recharts 3.8.1) + **`/api/reports/charts`** endpoint + **`buildChartsData()`** engine. Cards: unit/value sales (month + YTD), growth YTD, growth vs same-month-LY. Opportunity cards (all Rand @ Nett Cost): Total OTO, **ND** (1 unit per not-distributed active SKU/site), **OOS** (OTO-default order per OOS line), **Phantom** (OTO-default order per phantom line SOH<5), **Total**. Risk: margin support. Charts order: **Sub-Channel line (24mo) → CY-vs-PY grouped bars (value + volume) → Category line (24mo)**, data labels (line charts capped to top-10 series by value). Sidebar nav added.
+  - **Client selector ALWAYS shown** (a CAM sees many clients; a client can map to multiple records/vendors). Single-client accounts auto-select.
+  - **Five dimension filters** (searchable multi-selects): Sub-Channel, Category, SKU (by Article), Site (by Site num), Province. Options computed from UNfiltered rows (always full); all cards/charts recompute server-side from the filtered set. NOTE: ND-opportunity universe is PMF/store-master scoped (not the ad-hoc filters) — minor approximation.
+- **Access control:** new **`view_charts`** permission + a **`client`** role (charts only). **`User.clientIds`** scopes an account to specific clients (empty = internal/all), carried on session at login + SSO. **`assertClientAccess()`** (`lib/auth.ts`) enforced on `/api/reports/charts` and `/api/sales`; `/api/clients` GET filtered to the session's clients. Users admin has a per-user **Client access** multiselect. `lib/roleData.ts` **additively migrates** a stored `role-permissions.json` so new-in-code permissions/roles (view_charts, client) get default grants without reseeding. To make a client account: Users → role **Client** + tick their client(s).
+
+### Verification
+- Every feature smoke-tested via `npx tsx` (mock data → builders → reopen with exceljs / assert engine outputs) + `npm run build`. Access enforcement (`assertClientAccess`) unit-tested. All green.
+
+### Git / deploy
+- Latest commit **`2ebd9da`** on `master`, all pushed. Vercel **auto-deploys from GitHub** (no local `.vercel` link); confirmed Production deployments Ready. Vercel project: `i-ram-live-replacement` (team `carl-dos-santos-projects`).
+
+### Known follow-ups
+1. If client accounts should also use **Reports/Dashboard scoped to their client**, add `assertClientAccess` to those endpoints (charts + sales done).
+2. ND-opportunity universe vs ad-hoc charts filters (see note above) — refine if needed.
+3. `app/api/debug/ledger-check` diagnostic endpoint still present — clean up.
+4. Existing logged-in users must **re-login** to pick up `clientIds` on their session (only matters for newly-scoped accounts).
+
 ---
 
