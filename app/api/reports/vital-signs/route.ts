@@ -9,6 +9,7 @@ import { getStatusDefinitions } from "@/lib/statusData";
 import { getStatusScenarios } from "@/lib/statusScenarioData";
 import { computeVitalSigns, getVitalSignsColumnOrder } from "@/lib/vitalSigns";
 import { addLog } from "@/lib/activityLog";
+import { incrementReportCount } from "@/lib/reportCounts";
 
 export const maxDuration = 120;
 
@@ -135,6 +136,7 @@ export async function GET(req: NextRequest) {
       details: `Client: ${clientName}, Channels: ${channelLabel}, ${vitalRows.length} rows`,
       status: "success",
     }).catch(() => {});
+    incrementReportCount(clientId, "vitalSigns").catch(() => {});
 
     // 8. Return as downloadable xlsx
     // Naming: Vital Signs - CLIENT NAME - VENDOR - YYYYMMWkN

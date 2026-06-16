@@ -112,10 +112,29 @@ export function parseRangingSheet(
 ): Record<string, unknown>[] {
   return rows
     .filter((r) => {
-      const prodId = String(r["ProductID"] ?? r["Product ID"] ?? r["productid"] ?? "").trim();
+      // Ranging headers carry Helper/Mandatory prefixes (e.g. "HelperProductID"),
+      // so resolve ProductID tolerantly — see rangingField() in lib/monthEndReport.ts.
+      const prodId = resolveRangingField(r, ["productid"]);
       return prodId.length > 0;
     })
     .map((r) => normalizeKeys(r));
+}
+
+/** Resolve a ranging-file field, tolerating Helper/Mandatory prefixes + spacing/underscores. */
+function resolveRangingField(
+  row: Record<string, unknown>,
+  targets: string[]
+): string {
+  for (const [k, v] of Object.entries(row)) {
+    const nk = k
+      .trim()
+      .toLowerCase()
+      .replace(/^helper/, "")
+      .replace(/^mandatory/, "")
+      .replace(/[\s_]+/g, "");
+    if (targets.includes(nk)) return v == null ? "" : String(v).trim();
+  }
+  return "";
 }
 
 export function parseCustomSitesSheet(

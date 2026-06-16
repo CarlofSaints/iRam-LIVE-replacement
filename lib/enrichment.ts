@@ -17,6 +17,20 @@ import type { ProductMaster, StoreRecord } from "./types";
 type RawRow = Record<string, unknown>;
 type EnrichedRow = Record<string, unknown>;
 
+/** Resolve a ranging-file field, tolerating Helper/Mandatory prefixes + spacing/underscores. */
+function resolveRangingField(row: RawRow, targets: string[]): string {
+  for (const [k, v] of Object.entries(row)) {
+    const nk = k
+      .trim()
+      .toLowerCase()
+      .replace(/^helper/, "")
+      .replace(/^mandatory/, "")
+      .replace(/[\s_]+/g, "");
+    if (targets.includes(nk)) return v == null ? "" : String(v).trim();
+  }
+  return "";
+}
+
 /**
  * Enrich a single row with product + store dimensions.
  * Prefixed field names avoid collisions with original data.
@@ -130,14 +144,17 @@ export async function enrichLedger(
     getControlFileData<Record<string, unknown>>(clientId, "ranging"),
   ]);
 
-  // Build ranging lookup — set of article keys present in ranging file
+  // Build ranging lookup — set of article keys present in ranging file.
+  // Ranging headers carry Helper/Mandatory prefixes and the channel-specific
+  // article column is "ArticleChannelCode" (matches the DISPO "Article"), so
+  // resolve tolerantly — see rangingField() in lib/monthEndReport.ts.
   let rangingLookup: Set<string> | undefined;
   if (rangingRows.length > 0) {
     rangingLookup = new Set<string>();
     for (const r of rangingRows) {
-      const article = String(
-        r["Article"] ?? r["article"] ?? r["ARTICLE"] ?? ""
-      ).toLowerCase().trim();
+      const article = resolveRangingField(r, ["articlechannelcode", "article"])
+        .toLowerCase()
+        .trim();
       if (article) rangingLookup.add(article);
     }
   }

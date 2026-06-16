@@ -2,13 +2,26 @@
 
 import { useEffect, useState } from "react";
 import { authFetch } from "@/lib/useAuth";
-import type { UploadMeta, Client, Channel, StoreRecord } from "@/lib/types";
+import type { Client, Channel, StoreRecord } from "@/lib/types";
+
+interface DashboardClientRow {
+  clientId: string;
+  clientName: string;
+  skuCount: number;
+  ytdUnits: number;
+  ytdValue: number;
+  contributionPct: number;
+  dispoCount: number;
+  agedStockCount: number;
+  vitalSignsRuns: number;
+  monthEndRuns: number;
+}
 
 interface DashboardData {
-  uploads: UploadMeta[];
   clients: Client[];
   channels: Channel[];
   stores: StoreRecord[];
+  clientRows: DashboardClientRow[];
 }
 
 export default function DashboardPage() {
@@ -18,28 +31,21 @@ export default function DashboardPage() {
   useEffect(() => {
     (async () => {
       try {
-        const [uploadsRes, clientsRes, channelsRes, storesRes] =
-          await Promise.all([
-            authFetch("/api/uploads"),
-            authFetch("/api/clients"),
-            authFetch("/api/channels"),
-            authFetch("/api/store-files/merged"),
-          ]);
+        const [clientsRes, channelsRes, storesRes, gridRes] = await Promise.all([
+          authFetch("/api/clients"),
+          authFetch("/api/channels"),
+          authFetch("/api/store-files/merged"),
+          authFetch("/api/dashboard/clients"),
+        ]);
 
-        const uploads = uploadsRes.ok
-          ? ((await uploadsRes.json()) as UploadMeta[])
-          : [];
-        const clients = clientsRes.ok
-          ? ((await clientsRes.json()) as Client[])
-          : [];
-        const channels = channelsRes.ok
-          ? ((await channelsRes.json()) as Channel[])
-          : [];
-        const stores = storesRes.ok
-          ? ((await storesRes.json()) as StoreRecord[])
-          : [];
+        const clients = clientsRes.ok ? ((await clientsRes.json()) as Client[]) : [];
+        const channels = channelsRes.ok ? ((await channelsRes.json()) as Channel[]) : [];
+        const stores = storesRes.ok ? ((await storesRes.json()) as StoreRecord[]) : [];
+        const gridJson = gridRes.ok
+          ? ((await gridRes.json()) as { clients: DashboardClientRow[] })
+          : { clients: [] };
 
-        setData({ uploads, clients, channels, stores });
+        setData({ clients, channels, stores, clientRows: gridJson.clients });
       } catch {
         /* ignore */
       } finally {
@@ -58,9 +64,8 @@ export default function DashboardPage() {
     );
   }
 
-  const d = data ?? { uploads: [], clients: [], channels: [], stores: [] };
+  const d = data ?? { clients: [], channels: [], stores: [], clientRows: [] };
   const subChannels = d.channels.filter((c) => c.parentId);
-  const recentUploads = d.uploads.slice(0, 10);
 
   return (
     <div className="p-8">
@@ -73,76 +78,68 @@ export default function DashboardPage() {
         <StatCard label="Clients" value={d.clients.length} color="primary" />
         <StatCard label="Sub-Channels" value={subChannels.length} color="secondary" />
         <StatCard label="Stores" value={d.stores.length} color="accent" />
-        <StatCard label="Uploads" value={d.uploads.length} color="primary" />
+        <StatCard label="Active Clients" value={d.clients.filter((c) => c.active).length} color="primary" />
       </div>
 
-      {/* Recent uploads */}
+      {/* Client grid */}
       <div className="rounded-xl border border-[var(--color-border)] bg-white">
         <div className="border-b border-[var(--color-border)] px-6 py-4">
           <h2 className="text-sm font-semibold text-[var(--color-text)]">
-            Recent Uploads
+            Clients
           </h2>
         </div>
-        {recentUploads.length === 0 ? (
+        {d.clientRows.length === 0 ? (
           <div className="px-6 py-8 text-center text-sm text-[var(--color-text-muted)]">
-            No uploads yet. Go to Data Load to upload your first DISPO file.
+            No clients yet. Create a client to get started.
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-[var(--color-border)] text-left text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
-                  <th className="px-6 py-3">Client</th>
-                  <th className="px-6 py-3">Channel</th>
-                  <th className="px-6 py-3">Type</th>
-                  <th className="px-6 py-3">Vendor</th>
-                  <th className="px-6 py-3">Rows</th>
-                  <th className="px-6 py-3">Date</th>
-                  <th className="px-6 py-3">Status</th>
+                  <th className="px-4 py-3">Client</th>
+                  <th className="px-4 py-3 text-right">SKUs</th>
+                  <th className="px-4 py-3 text-right">YTD Units</th>
+                  <th className="px-4 py-3 text-right">YTD Value</th>
+                  <th className="px-4 py-3 text-right">Contribution</th>
+                  <th className="px-4 py-3 text-right">DISPOs</th>
+                  <th className="px-4 py-3 text-right">Aged Stock</th>
+                  <th className="px-4 py-3 text-right">Vital Signs</th>
+                  <th className="px-4 py-3 text-right">Month-End</th>
                 </tr>
               </thead>
               <tbody>
-                {recentUploads.map((u) => (
+                {d.clientRows.map((r) => (
                   <tr
-                    key={u.id}
+                    key={r.clientId}
                     className="border-b border-[var(--color-border)] last:border-0"
                   >
-                    <td className="px-6 py-3 font-medium text-[var(--color-text)]">
-                      {u.clientName}
+                    <td className="px-4 py-3 font-medium text-[var(--color-text)]">
+                      {r.clientName}
                     </td>
-                    <td className="px-6 py-3 text-[var(--color-text-muted)]">
-                      {u.subChannelName ?? u.channelName}
+                    <td className="px-4 py-3 text-right text-[var(--color-text-muted)]">
+                      {r.skuCount.toLocaleString()}
                     </td>
-                    <td className="px-6 py-3">
-                      <span
-                        className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                          u.fileType === "dispo"
-                            ? "bg-blue-50 text-blue-700"
-                            : "bg-amber-50 text-amber-700"
-                        }`}
-                      >
-                        {u.fileType === "dispo" ? "DISPO" : "Aged Stock"}
-                      </span>
+                    <td className="px-4 py-3 text-right text-[var(--color-text-muted)]">
+                      {r.ytdUnits.toLocaleString()}
                     </td>
-                    <td className="px-6 py-3 text-[var(--color-text-muted)]">
-                      {u.vendorNumber}
+                    <td className="px-4 py-3 text-right text-[var(--color-text-muted)]">
+                      {formatRand(r.ytdValue)}
                     </td>
-                    <td className="px-6 py-3 text-[var(--color-text-muted)]">
-                      {u.rowCount.toLocaleString()}
+                    <td className="px-4 py-3 text-right font-medium text-[var(--color-text)]">
+                      {r.contributionPct.toFixed(1)}%
                     </td>
-                    <td className="px-6 py-3 text-[var(--color-text-muted)]">
-                      {new Date(u.uploadDate).toLocaleDateString()}
+                    <td className="px-4 py-3 text-right text-[var(--color-text-muted)]">
+                      {r.dispoCount.toLocaleString()}
                     </td>
-                    <td className="px-6 py-3">
-                      <span
-                        className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                          u.status === "processed"
-                            ? "bg-green-50 text-green-700"
-                            : "bg-red-50 text-red-700"
-                        }`}
-                      >
-                        {u.status}
-                      </span>
+                    <td className="px-4 py-3 text-right text-[var(--color-text-muted)]">
+                      {r.agedStockCount.toLocaleString()}
+                    </td>
+                    <td className="px-4 py-3 text-right text-[var(--color-text-muted)]">
+                      {r.vitalSignsRuns.toLocaleString()}
+                    </td>
+                    <td className="px-4 py-3 text-right text-[var(--color-text-muted)]">
+                      {r.monthEndRuns.toLocaleString()}
                     </td>
                   </tr>
                 ))}
@@ -153,6 +150,14 @@ export default function DashboardPage() {
       </div>
     </div>
   );
+}
+
+function formatRand(value: number): string {
+  return new Intl.NumberFormat("en-ZA", {
+    style: "currency",
+    currency: "ZAR",
+    maximumFractionDigits: 0,
+  }).format(value);
 }
 
 function StatCard({

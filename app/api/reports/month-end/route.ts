@@ -5,6 +5,7 @@ import { enrichLedger } from "@/lib/enrichment";
 import { getReportConfig, classifyDSC } from "@/lib/reportConfig";
 import { getClientById } from "@/lib/clientData";
 import { addLog } from "@/lib/activityLog";
+import { incrementReportCount } from "@/lib/reportCounts";
 import {
   buildDateContext,
   buildSalesSummary,
@@ -236,6 +237,7 @@ export async function GET(req: NextRequest) {
       details: `Client: ${clientName}, Channels: ${channelLabel}, ${allRows.length} ledger rows`,
       status: "success",
     }).catch(() => {});
+    if (clientId) incrementReportCount(clientId, "monthEnd").catch(() => {});
 
     // 10. Return as downloadable xlsx
     const datePart = `${rYear}${String(rMonth).padStart(2, "0")}Wk${rWeek}`;
