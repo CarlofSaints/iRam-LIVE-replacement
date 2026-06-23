@@ -288,10 +288,10 @@ export default function GuidePage() {
           {/* Report settings */}
           <Section id="report-settings" title="4. Report settings (DSC, OTO, SharePoint)">
             <p>
-              Still on the client page, the <strong>Report Settings</strong> panel (admin only) controls how the reports
-              behave for this client.
+              On the client&apos;s <strong>Report Settings</strong> tab (admin only) you control how the reports behave for
+              this client.
             </p>
-            <Figure src="/guide/report-settings.png" alt="Report settings panel" />
+            <Figure src="/guide/report-settings.png" alt="Report settings tab" />
 
             <h3 className="pt-2 font-semibold">DSC Brackets</h3>
             <p>

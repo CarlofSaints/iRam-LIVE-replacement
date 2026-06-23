@@ -25,7 +25,7 @@ export default function ClientDetailPage() {
   const [cams, setCams] = useState<CAM[]>([]);
   const [uploads, setUploads] = useState<UploadMeta[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"details" | "control" | "uploads" | "logo">("details");
+  const [tab, setTab] = useState<"details" | "control" | "report-settings" | "uploads" | "logo">("details");
   // Collapse/expand state for the Control tab cards (keyed by card id)
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const isCollapsed = (k: string) => !!collapsed[k];
@@ -434,10 +434,13 @@ export default function ClientDetailPage() {
 
       {/* Tabs */}
       <div className="mb-6 flex gap-1 border-b border-[var(--color-border)]">
-        {(["details", "control", "uploads", "logo"] as const).map((t) => (
+        {(isAdmin
+          ? (["details", "control", "report-settings", "uploads", "logo"] as const)
+          : (["details", "control", "uploads", "logo"] as const)
+        ).map((t) => (
           <button key={t} onClick={() => setTab(t)}
             className={`px-4 py-2.5 text-sm font-medium transition-colors ${tab === t ? "border-b-2 border-[var(--color-primary)] text-[var(--color-primary)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
-            {t === "details" ? "Details" : t === "control" ? "Control Files" : t === "uploads" ? "Uploads" : "Logo"}
+            {t === "details" ? "Details" : t === "control" ? "Control Files" : t === "report-settings" ? "Report Settings" : t === "uploads" ? "Uploads" : "Logo"}
           </button>
         ))}
       </div>
@@ -815,9 +818,9 @@ export default function ClientDetailPage() {
         </div>
       )}
 
-      {/* Report Settings — admin only */}
-      {isAdmin && (
-        <div className="mt-8 rounded-xl border border-[var(--color-border)] bg-white p-6">
+      {/* Report Settings — admin only, own tab */}
+      {tab === "report-settings" && isAdmin && (
+        <div className="rounded-xl border border-[var(--color-border)] bg-white p-6">
           <h3 className="mb-4 text-sm font-semibold text-[var(--color-text)]">Report Settings</h3>
           <div className="mb-5">
             <span className="mb-2 block text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]">DSC Brackets</span>
