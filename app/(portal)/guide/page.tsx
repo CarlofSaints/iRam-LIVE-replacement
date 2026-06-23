@@ -19,11 +19,11 @@ const SECTIONS: { id: string; label: string }[] = [
   { id: "field-mapping", label: "3. Map PMF & Links fields" },
   { id: "report-settings", label: "4. Report settings (DSC, OTO, SP)" },
   { id: "logo", label: "5. Client logo" },
-  { id: "status", label: "6. Status reference & scenarios" },
-  { id: "data-load", label: "7. Load DISPO data" },
-  { id: "reports", label: "8. Run reports" },
+  { id: "data-load", label: "6. Load DISPO data" },
+  { id: "reports", label: "7. Run reports" },
   { id: "checklist", label: "Quick checklist" },
   { id: "shared-data", label: "Appendix: channels & store files" },
+  { id: "status", label: "Appendix: status reference (site-wide)" },
 ];
 
 function Figure({ src, alt, caption }: { src: string; alt: string; caption?: string }) {
@@ -133,10 +133,14 @@ export default function GuidePage() {
               <li>Map the PMF and Links columns (mostly auto-matched).</li>
               <li>Set the report settings (DSC brackets, OTO multipliers, SharePoint URL).</li>
               <li>Add the client logo.</li>
-              <li>Classify statuses &amp; (optionally) add status scenarios.</li>
               <li>Load the first DISPO file.</li>
               <li>Run the reports.</li>
             </ol>
+            <p className="mt-3 text-sm leading-relaxed text-[var(--color-text)]">
+              <strong>Status reference</strong> (how DISPO status codes are classified) is <em>not</em> a per-client step —
+              it&apos;s site-wide and shared by all clients. It&apos;s covered in its own{" "}
+              <a href="#status" className="font-medium text-[var(--color-primary)] hover:underline">appendix</a>.
+            </p>
             <Callout tone="warn">
               <strong>Shared vs. client-specific.</strong> Channels and the store master are{" "}
               <strong>global</strong> — loaded once and shared by every client. Loading the MAKRO store file creates the
@@ -354,36 +358,8 @@ export default function GuidePage() {
             </Callout>
           </Section>
 
-          {/* Status */}
-          <Section id="status" title="6. Status reference & scenarios">
-            <p>
-              <strong>Status Reference</strong> (in the sidebar) is where DISPO status codes are classified as{" "}
-              <strong>Positive</strong>, <strong>Negative</strong> or <strong>Unclassified</strong>. The classification
-              decides, for example, whether an out-of-stock line counts as a genuine ordering opportunity.
-            </p>
-            <Figure src="/guide/status-reference.png" alt="Status reference page" />
-            <ul className="list-disc space-y-1.5 pl-6">
-              <li>
-                <strong>Status definitions</strong> are <strong>per channel</strong>. New codes are{" "}
-                <em>auto-detected</em> when you load a DISPO, and start out <em>Unclassified</em> — use the channel tabs to
-                review each channel and set Positive / Negative.
-              </li>
-              <li>
-                <strong>Status scenarios</strong> are conditional overrides, also <strong>per channel</strong>. When a status
-                code matches a scenario&apos;s conditions — the product&apos;s <em>client status</em> (from the PMF) and/or its{" "}
-                <em>ranging status</em> — that classification wins over the plain definition. The most specific match
-                (most conditions met) takes priority. Tick <em>&ldquo;Show all channels&apos; scenarios&rdquo;</em> to see every
-                channel at once.
-              </li>
-            </ul>
-            <Callout tone="info">
-              Scenarios only apply to the channel they&apos;re created under. Pick the channel at the top of the page before
-              adding one.
-            </Callout>
-          </Section>
-
           {/* Data load */}
-          <Section id="data-load" title="7. Load DISPO data">
+          <Section id="data-load" title="6. Load DISPO data">
             <p>
               Go to <strong>Data Load</strong>. Choose the <strong>client</strong>, the <strong>main channel</strong>, the
               <strong> file type</strong> and the <strong>period</strong> (year / month / week), then upload the DISPO file.
@@ -403,7 +379,7 @@ export default function GuidePage() {
           </Section>
 
           {/* Reports */}
-          <Section id="reports" title="8. Run reports">
+          <Section id="reports" title="7. Run reports">
             <p>
               With data loaded you can produce reports from <strong>Reports</strong> (Vital Signs &amp; Month-End Excel
               downloads), explore the web <strong>Charts</strong>, and see headline numbers on the <strong>Dashboard</strong>.
@@ -429,7 +405,6 @@ export default function GuidePage() {
                 "DSC brackets and OTO multipliers reviewed",
                 "SharePoint URL set (if used)",
                 "Logo uploaded (PNG/JPG)",
-                "Status codes classified per channel; scenarios added if needed",
                 "First DISPO loaded with no validation errors",
                 "Reports run successfully",
               ].map((item) => (
@@ -475,6 +450,40 @@ export default function GuidePage() {
             <Callout tone="info">
               After this is done, the retailer&apos;s channels and stores are available to every client — so when you set a
               client up you just tick the channels they trade in (step&nbsp;1) and the stores are already there.
+            </Callout>
+          </Section>
+
+          {/* Appendix: status reference (site-wide) */}
+          <Section id="status" title="Appendix: status reference & scenarios (site-wide)">
+            <Callout tone="warn">
+              This is <strong>not part of client setup</strong>. Status classification is <strong>site-wide and shared
+              by every client</strong> — it&apos;s configured per channel, and any channel&apos;s settings apply to all clients
+              that trade in that channel. Only <strong>site administrators</strong> can edit it.
+            </Callout>
+            <p>
+              <strong>Status Reference</strong> (in the sidebar) is where DISPO status codes are classified as{" "}
+              <strong>Positive</strong>, <strong>Negative</strong> or <strong>Unclassified</strong>. The classification
+              decides, for example, whether an out-of-stock line counts as a genuine ordering opportunity. Because the same
+              channels are shared across clients, you set this up once for the system — not per client.
+            </p>
+            <Figure src="/guide/status-reference.png" alt="Status reference page" />
+            <ul className="list-disc space-y-1.5 pl-6">
+              <li>
+                <strong>Status definitions</strong> are set <strong>per channel</strong>. New codes are{" "}
+                <em>auto-detected</em> when a DISPO is loaded, and start out <em>Unclassified</em> — a site admin uses the
+                channel tabs to review each channel and set Positive / Negative.
+              </li>
+              <li>
+                <strong>Status scenarios</strong> are conditional overrides, also <strong>per channel</strong>. When a status
+                code matches a scenario&apos;s conditions — the product&apos;s <em>client status</em> (from the PMF) and/or its{" "}
+                <em>ranging status</em> — that classification wins over the plain definition. The most specific match
+                (most conditions met) takes priority. Tick <em>&ldquo;Show all channels&apos; scenarios&rdquo;</em> to see every
+                channel at once.
+              </li>
+            </ul>
+            <Callout tone="info">
+              Everything here is generic across clients. A scenario added to a channel automatically applies to every
+              client trading that channel — there&apos;s nothing client-specific to configure during onboarding.
             </Callout>
           </Section>
         </article>
