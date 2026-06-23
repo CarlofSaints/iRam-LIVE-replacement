@@ -267,7 +267,8 @@ export default function GuidePage() {
               <li>
                 <strong>The CAM exists.</strong> <strong>Control Centre → CAMs.</strong> The CAM you assign to the client
                 receives the alert emails (e.g. when a DISPO contains products not in the PMF), so add them here first if
-                they&apos;re new.
+                they&apos;re new. A CAM is just a contact record — it&apos;s <em>not</em> a login. When adding one you can tick{" "}
+                <em>&ldquo;Also create a portal login&rdquo;</em> to create a matching user account (CAM role) in one step.
               </li>
             </ul>
             <Callout tone="tip">
