@@ -13,16 +13,17 @@ import { useState } from "react";
 
 const SECTIONS: { id: string; label: string }[] = [
   { id: "overview", label: "Overview & order of work" },
-  { id: "prerequisites", label: "1. Prerequisites (once-off)" },
-  { id: "create-client", label: "2. Create the client" },
-  { id: "control-files", label: "3. Load control files (PMF, Links…)" },
-  { id: "field-mapping", label: "4. Map PMF & Links fields" },
-  { id: "report-settings", label: "5. Report settings (DSC, OTO, SP)" },
-  { id: "logo", label: "6. Client logo" },
-  { id: "status", label: "7. Status reference & scenarios" },
-  { id: "data-load", label: "8. Load DISPO data" },
-  { id: "reports", label: "9. Run reports" },
+  { id: "before", label: "Before you start" },
+  { id: "create-client", label: "1. Create the client" },
+  { id: "control-files", label: "2. Load control files (PMF, Links…)" },
+  { id: "field-mapping", label: "3. Map PMF & Links fields" },
+  { id: "report-settings", label: "4. Report settings (DSC, OTO, SP)" },
+  { id: "logo", label: "5. Client logo" },
+  { id: "status", label: "6. Status reference & scenarios" },
+  { id: "data-load", label: "7. Load DISPO data" },
+  { id: "reports", label: "8. Run reports" },
   { id: "checklist", label: "Quick checklist" },
+  { id: "shared-data", label: "Appendix: channels & store files" },
 ];
 
 function Figure({ src, alt, caption }: { src: string; alt: string; caption?: string }) {
@@ -119,9 +120,14 @@ export default function GuidePage() {
               <strong>sales &amp; stock data</strong> you upload each period (DISPO files). Once those are connected, the
               system can produce the Vital Signs, Month-End and Charts reports.
             </p>
-            <p className="mt-3 text-sm leading-relaxed text-[var(--color-text)]">Work through it in this order:</p>
+            <p className="mt-3 text-sm leading-relaxed text-[var(--color-text)]">
+              This guide covers setting up <strong>one client</strong>. It assumes the shared data that client needs —
+              its channels and store master — already exists. (Creating those from a retailer&apos;s site file is a separate,
+              occasional job, covered in the{" "}
+              <a href="#shared-data" className="font-medium text-[var(--color-primary)] hover:underline">appendix</a>.)
+              Work through the client setup in this order:
+            </p>
             <ol className="mt-2 list-decimal space-y-1 pl-6 text-sm text-[var(--color-text)]">
-              <li>Make sure the once-off prerequisites exist (channels, store files, CAMs).</li>
               <li>Create the client and assign its channels, vendor numbers and CAM.</li>
               <li>Upload the control files — at minimum the <strong>PMF</strong> and <strong>Links</strong>.</li>
               <li>Map the PMF and Links columns (mostly auto-matched).</li>
@@ -172,36 +178,38 @@ export default function GuidePage() {
             </Callout>
           </section>
 
-          {/* Prerequisites */}
-          <Section id="prerequisites" title="1. Prerequisites (once-off)">
+          {/* Before you start */}
+          <Section id="before" title="Before you start">
             <p>
-              These live under <strong>Control Centre</strong> and are usually already in place. You only touch them when
-              something new appears. They are shared across all clients.
+              Three things need to exist before you can finish setting up a client. The first two are{" "}
+              <strong>shared</strong> across all clients, so they&apos;re usually already in place:
             </p>
-            <h3 className="pt-2 font-semibold">Channels</h3>
-            <p>
-              <strong>Control Centre → Channels.</strong> Main channels (e.g. MAKRO, MASSBUILD, GAME) are created here by
-              hand. <strong>Sub-channels</strong> (BWH, BEX, BTD, SS, DC, etc.) are created automatically when you upload a
-              store file — you don&apos;t add them manually.
-            </p>
-            <Figure src="/guide/channels.png" alt="Channels admin" caption="Control Centre → Channels — main channels listed; sub-channels are auto-created from store files." />
-            <h3 className="pt-2 font-semibold">Store files</h3>
-            <p>
-              <strong>Control Centre → Store Files.</strong> Upload the store master here. The channel is detected
-              automatically from the file&apos;s <code>Channel</code> column, and any new sub-channels are created for you. The
-              store master is what DISPO sites are validated against.
-            </p>
-            <Figure src="/guide/store-files.png" alt="Store files upload" />
-            <h3 className="pt-2 font-semibold">CAMs</h3>
-            <p>
-              <strong>Control Centre → CAMs.</strong> The CAM you assign to a client is who receives the alert emails (e.g.
-              when a DISPO contains products that aren&apos;t in the PMF). Make sure the client&apos;s CAM exists here first.
-            </p>
-            <Figure src="/guide/cams.png" alt="CAMs admin" />
+            <ul className="list-disc space-y-1.5 pl-6">
+              <li>
+                <strong>The client&apos;s channels exist.</strong> Main channels (MAKRO, MASSBUILD, GAME…) and their
+                sub-channels are shared. If this client trades in a retailer that&apos;s brand-new to the system, that
+                retailer&apos;s channels and stores have to be created first — see the{" "}
+                <a href="#shared-data" className="font-medium text-[var(--color-primary)] hover:underline">appendix</a>.
+              </li>
+              <li>
+                <strong>The retailer&apos;s store master is loaded.</strong> Also shared, and also covered in the{" "}
+                <a href="#shared-data" className="font-medium text-[var(--color-primary)] hover:underline">appendix</a>.
+                DISPO sites are validated against it.
+              </li>
+              <li>
+                <strong>The CAM exists.</strong> <strong>Control Centre → CAMs.</strong> The CAM you assign to the client
+                receives the alert emails (e.g. when a DISPO contains products not in the PMF), so add them here first if
+                they&apos;re new.
+              </li>
+            </ul>
+            <Callout tone="tip">
+              If you&apos;re onboarding a client for a retailer that&apos;s already in the system (which is the common case), the
+              channels and stores are already there — skip straight to creating the client.
+            </Callout>
           </Section>
 
           {/* Create client */}
-          <Section id="create-client" title="2. Create the client">
+          <Section id="create-client" title="1. Create the client">
             <p>
               Go to <strong>Clients → + New Client</strong>. Fill in:
             </p>
@@ -226,7 +234,7 @@ export default function GuidePage() {
           </Section>
 
           {/* Control files */}
-          <Section id="control-files" title="3. Load control files (PMF, Links, …)">
+          <Section id="control-files" title="2. Load control files (PMF, Links, …)">
             <p>
               Open the client and go to the <strong>Control</strong> tab. There are five control-file slots. Only the PMF and
               Links are required for reporting; the rest are optional and unlock extra features.
@@ -262,7 +270,7 @@ export default function GuidePage() {
           </Section>
 
           {/* Field mapping */}
-          <Section id="field-mapping" title="4. Map PMF & Links fields">
+          <Section id="field-mapping" title="3. Map PMF & Links fields">
             <p>
               After uploading the PMF and Links files, the system shows the columns it found and tries to{" "}
               <strong>auto-match</strong> them to the fields it needs (article code, product ID, description, category,
@@ -278,7 +286,7 @@ export default function GuidePage() {
           </Section>
 
           {/* Report settings */}
-          <Section id="report-settings" title="5. Report settings (DSC, OTO, SharePoint)">
+          <Section id="report-settings" title="4. Report settings (DSC, OTO, SharePoint)">
             <p>
               Still on the client page, the <strong>Report Settings</strong> panel (admin only) controls how the reports
               behave for this client.
@@ -335,7 +343,7 @@ export default function GuidePage() {
           </Section>
 
           {/* Logo */}
-          <Section id="logo" title="6. Client logo">
+          <Section id="logo" title="5. Client logo">
             <p>
               On the <strong>Logo</strong> tab, upload the client&apos;s logo (PNG or JPG, max 1.5&nbsp;MB). It appears on the
               cover sheet of the Month-End workbook.
@@ -347,7 +355,7 @@ export default function GuidePage() {
           </Section>
 
           {/* Status */}
-          <Section id="status" title="7. Status reference & scenarios">
+          <Section id="status" title="6. Status reference & scenarios">
             <p>
               <strong>Status Reference</strong> (in the sidebar) is where DISPO status codes are classified as{" "}
               <strong>Positive</strong>, <strong>Negative</strong> or <strong>Unclassified</strong>. The classification
@@ -375,7 +383,7 @@ export default function GuidePage() {
           </Section>
 
           {/* Data load */}
-          <Section id="data-load" title="8. Load DISPO data">
+          <Section id="data-load" title="7. Load DISPO data">
             <p>
               Go to <strong>Data Load</strong>. Choose the <strong>client</strong>, the <strong>main channel</strong>, the
               <strong> file type</strong> and the <strong>period</strong> (year / month / week), then upload the DISPO file.
@@ -395,7 +403,7 @@ export default function GuidePage() {
           </Section>
 
           {/* Reports */}
-          <Section id="reports" title="9. Run reports">
+          <Section id="reports" title="8. Run reports">
             <p>
               With data loaded you can produce reports from <strong>Reports</strong> (Vital Signs &amp; Month-End Excel
               downloads), explore the web <strong>Charts</strong>, and see headline numbers on the <strong>Dashboard</strong>.
@@ -431,6 +439,43 @@ export default function GuidePage() {
                 </li>
               ))}
             </ul>
+          </Section>
+
+          {/* Appendix: shared data */}
+          <Section id="shared-data" title="Appendix: channels & store files (shared data)">
+            <p>
+              This is a <strong>separate, occasional job</strong> — not part of setting up an individual client. You only
+              do it when a retailer is new to the system, or when stores change. Everything created here is{" "}
+              <strong>shared by every client</strong> that trades in that retailer.
+            </p>
+
+            <h3 className="pt-2 font-semibold">Channels</h3>
+            <p>
+              <strong>Control Centre → Channels.</strong> Main channels (e.g. MAKRO, MASSBUILD, GAME) are created here by
+              hand. You generally only add a main channel when a brand-new retailer comes on board.{" "}
+              <strong>Sub-channels</strong> (BWH, BEX, BTD, SS, DC, etc.) are <em>not</em> added manually — they&apos;re created
+              automatically from the store file (next step).
+            </p>
+            <Figure src="/guide/channels.png" alt="Channels admin" caption="Control Centre → Channels — main channels listed; sub-channels are auto-created from store files." />
+
+            <h3 className="pt-2 font-semibold">Store files (creates the stores)</h3>
+            <p>
+              <strong>Control Centre → Store Files.</strong> Upload the retailer&apos;s store master here. On upload the system:
+            </p>
+            <ul className="list-disc space-y-1.5 pl-6">
+              <li>Detects the channel automatically from the file&apos;s <code>Channel</code> column.</li>
+              <li>Creates any new <strong>sub-channels</strong> it finds.</li>
+              <li>Builds/updates the shared <strong>store master</strong> that all DISPO sites are validated against.</li>
+            </ul>
+            <p>
+              Because this is shared, you load a retailer&apos;s store file <strong>once</strong> — not once per client. Re-upload
+              it only when the store list changes.
+            </p>
+            <Figure src="/guide/store-files.png" alt="Store files upload" />
+            <Callout tone="info">
+              After this is done, the retailer&apos;s channels and stores are available to every client — so when you set a
+              client up you just tick the channels they trade in (step&nbsp;1) and the stores are already there.
+            </Callout>
           </Section>
         </article>
       </div>
