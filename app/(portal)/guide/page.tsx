@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+/* eslint-disable @next/next/no-img-element */
+import { useState, useEffect } from "react";
 
 /* ──────────────────────────────────────────────────────────────
    Client Setup Guide
@@ -28,16 +29,46 @@ const SECTIONS: { id: string; label: string }[] = [
 
 function Figure({ src, alt, caption }: { src: string; alt: string; caption?: string }) {
   const [ok, setOk] = useState(true);
+  const [zoom, setZoom] = useState(false);
+
+  useEffect(() => {
+    if (!zoom) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setZoom(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [zoom]);
+
   return (
     <figure className="my-4">
       {ok ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={src}
-          alt={alt}
-          onError={() => setOk(false)}
-          className="w-full rounded-lg border border-[var(--color-border)] shadow-sm"
-        />
+        <>
+          <img
+            src={src}
+            alt={alt}
+            onError={() => setOk(false)}
+            onClick={() => setZoom(true)}
+            className="w-full cursor-zoom-in rounded-lg border border-[var(--color-border)] shadow-sm transition hover:ring-2 hover:ring-[var(--color-primary)]/40"
+          />
+          {zoom && (
+            <div
+              onClick={() => setZoom(false)}
+              className="fixed inset-0 z-50 flex cursor-zoom-out items-center justify-center bg-black/80 p-4"
+            >
+              <img
+                src={src}
+                alt={alt}
+                className="max-h-[92vh] max-w-[95vw] rounded-lg object-contain shadow-2xl"
+              />
+              <button
+                onClick={() => setZoom(false)}
+                aria-label="Close"
+                className="absolute right-4 top-4 rounded-full bg-white/90 p-2 text-zinc-700 shadow hover:bg-white"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+              </button>
+            </div>
+          )}
+        </>
       ) : (
         <div className="flex flex-col items-center justify-center gap-1.5 rounded-lg border-2 border-dashed border-[var(--color-border)] bg-zinc-50 py-10 text-center">
           <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-zinc-400">
