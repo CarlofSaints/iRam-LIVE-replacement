@@ -26,6 +26,27 @@ export default function ClientDetailPage() {
   const [uploads, setUploads] = useState<UploadMeta[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<"details" | "control" | "uploads" | "logo">("details");
+  // Collapse/expand state for the Control tab cards (keyed by card id)
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const isCollapsed = (k: string) => !!collapsed[k];
+  const toggleCollapse = (k: string) => setCollapsed((p) => ({ ...p, [k]: !p[k] }));
+  const CONTROL_CARD_KEYS: string[] = [...CF_TYPES, "pmf-mapping", "links-mapping"];
+  const setAllCollapsed = (v: boolean) =>
+    setCollapsed(Object.fromEntries(CONTROL_CARD_KEYS.map((k) => [k, v])));
+  const allCollapsed = CONTROL_CARD_KEYS.every((k) => collapsed[k]);
+  const chevronBtn = (k: string) => (
+    <button
+      type="button"
+      onClick={() => toggleCollapse(k)}
+      className="rounded-md p-1 text-[var(--color-text-muted)] hover:bg-zinc-100"
+      title={isCollapsed(k) ? "Expand" : "Collapse"}
+      aria-label={isCollapsed(k) ? "Expand" : "Collapse"}
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={`transition-transform ${isCollapsed(k) ? "-rotate-90" : ""}`}>
+        <polyline points="6 9 12 15 18 9" />
+      </svg>
+    </button>
+  );
   const [logo, setLogo] = useState<string | null>(null);
   const [logoBusy, setLogoBusy] = useState(false);
   const [uploading, setUploading] = useState<ControlFileType | null>(null);
@@ -557,13 +578,32 @@ export default function ClientDetailPage() {
 
       {tab === "control" && (
         <div className="space-y-4">
+          <div className="flex justify-end">
+            <button
+              onClick={() => setAllCollapsed(!allCollapsed)}
+              className="flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-white px-3 py-1.5 text-xs font-medium text-[var(--color-text-muted)] hover:bg-zinc-50"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                {allCollapsed ? <polyline points="7 13 12 18 17 13" /> : <polyline points="17 11 12 6 7 11" />}
+              </svg>
+              {allCollapsed ? "Expand all" : "Collapse all"}
+            </button>
+          </div>
           {CF_TYPES.map((type) => {
             const meta = client.controlFiles[type];
             return (
               <React.Fragment key={type}>
                 <div className="rounded-xl border border-[var(--color-border)] bg-white p-5">
-                  <div className="mb-3 flex items-center justify-between">
-                    <h3 className="text-sm font-semibold text-[var(--color-text)]">{CF_LABELS[type]}</h3>
+                  <div className={`flex items-center justify-between ${isCollapsed(type) ? "" : "mb-3"}`}>
+                    <div className="flex items-center gap-2">
+                      {chevronBtn(type)}
+                      <h3 className="text-sm font-semibold text-[var(--color-text)]">{CF_LABELS[type]}</h3>
+                      {meta ? (
+                        <span className="rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700">Uploaded</span>
+                      ) : (
+                        <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-xs font-medium text-zinc-500">No file</span>
+                      )}
+                    </div>
                     {meta && (
                       <div className="flex items-center gap-3">
                         <span className="text-xs text-[var(--color-text-muted)]">{meta.rowCount} rows &middot; {new Date(meta.uploadedAt).toLocaleDateString()}</span>
@@ -571,25 +611,27 @@ export default function ClientDetailPage() {
                       </div>
                     )}
                   </div>
-                  {meta ? (
-                    <div className="flex items-center gap-2">
-                      <span className="rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700">Uploaded</span>
-                      <span className="text-xs text-[var(--color-text-muted)]">{meta.fileName}</span>
-                    </div>
-                  ) : (
-                    <UploadZone
-                      onFile={(f) => handleControlFileUpload(type, f)}
-                      label={uploading === type ? "Uploading..." : `Upload ${CF_LABELS[type]}`}
-                      disabled={uploading !== null}
-                    />
+                  {!isCollapsed(type) && (
+                    meta ? (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-[var(--color-text-muted)]">{meta.fileName}</span>
+                      </div>
+                    ) : (
+                      <UploadZone
+                        onFile={(f) => handleControlFileUpload(type, f)}
+                        label={uploading === type ? "Uploading..." : `Upload ${CF_LABELS[type]}`}
+                        disabled={uploading !== null}
+                      />
+                    )
                   )}
                 </div>
 
                 {/* Product Mapping — renders right after the PMF card */}
                 {type === "pmf" && (
                   <div className="rounded-xl border border-[var(--color-border)] bg-white p-5">
-                    <div className="mb-4 flex items-center justify-between">
-                      <div className="flex items-center gap-3">
+                    <div className={`flex items-center justify-between ${isCollapsed("pmf-mapping") ? "" : "mb-4"}`}>
+                      <div className="flex items-center gap-2">
+                        {chevronBtn("pmf-mapping")}
                         <h3 className="text-sm font-semibold text-[var(--color-text)]">Product Mapping</h3>
                         {!client.controlFiles.pmf ? (
                           <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-xs font-medium text-zinc-500">Upload PMF first</span>
@@ -601,7 +643,8 @@ export default function ClientDetailPage() {
                       </div>
                     </div>
 
-                    {!client.controlFiles.pmf ? (
+                    {!isCollapsed("pmf-mapping") && (
+                    !client.controlFiles.pmf ? (
                       <p className="text-sm text-[var(--color-text-muted)]">Upload a PMF file above to enable product field mapping.</p>
                     ) : mappingLoading ? (
                       <p className="text-sm text-[var(--color-text-muted)]">Loading mapping...</p>
@@ -657,15 +700,16 @@ export default function ClientDetailPage() {
                           )}
                         </div>
                       </>
-                    )}
+                    ))}
                   </div>
                 )}
 
                 {/* Links Mapping — renders right after the LINKS card */}
                 {type === "links" && (
                   <div className="rounded-xl border border-[var(--color-border)] bg-white p-5">
-                    <div className="mb-4 flex items-center justify-between">
-                      <div className="flex items-center gap-3">
+                    <div className={`flex items-center justify-between ${isCollapsed("links-mapping") ? "" : "mb-4"}`}>
+                      <div className="flex items-center gap-2">
+                        {chevronBtn("links-mapping")}
                         <h3 className="text-sm font-semibold text-[var(--color-text)]">Links Mapping</h3>
                         {!client.controlFiles.links ? (
                           <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-xs font-medium text-zinc-500">Upload Links first</span>
@@ -677,7 +721,8 @@ export default function ClientDetailPage() {
                       </div>
                     </div>
 
-                    {!client.controlFiles.links ? (
+                    {!isCollapsed("links-mapping") && (
+                    !client.controlFiles.links ? (
                       <p className="text-sm text-[var(--color-text-muted)]">Upload a Links file above to enable article mapping.</p>
                     ) : linksMappingLoading ? (
                       <p className="text-sm text-[var(--color-text-muted)]">Loading mapping...</p>
@@ -728,7 +773,7 @@ export default function ClientDetailPage() {
                           )}
                         </div>
                       </>
-                    )}
+                    ))}
                   </div>
                 )}
               </React.Fragment>
