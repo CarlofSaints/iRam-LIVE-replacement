@@ -16,11 +16,11 @@ export async function POST(req: NextRequest) {
   try {
     await requirePermission(req, "manage_statuses");
     const body = await req.json();
-    const { statusCode, conditions, classification, description } = body;
+    const { statusCode, channelId, conditions, classification, description } = body;
 
-    if (!statusCode || !classification) {
+    if (!statusCode || !channelId || !classification) {
       return Response.json(
-        { error: "statusCode and classification are required" },
+        { error: "statusCode, channelId and classification are required" },
         { status: 400, headers: noCacheHeaders() }
       );
     }
@@ -34,6 +34,7 @@ export async function POST(req: NextRequest) {
 
     const scenario = await createStatusScenario({
       statusCode,
+      channelId,
       conditions: conditions ?? {},
       classification,
       description,

@@ -10,6 +10,7 @@ export async function getStatusScenarios(): Promise<StatusScenario[]> {
 
 export async function createStatusScenario(data: {
   statusCode: string;
+  channelId: string;
   conditions: StatusScenario["conditions"];
   classification: "POSITIVE" | "NEGATIVE";
   description?: string;
@@ -19,6 +20,7 @@ export async function createStatusScenario(data: {
   const scenario: StatusScenario = {
     id: uuid(),
     statusCode: data.statusCode.trim().toUpperCase(),
+    channelId: data.channelId,
     conditions: data.conditions,
     classification: data.classification,
     description: data.description,
@@ -32,7 +34,7 @@ export async function createStatusScenario(data: {
 
 export async function updateStatusScenario(
   id: string,
-  updates: Partial<Pick<StatusScenario, "statusCode" | "conditions" | "classification" | "description">>
+  updates: Partial<Pick<StatusScenario, "statusCode" | "channelId" | "conditions" | "classification" | "description">>
 ): Promise<StatusScenario> {
   const all = await getStatusScenarios();
   const idx = all.findIndex((s) => s.id === id);
@@ -40,6 +42,9 @@ export async function updateStatusScenario(
 
   if (updates.statusCode !== undefined) {
     all[idx].statusCode = updates.statusCode.trim().toUpperCase();
+  }
+  if (updates.channelId !== undefined) {
+    all[idx].channelId = updates.channelId;
   }
   if (updates.conditions !== undefined) {
     all[idx].conditions = updates.conditions;

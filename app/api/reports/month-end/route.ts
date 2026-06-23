@@ -149,10 +149,14 @@ export async function GET(req: NextRequest) {
     const ctx = buildDateContext(dateColumns);
 
     // Status classification inputs (Status Reference logic)
-    const [statusDefs, statusScenarios] = await Promise.all([
+    const [statusDefs, allStatusScenarios] = await Promise.all([
       getStatusDefinitions(),
       getStatusScenarios(),
     ]);
+    // Scenarios are per-channel — scope to the channels in this report
+    const statusScenarios = allStatusScenarios.filter((s) =>
+      channelIds.includes(s.channelId)
+    );
 
     // 6. Build all report data (from the filtered row set)
     const salesSummary = buildSalesSummary(reportRows, ctx);

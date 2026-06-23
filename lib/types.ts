@@ -306,6 +306,7 @@ export interface StatusScenarioConditions {
 export interface StatusScenario {
   id: string;
   statusCode: string;         // DISPO status code (normalized uppercase)
+  channelId: string;          // main channel ID this scenario applies to
   conditions: StatusScenarioConditions;
   classification: "POSITIVE" | "NEGATIVE";
   description?: string;

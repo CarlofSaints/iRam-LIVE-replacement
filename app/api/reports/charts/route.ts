@@ -139,7 +139,9 @@ export async function GET(req: NextRequest) {
 
     // 3. Period + analyses
     const ctx = buildDateContext(dateColumns);
-    const [statusDefs, statusScenarios] = await Promise.all([getStatusDefinitions(), getStatusScenarios()]);
+    const [statusDefs, allStatusScenarios] = await Promise.all([getStatusDefinitions(), getStatusScenarios()]);
+    // Scenarios are per-channel — scope to the channels in this report
+    const statusScenarios = allStatusScenarios.filter((s) => channelIds.includes(s.channelId));
     const client = await getClientById(clientId);
 
     const latestMeta = ledgerResults.find(({ meta }) => meta?.reportYear)?.meta;

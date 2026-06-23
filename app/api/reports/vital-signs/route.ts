@@ -87,6 +87,9 @@ export async function GET(req: NextRequest) {
     const relevantStatusDefs = allStatusDefs.filter((s) =>
       channelIds.includes(s.channelId)
     );
+    const relevantScenarios = statusScenarios.filter((s) =>
+      channelIds.includes(s.channelId)
+    );
 
     // 4. Compute vital signs
     const vitalRows = computeVitalSigns(
@@ -95,7 +98,7 @@ export async function GET(req: NextRequest) {
       dateColumns,
       relevantStatusDefs,
       config.otoMultipliers,
-      statusScenarios
+      relevantScenarios
     );
 
     // 6. Build Excel

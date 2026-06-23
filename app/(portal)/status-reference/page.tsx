@@ -41,9 +41,11 @@ export default function StatusReferencePage() {
 
   // Scenarios state
   const [scenarios, setScenarios] = useState<StatusScenario[]>([]);
+  const [showAllChannels, setShowAllChannels] = useState(false);
   const [showAddScenario, setShowAddScenario] = useState(false);
   const [scenarioForm, setScenarioForm] = useState({
     statusCode: "",
+    channelId: "" as string,
     clientStatus: "" as string,
     rangingStatus: "" as string,
     classification: "NEGATIVE" as "POSITIVE" | "NEGATIVE",
@@ -53,11 +55,15 @@ export default function StatusReferencePage() {
   const [editScenarioId, setEditScenarioId] = useState<string | null>(null);
   const [editScenarioForm, setEditScenarioForm] = useState({
     statusCode: "",
+    channelId: "" as string,
     clientStatus: "" as string,
     rangingStatus: "" as string,
     classification: "NEGATIVE" as "POSITIVE" | "NEGATIVE",
     description: "",
   });
+
+  // Main channel id → name lookup (channels state holds main channels)
+  const channelName = (id: string) => channels.find((c) => c.id === id)?.name || "Unassigned";
 
   // All unique status codes across all channels (for scenario dropdown)
   const [allStatusCodes, setAllStatusCodes] = useState<string[]>([]);
@@ -126,6 +132,11 @@ export default function StatusReferencePage() {
 
   const unclassifiedCount = statuses.filter((s) => s.classification === "UNCLASSIFIED").length;
 
+  // Scenarios shown: all channels (when ticked) or only the selected channel
+  const visibleScenarios = showAllChannels
+    ? scenarios
+    : scenarios.filter((sc) => sc.channelId === selectedChannel);
+
   // Add handler
   async function handleAdd(e: FormEvent) {
     e.preventDefault();
@@ -165,6 +176,8 @@ export default function StatusReferencePage() {
     e.preventDefault();
     setScenarioError("");
     if (!scenarioForm.statusCode) { setScenarioError("Status code is required"); return; }
+    const channelId = scenarioForm.channelId || selectedChannel;
+    if (!channelId) { setScenarioError("Channel is required"); return; }
 
     const conditions: Record<string, unknown> = {};
     if (scenarioForm.clientStatus) conditions.clientStatus = scenarioForm.clientStatus;
@@ -174,6 +187,7 @@ export default function StatusReferencePage() {
       method: "POST",
       body: JSON.stringify({
         statusCode: scenarioForm.statusCode,
+        channelId,
         conditions,
         classification: scenarioForm.classification,
         description: scenarioForm.description,
@@ -184,7 +198,7 @@ export default function StatusReferencePage() {
       return;
     }
     setShowAddScenario(false);
-    setScenarioForm({ statusCode: "", clientStatus: "", rangingStatus: "", classification: "NEGATIVE", description: "" });
+    setScenarioForm({ statusCode: "", channelId: "", clientStatus: "", rangingStatus: "", classification: "NEGATIVE", description: "" });
     reloadScenarios();
   }
 
@@ -197,6 +211,7 @@ export default function StatusReferencePage() {
       method: "PUT",
       body: JSON.stringify({
         statusCode: editScenarioForm.statusCode,
+        channelId: editScenarioForm.channelId,
         conditions,
         classification: editScenarioForm.classification,
         description: editScenarioForm.description,
@@ -447,8 +462,11 @@ export default function StatusReferencePage() {
           <div>
             <h2 className="text-xl font-bold text-[var(--color-text)]">Status Scenarios</h2>
             <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-              Conditional classification overrides. When a DISPO status code matches a scenario&apos;s conditions,
-              its classification takes priority over the per-channel definition above.
+              Conditional classification overrides, set <strong>per channel</strong>. When a DISPO status code
+              matches a scenario&apos;s conditions, its classification takes priority over the per-channel definition above.
+              {!showAllChannels && selectedChannel && (
+                <> Showing scenarios for <strong>{channelName(selectedChannel)}</strong>.</>
+              )}
             </p>
           </div>
           {isAdmin && (
@@ -466,6 +484,18 @@ export default function StatusReferencePage() {
           <div className="mb-6 rounded-xl border border-[var(--color-border)] bg-white p-6">
             <form onSubmit={handleAddScenario} className="space-y-3">
               {scenarioError && <div className="rounded-lg bg-red-50 px-4 py-2 text-sm text-red-700">{scenarioError}</div>}
+              <div>
+                <label className="mb-1 block text-xs font-medium text-[var(--color-text-muted)]">Channel</label>
+                <select
+                  value={scenarioForm.channelId || selectedChannel}
+                  onChange={(e) => setScenarioForm({ ...scenarioForm, channelId: e.target.value })}
+                  className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm"
+                >
+                  {channels.map((ch) => (
+                    <option key={ch.id} value={ch.id}>{ch.name}</option>
+                  ))}
+                </select>
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="mb-1 block text-xs font-medium text-[var(--color-text-muted)]">DISPO Status Code</label>
@@ -536,17 +566,36 @@ export default function StatusReferencePage() {
           </div>
         )}
 
+        {/* Show-all-channels toggle */}
+        <div className="mb-3 flex items-center justify-between">
+          <label className="flex cursor-pointer items-center gap-2 text-sm text-[var(--color-text)]">
+            <input
+              type="checkbox"
+              checked={showAllChannels}
+              onChange={(e) => setShowAllChannels(e.target.checked)}
+              className="h-4 w-4 rounded border-[var(--color-border)]"
+            />
+            Show all channels&apos; scenarios
+          </label>
+          <span className="text-xs text-[var(--color-text-muted)]">
+            {visibleScenarios.length} scenario{visibleScenarios.length !== 1 ? "s" : ""}
+            {showAllChannels ? " across all channels" : ` in ${channelName(selectedChannel)}`}
+          </span>
+        </div>
+
         {/* Scenarios table */}
         <div className="rounded-xl border border-[var(--color-border)] bg-white">
-          {scenarios.length === 0 ? (
+          {visibleScenarios.length === 0 ? (
             <div className="px-6 py-8 text-center text-sm text-[var(--color-text-muted)]">
-              No status scenarios configured. Scenarios allow conditional classification based on
-              client status and ranging data.
+              {scenarios.length === 0
+                ? "No status scenarios configured. Scenarios allow conditional classification based on client status and ranging data."
+                : `No scenarios for ${channelName(selectedChannel)}. Tick “Show all channels’ scenarios” to see others, or add one for this channel.`}
             </div>
           ) : (
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-[var(--color-border)] text-left text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
+                  {showAllChannels && <th className="px-6 py-3">Channel</th>}
                   <th className="px-6 py-3">Status Code</th>
                   <th className="px-6 py-3">Client Status</th>
                   <th className="px-6 py-3">Ranging</th>
@@ -556,10 +605,23 @@ export default function StatusReferencePage() {
                 </tr>
               </thead>
               <tbody>
-                {scenarios.map((sc) => (
+                {visibleScenarios.map((sc) => (
                   <tr key={sc.id} className="border-b border-[var(--color-border)] last:border-0">
                     {editScenarioId === sc.id ? (
                       <>
+                        {showAllChannels && (
+                          <td className="px-6 py-3">
+                            <select
+                              value={editScenarioForm.channelId}
+                              onChange={(e) => setEditScenarioForm({ ...editScenarioForm, channelId: e.target.value })}
+                              className="rounded-lg border border-[var(--color-border)] px-2 py-1 text-sm"
+                            >
+                              {channels.map((ch) => (
+                                <option key={ch.id} value={ch.id}>{ch.name}</option>
+                              ))}
+                            </select>
+                          </td>
+                        )}
                         <td className="px-6 py-3">
                           <select
                             value={editScenarioForm.statusCode}
@@ -578,8 +640,9 @@ export default function StatusReferencePage() {
                             className="rounded-lg border border-[var(--color-border)] px-2 py-1 text-sm"
                           >
                             <option value="">Any</option>
-                            <option value="ACTIVE">ACTIVE</option>
-                            <option value="DISCONTINUED">DISCONTINUED</option>
+                            {productStatuses.map((s) => (
+                              <option key={s} value={s}>{s}</option>
+                            ))}
                           </select>
                         </td>
                         <td className="px-6 py-3">
@@ -620,6 +683,9 @@ export default function StatusReferencePage() {
                       </>
                     ) : (
                       <>
+                        {showAllChannels && (
+                          <td className="px-6 py-3 text-[var(--color-text-muted)]">{channelName(sc.channelId)}</td>
+                        )}
                         <td className="px-6 py-3 font-mono font-medium text-[var(--color-text)]">{sc.statusCode}</td>
                         <td className="px-6 py-3 text-[var(--color-text-muted)]">{sc.conditions.clientStatus || "Any"}</td>
                         <td className="px-6 py-3 text-[var(--color-text-muted)]">
@@ -635,6 +701,7 @@ export default function StatusReferencePage() {
                                   setEditScenarioId(sc.id);
                                   setEditScenarioForm({
                                     statusCode: sc.statusCode,
+                                    channelId: sc.channelId || selectedChannel,
                                     clientStatus: sc.conditions.clientStatus || "",
                                     rangingStatus: sc.conditions.rangingStatus === true ? "true" : sc.conditions.rangingStatus === false ? "false" : "",
                                     classification: sc.classification,
