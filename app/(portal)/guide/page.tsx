@@ -131,6 +131,37 @@ export default function GuidePage() {
               <li>Load the first DISPO file.</li>
               <li>Run the reports.</li>
             </ol>
+            <Callout tone="warn">
+              <strong>Shared vs. client-specific.</strong> Channels and the store master are{" "}
+              <strong>global</strong> — loaded once and shared by every client. Loading the MAKRO store file creates the
+              MAKRO channel and its stores for the whole system, not just one client. What makes a setup{" "}
+              <em>client-specific</em> is which channels you <strong>assign</strong> to the client, plus that client&apos;s own
+              PMF, Links, vendor numbers, CAM, DISPO data and report settings.
+            </Callout>
+            <div className="overflow-hidden rounded-lg border border-[var(--color-border)]">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-zinc-50 text-left text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+                    <th className="px-4 py-2">Shared across all clients</th>
+                    <th className="px-4 py-2">Specific to one client</th>
+                  </tr>
+                </thead>
+                <tbody className="text-[var(--color-text)]">
+                  <tr className="border-t border-[var(--color-border)]">
+                    <td className="px-4 py-2 align-top">Channels &amp; sub-channels</td>
+                    <td className="px-4 py-2 align-top">Which channels are assigned to the client</td>
+                  </tr>
+                  <tr className="border-t border-[var(--color-border)]">
+                    <td className="px-4 py-2 align-top">Store master (sites)</td>
+                    <td className="px-4 py-2 align-top">PMF, Links, Ranging &amp; other control files</td>
+                  </tr>
+                  <tr className="border-t border-[var(--color-border)]">
+                    <td className="px-4 py-2 align-top">&nbsp;</td>
+                    <td className="px-4 py-2 align-top">Vendor numbers, CAM, DISPO data, report settings</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
             <Callout tone="info">
               The <strong>product data chain</strong> is the heart of it:{" "}
               <code className="rounded bg-white/60 px-1">DISPO Article</code> →{" "}
