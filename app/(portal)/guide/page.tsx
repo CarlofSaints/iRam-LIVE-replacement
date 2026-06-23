@@ -338,10 +338,18 @@ export default function GuidePage() {
               loaded and mapped.
             </Callout>
 
-            <h3 className="pt-2 font-semibold">SharePoint URLs</h3>
+            <h3 className="pt-2 font-semibold">SharePoint Save Folders</h3>
             <p>
-              Optional. The folder URL where this client&apos;s reports are filed, used for the &ldquo;open in SharePoint&rdquo; links.
-              Paste the folder link (starts with <code>https://</code>).
+              Optional, <strong>one folder per report</strong> (Vital Signs, Month-End, and Status Robot when it&apos;s built).
+              When a report is generated, it&apos;s <strong>automatically saved</strong> into that report&apos;s SharePoint folder
+              (and still downloads to your browser). After download you&apos;ll see a &ldquo;saved to SharePoint ✓&rdquo; confirmation,
+              or an error if it couldn&apos;t save.
+            </p>
+            <p>
+              Paste the SharePoint <strong>web</strong> link to the folder (starts with <code>https://</code>) or a
+              server-relative path like <code>/sites/Clients/Shared Documents/…</code>. <strong>Don&apos;t</strong> use a local
+              synced <code>C:\</code> path — the save happens in the cloud, not on your PC. Leave a field blank to skip
+              saving that report.
             </p>
             <p>Click <strong>Save Report Settings</strong> when done.</p>
           </Section>

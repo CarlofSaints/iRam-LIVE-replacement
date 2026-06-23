@@ -10,6 +10,7 @@ import { getStatusScenarios } from "@/lib/statusScenarioData";
 import { computeVitalSigns, getVitalSignsColumnOrder } from "@/lib/vitalSigns";
 import { addLog } from "@/lib/activityLog";
 import { incrementReportCount } from "@/lib/reportCounts";
+import { saveReportToSharePointSafe } from "@/lib/sharepoint";
 
 export const maxDuration = 120;
 
@@ -171,12 +172,16 @@ export async function GET(req: NextRequest) {
     const datePart = `${rYear}${String(rMonth).padStart(2, "0")}Wk${rWeek}`;
     const fileName = `Vital Signs - ${clientName} - ${vendorNum} - ${datePart}.xlsx`;
 
+    // 9. Auto-save to the client's Vital Signs SharePoint folder (best-effort)
+    const spHeaders = await saveReportToSharePointSafe(config.spUrls?.vital_signs, fileName, buf);
+
     return new Response(buf, {
       headers: {
         "Content-Type":
           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "Content-Disposition": `attachment; filename="${fileName}"`,
         "Cache-Control": "no-store",
+        ...spHeaders,
       },
     });
   } catch (err) {

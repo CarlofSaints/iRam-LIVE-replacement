@@ -16,6 +16,14 @@ const CF_LABELS: Record<ControlFileType, string> = {
 };
 const CF_TYPES: ControlFileType[] = ["pmf", "links", "ranging", "custom_sites", "promotions"];
 
+// SharePoint save folder per report type (spUrls key → label). Status Robot is
+// a report that hasn't been built yet — the folder can be configured now.
+const REPORT_SP_FIELDS: { key: string; label: string; note?: string }[] = [
+  { key: "vital_signs", label: "Vital Signs report" },
+  { key: "month_end", label: "Month-End report" },
+  { key: "status_robot", label: "Status Robot report", note: "Coming soon — not yet built" },
+];
+
 export default function ClientDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { user } = useAuth();
@@ -78,7 +86,7 @@ export default function ClientDetailPage() {
   const [rcAlert, setRcAlert] = useState(300);
   const [rcOtoMultipliers, setRcOtoMultipliers] = useState<Record<string, number>>({});
   const [rcCategories, setRcCategories] = useState<string[]>([]);
-  const [rcSpUrl, setRcSpUrl] = useState("");
+  const [rcSpUrls, setRcSpUrls] = useState<Record<string, string>>({});
   const [rcSaving, setRcSaving] = useState(false);
 
   async function load() {
@@ -305,7 +313,7 @@ export default function ClientDetailPage() {
         setRcOos(cfg.dscBrackets.oosThreshold);
         setRcAlert(cfg.dscBrackets.alertThreshold);
         setRcOtoMultipliers(cfg.otoMultipliers ?? {});
-        setRcSpUrl(cfg.spUrls?.vital_signs ?? "");
+        setRcSpUrls(cfg.spUrls ?? {});
       }
       if (pmRes.ok) {
         const pmData = await pmRes.json();
@@ -323,7 +331,11 @@ export default function ClientDetailPage() {
     const config: ReportConfig = {
       dscBrackets: { oosThreshold: rcOos, alertThreshold: rcAlert },
       otoMultipliers: rcOtoMultipliers,
-      spUrls: { vital_signs: rcSpUrl },
+      spUrls: Object.fromEntries(
+        Object.entries(rcSpUrls)
+          .map(([k, v]) => [k, (v ?? "").trim()])
+          .filter(([, v]) => v !== "")
+      ),
     };
     const res = await authFetch("/api/reports/config", {
       method: "PUT",
@@ -878,11 +890,27 @@ export default function ClientDetailPage() {
             )}
           </div>
           <div className="mb-5">
-            <span className="mb-2 block text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]">SharePoint URLs</span>
-            <div>
-              <label className="mb-1 block text-xs text-[var(--color-text-muted)]">Vital Signs SP Folder URL</label>
-              <input type="text" value={rcSpUrl} onChange={(e) => setRcSpUrl(e.target.value)} placeholder="https://..."
-                className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm" />
+            <span className="mb-1 block text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]">SharePoint Save Folders</span>
+            <p className="mb-3 text-xs text-[var(--color-text-muted)]">
+              Each report is saved automatically to its folder when generated. Paste the SharePoint{" "}
+              <strong>web</strong> link to the folder (or a server-relative path like{" "}
+              <code>/sites/Clients/Shared Documents/…</code>) — not a local <code>C:\</code> path. Leave blank to skip saving.
+            </p>
+            <div className="space-y-3">
+              {REPORT_SP_FIELDS.map(({ key, label, note }) => (
+                <div key={key}>
+                  <label className="mb-1 block text-xs text-[var(--color-text-muted)]">
+                    {label}{note && <span className="ml-2 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700">{note}</span>}
+                  </label>
+                  <input
+                    type="text"
+                    value={rcSpUrls[key] ?? ""}
+                    onChange={(e) => setRcSpUrls((prev) => ({ ...prev, [key]: e.target.value }))}
+                    placeholder="https://iramsa.sharepoint.com/sites/…  or  /sites/…/Shared Documents/…"
+                    className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm"
+                  />
+                </div>
+              ))}
             </div>
           </div>
           <button onClick={saveReportConfig} disabled={rcSaving}

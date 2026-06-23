@@ -282,6 +282,15 @@ export default function ReportsPage() {
     setSelectedSubIds([]);
   }
 
+  // Build a toast suffix describing the SharePoint auto-save result (from response headers)
+  function spSaveSuffix(res: Response): string {
+    const saved = res.headers.get("X-SP-Saved");
+    if (!saved) return ""; // no SP folder configured for this report
+    if (saved === "ok") return " · saved to SharePoint ✓";
+    const err = res.headers.get("X-SP-Error");
+    return ` · SharePoint save failed${err ? `: ${decodeURIComponent(err)}` : ""}`;
+  }
+
   async function downloadVitalSigns() {
     if (!clientId || effectiveChannelIds.length === 0) return;
     setDownloading(true);
@@ -318,8 +327,8 @@ export default function ReportsPage() {
       a.remove();
       URL.revokeObjectURL(url);
 
-      setToast("Report downloaded");
-      setTimeout(() => setToast(""), 3000);
+      setToast("Report downloaded" + spSaveSuffix(res));
+      setTimeout(() => setToast(""), 5000);
     } catch {
       setToast("Download failed");
       setTimeout(() => setToast(""), 4000);
@@ -370,8 +379,8 @@ export default function ReportsPage() {
       a.remove();
       URL.revokeObjectURL(url);
 
-      setToast("Month-End report downloaded");
-      setTimeout(() => setToast(""), 3000);
+      setToast("Month-End report downloaded" + spSaveSuffix(res));
+      setTimeout(() => setToast(""), 5000);
     } catch {
       setToast("Download failed");
       setTimeout(() => setToast(""), 4000);

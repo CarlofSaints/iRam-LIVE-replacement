@@ -26,6 +26,7 @@ import { getMergedStores } from "@/lib/storeFileData";
 import { getProductLookup } from "@/lib/productMasterData";
 import { getControlFileData } from "@/lib/controlFileData";
 import { getClientLogo, getChannelLogo } from "@/lib/logoData";
+import { saveReportToSharePointSafe } from "@/lib/sharepoint";
 
 export const maxDuration = 120;
 
@@ -259,12 +260,17 @@ export async function GET(req: NextRequest) {
     const datePart = `${rYear}${String(rMonth).padStart(2, "0")}Wk${rWeek}`;
     const fileName = `Month End - ${clientName || "Report"} - ${vendorNum} - ${datePart}.xlsx`;
 
-    return new Response(new Uint8Array(buf), {
+    const fileBytes = new Uint8Array(buf);
+    // Auto-save to the client's Month-End SharePoint folder (best-effort)
+    const spHeaders = await saveReportToSharePointSafe(config.spUrls?.month_end, fileName, fileBytes);
+
+    return new Response(fileBytes, {
       headers: {
         "Content-Type":
           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "Content-Disposition": `attachment; filename="${fileName}"`,
         "Cache-Control": "no-store",
+        ...spHeaders,
       },
     });
   } catch (err) {
