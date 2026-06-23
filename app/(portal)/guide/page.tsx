@@ -112,6 +112,28 @@ function Section({ id, title, children }: { id: string; title: string; children:
 }
 
 export default function GuidePage() {
+  const [activeId, setActiveId] = useState<string>(SECTIONS[0].id);
+
+  // Scroll-spy: highlight the TOC item for the section currently in view
+  useEffect(() => {
+    const els = SECTIONS
+      .map((s) => document.getElementById(s.id))
+      .filter((el): el is HTMLElement => el !== null);
+    if (els.length === 0) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((e) => e.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+        if (visible.length > 0) setActiveId(visible[0].target.id);
+      },
+      { rootMargin: "0px 0px -65% 0px", threshold: 0 }
+    );
+    els.forEach((el) => observer.observe(el));
+    return () => observer.disconnect();
+  }, []);
+
   return (
     <div className="p-8">
       <div className="mb-6">
@@ -129,13 +151,24 @@ export default function GuidePage() {
               On this page
             </div>
             <ul className="space-y-1">
-              {SECTIONS.map((s) => (
-                <li key={s.id}>
-                  <a href={`#${s.id}`} className="block rounded-md px-2 py-1 text-sm text-[var(--color-text-muted)] hover:bg-zinc-100 hover:text-[var(--color-text)]">
-                    {s.label}
-                  </a>
-                </li>
-              ))}
+              {SECTIONS.map((s) => {
+                const active = s.id === activeId;
+                return (
+                  <li key={s.id}>
+                    <a
+                      href={`#${s.id}`}
+                      aria-current={active ? "true" : undefined}
+                      className={`block rounded-md px-2 py-1 text-sm transition-colors ${
+                        active
+                          ? "bg-[var(--color-primary)]/10 font-medium text-[var(--color-primary)]"
+                          : "text-[var(--color-text-muted)] hover:bg-zinc-100 hover:text-[var(--color-text)]"
+                      }`}
+                    >
+                      {s.label}
+                    </a>
+                  </li>
+                );
+              })}
             </ul>
           </div>
         </nav>
