@@ -75,31 +75,99 @@ function encodeShareUrl(url: string): string {
   return "u!" + b64.replace(/=+$/, "").replace(/\//g, "_").replace(/\+/g, "-");
 }
 
-async function resolveFolder(
+function authHeaders(token: string) {
+  return { Authorization: `Bearer ${token}` };
+}
+
+async function errText(res: Response): Promise<string> {
+  return (await res.text().catch(() => "")).slice(0, 200);
+}
+
+// Method 1 — resolve any sharing/folder URL to a driveItem via /shares.
+// Works well for "Copy link" share URLs (the /:f:/s/… form).
+async function resolveViaShares(
   folderUrl: string,
   token: string
 ): Promise<{ driveId: string; itemId: string }> {
   const share = encodeShareUrl(toAbsoluteUrl(folderUrl));
   const res = await fetch(
-    `${GRAPH}/shares/${share}/driveItem?$select=id,name,folder,parentReference`,
-    { headers: { Authorization: `Bearer ${token}` } }
+    `${GRAPH}/shares/${share}/driveItem?$select=id,parentReference`,
+    { headers: authHeaders(token) }
   );
-  if (!res.ok) {
-    const txt = await res.text().catch(() => "");
-    throw new Error(
-      `Could not resolve SharePoint folder (${res.status}). Check the folder URL and that the app has access. ${txt.slice(0, 200)}`
-    );
-  }
-  const item = (await res.json()) as {
-    id?: string;
-    folder?: unknown;
-    parentReference?: { driveId?: string };
-  };
+  if (!res.ok) throw new Error(`/shares ${res.status}: ${await errText(res)}`);
+  const item = (await res.json()) as { id?: string; parentReference?: { driveId?: string } };
   const driveId = item.parentReference?.driveId;
-  if (!item.id || !driveId) {
-    throw new Error("SharePoint URL did not resolve to a folder in a document library.");
-  }
+  if (!item.id || !driveId) throw new Error("/shares did not return a drive item");
   return { driveId, itemId: item.id };
+}
+
+// Method 2 — resolve by site + document library + path. Handles browser "view"
+// URLs (…/AllItems.aspx?id=%2Fsites%2F…) and plain path URLs that /shares rejects.
+async function resolveViaSite(
+  folderUrl: string,
+  token: string
+): Promise<{ driveId: string; itemId: string }> {
+  const abs = new URL(toAbsoluteUrl(folderUrl));
+  const host = abs.host;
+  // The folder's server-relative path: the ?id= param if present (view URLs),
+  // otherwise the URL pathname.
+  const serverRel = decodeURIComponent(abs.searchParams.get("id") ?? abs.pathname).replace(/\/+$/, "");
+  const segs = serverRel.split("/").filter(Boolean);
+  const sitePath = segs[0] === "sites" || segs[0] === "teams" ? `/${segs[0]}/${segs[1]}` : "";
+
+  // Site id
+  const siteRes = await fetch(`${GRAPH}/sites/${host}${sitePath ? `:${sitePath}` : ""}?$select=id`, {
+    headers: authHeaders(token),
+  });
+  if (!siteRes.ok) throw new Error(`/sites ${siteRes.status}: ${await errText(siteRes)}`);
+  const siteId = ((await siteRes.json()) as { id?: string }).id;
+  if (!siteId) throw new Error("/sites returned no id");
+
+  // Find the document library (drive) whose webUrl is a prefix of the folder URL
+  const drivesRes = await fetch(`${GRAPH}/sites/${siteId}/drives?$select=id,webUrl`, {
+    headers: authHeaders(token),
+  });
+  if (!drivesRes.ok) throw new Error(`/drives ${drivesRes.status}: ${await errText(drivesRes)}`);
+  const drives = ((await drivesRes.json()) as { value?: { id: string; webUrl: string }[] }).value ?? [];
+
+  const folderAbs = `https://${host}${serverRel}`.replace(/\/+$/, "");
+  let driveId = "";
+  let rel = "";
+  for (const d of drives) {
+    const w = decodeURIComponent(d.webUrl).replace(/\/+$/, "");
+    if (folderAbs === w) { driveId = d.id; rel = ""; break; }
+    if (folderAbs.startsWith(w + "/")) { driveId = d.id; rel = folderAbs.slice(w.length + 1); break; }
+  }
+  if (!driveId) throw new Error("no document library matched the folder path");
+
+  // Resolve the folder item (root, or by path within the library)
+  const itemUrl = rel
+    ? `${GRAPH}/drives/${driveId}/root:/${rel.split("/").map(encodeURIComponent).join("/")}?$select=id`
+    : `${GRAPH}/drives/${driveId}/root?$select=id`;
+  const itemRes = await fetch(itemUrl, { headers: authHeaders(token) });
+  if (!itemRes.ok) throw new Error(`/drives item ${itemRes.status}: ${await errText(itemRes)}`);
+  const itemId = ((await itemRes.json()) as { id?: string }).id;
+  if (!itemId) throw new Error("folder path returned no item id");
+  return { driveId, itemId };
+}
+
+async function resolveFolder(
+  folderUrl: string,
+  token: string
+): Promise<{ driveId: string; itemId: string }> {
+  try {
+    return await resolveViaShares(folderUrl, token);
+  } catch (e1) {
+    try {
+      return await resolveViaSite(folderUrl, token);
+    } catch (e2) {
+      const m1 = e1 instanceof Error ? e1.message : String(e1);
+      const m2 = e2 instanceof Error ? e2.message : String(e2);
+      throw new Error(
+        `Could not resolve SharePoint folder. Check the folder link and the app's access. [${m1}] [${m2}]`
+      );
+    }
+  }
 }
 
 /**
