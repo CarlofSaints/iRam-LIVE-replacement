@@ -65,6 +65,60 @@ export async function sendWelcomeEmail(params: {
   });
 }
 
+export async function sendCredentialsEmail(params: {
+  to: string;
+  name: string;
+  email: string;
+  password: string;
+  forcePasswordChange: boolean;
+}): Promise<void> {
+  const resend = getResend();
+  const siteUrl = getSiteUrl();
+  // Direct (non-Hub) login form, so client accounts aren't bounced to Hub SSO.
+  const loginUrl = `${siteUrl}/login?local=true`;
+
+  const pwNote = params.forcePasswordChange
+    ? `<p style="margin:12px 0;padding:10px 14px;background:#FFF5F5;border-left:4px solid #E04E2A;border-radius:4px;font-size:13px;color:#C53030;">
+        For your security, you will be prompted to set a new password on your next login.
+      </p>`
+    : "";
+
+  await resend.emails.send({
+    from: FROM,
+    to: params.to,
+    subject: "Your iRam LIVE login details",
+    html: `
+      <div style="font-family:Arial,Helvetica,sans-serif;max-width:600px;margin:0 auto;background:#ffffff;">
+        <div style="background:#7CC042;padding:28px 32px;text-align:center;border-radius:8px 8px 0 0;">
+          <h1 style="color:#ffffff;font-size:22px;margin:0;font-weight:700;">iRam LIVE</h1>
+          <p style="color:rgba(255,255,255,0.85);font-size:14px;margin:8px 0 0;">OuterJoin</p>
+        </div>
+        <div style="padding:32px;border:1px solid #E2E8F0;border-top:none;border-radius:0 0 8px 8px;">
+          <p style="font-size:15px;color:#2D3748;margin:0 0 16px;">Hi ${params.name},</p>
+          <p style="font-size:14px;color:#4A5568;margin:0 0 24px;line-height:1.6;">
+            Here are your login details for the iRam LIVE portal. Your password has been reset to the temporary one below.
+          </p>
+          <div style="background:#F7FAFC;border:1px solid #E2E8F0;border-radius:8px;padding:20px;margin-bottom:24px;">
+            <p style="font-size:12px;text-transform:uppercase;letter-spacing:0.5px;color:#718096;margin:0 0 12px;font-weight:600;">Your Login Details</p>
+            <table style="width:100%;border-collapse:collapse;">
+              <tr><td style="padding:6px 0;font-size:13px;color:#718096;width:80px;">Email</td><td style="padding:6px 0;font-size:14px;color:#2D3748;font-weight:600;">${params.email}</td></tr>
+              <tr><td style="padding:6px 0;font-size:13px;color:#718096;">Password</td><td style="padding:6px 0;font-size:14px;color:#2D3748;font-family:monospace;font-weight:600;">${params.password}</td></tr>
+            </table>
+          </div>
+          ${pwNote}
+          <div style="text-align:center;margin:28px 0;">
+            <a href="${loginUrl}" style="display:inline-block;padding:14px 36px;background:#7CC042;color:#ffffff;text-decoration:none;border-radius:8px;font-size:15px;font-weight:600;">Log In</a>
+            <p style="margin:10px 0 0;font-size:12px;color:#A0AEC0;">${loginUrl}</p>
+          </div>
+          <div style="margin-top:32px;padding-top:20px;border-top:1px solid #E2E8F0;text-align:center;">
+            <p style="font-size:12px;color:#A0AEC0;margin:0;">Powered by <strong style="color:#718096;">OuterJoin</strong></p>
+          </div>
+        </div>
+      </div>
+    `,
+  });
+}
+
 export async function sendMissingProductsEmail(params: {
   to: string[];
   clientName: string;

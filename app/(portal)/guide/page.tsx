@@ -374,13 +374,14 @@ export default function GuidePage() {
                 <em>&ldquo;Out of Stock&rdquo;</em>.
               </li>
               <li>
-                <strong>Alert Threshold</strong> (default <strong>300</strong>) — anything at or above this many days is
+                <strong>Alert Threshold</strong> (default <strong>90</strong>) — anything at or above this many days is
                 flagged <em>&ldquo;ALERT&rdquo;</em> (severely overstocked).
               </li>
             </ul>
             <p>
-              The bands in between (0–10, 10–90, 90–150, 150–210, 210–Alert) are fixed. Most clients can leave these at the
-              defaults unless the category behaves very differently.
+              The bands in between (0–10, 10–90, 90–150, 150–210, 210–Alert) are fixed, but any band at or above the Alert
+              Threshold is superseded by &ldquo;ALERT&rdquo; (so at the default of 90, anything 90+ days reads as ALERT). Most
+              clients can leave these at the defaults unless the category behaves very differently.
             </p>
 
             <h3 className="pt-2 font-semibold">OTO Multipliers (per category)</h3>

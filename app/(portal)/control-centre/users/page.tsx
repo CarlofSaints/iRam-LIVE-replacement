@@ -17,6 +17,119 @@ export default function UsersPage() {
   const [error, setError] = useState("");
   const [editId, setEditId] = useState<string | null>(null);
 
+  // ── Super-admin credential management ──
+  const isSuperAdmin = me?.role === "super_admin";
+  const [pwModalUser, setPwModalUser] = useState<UserSafe | null>(null);
+  const [pwMode, setPwMode] = useState<"set" | "generate">("generate");
+  const [pwValue, setPwValue] = useState("");
+  const [pwForce, setPwForce] = useState(true);
+  const [pwEmail, setPwEmail] = useState(true);
+  const [pwError, setPwError] = useState("");
+  const [busy, setBusy] = useState<string | null>(null); // userId+action being run
+  const [result, setResult] = useState<{
+    name: string;
+    email: string;
+    action: string;
+    password?: string;
+    emailed?: boolean;
+    emailError?: string;
+    error?: boolean;
+    message: string;
+  } | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  async function callCreds(payload: Record<string, unknown>) {
+    const res = await authFetch("/api/users/credentials", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok, data } as { ok: boolean; data: Record<string, unknown> };
+  }
+
+  function openPwModal(u: UserSafe) {
+    setPwModalUser(u);
+    setPwMode("generate");
+    setPwValue("");
+    setPwForce(true);
+    setPwEmail(true);
+    setPwError("");
+  }
+
+  async function submitPw() {
+    const u = pwModalUser;
+    if (!u) return;
+    setPwError("");
+    const payload: Record<string, unknown> =
+      pwMode === "set"
+        ? { action: "set-password", userId: u.id, password: pwValue, forcePasswordChange: pwForce, sendEmail: pwEmail }
+        : { action: "reset-password", userId: u.id, forcePasswordChange: pwForce, sendEmail: pwEmail };
+    if (pwMode === "set" && pwValue.trim().length < 6) {
+      setPwError("Password must be at least 6 characters");
+      return;
+    }
+    setBusy("pw");
+    const { ok, data } = await callCreds(payload);
+    setBusy(null);
+    if (!ok) {
+      setPwError((data.error as string) || "Failed");
+      return;
+    }
+    setPwModalUser(null);
+    setCopied(false);
+    setResult({
+      name: u.name,
+      email: u.email,
+      action: pwMode === "set" ? "set-password" : "reset-password",
+      password: data.password as string | undefined,
+      emailed: data.emailed as boolean | undefined,
+      emailError: data.emailError as string | undefined,
+      message:
+        pwMode === "set"
+          ? `Password updated for ${u.name}.${pwEmail ? (data.emailed ? " Login details emailed." : " But the email could not be sent.") : ""}`
+          : `New temporary password generated for ${u.name}.${data.emailed ? ` Emailed to ${u.email}.` : " Email could not be sent — share the password below."}`,
+    });
+    load();
+  }
+
+  async function quickAction(u: UserSafe, action: "reinvite" | "send-credentials") {
+    const verb = action === "reinvite" ? "re-invite" : "send login details to";
+    if (
+      !confirm(
+        `This generates a NEW temporary password for ${u.name} and will ${verb} them by email. Their current password will stop working. Continue?`,
+      )
+    )
+      return;
+    setBusy(u.id + action);
+    const { ok, data } = await callCreds({ action, userId: u.id });
+    setBusy(null);
+    if (!ok) {
+      setResult({ name: u.name, email: u.email, action, error: true, message: (data.error as string) || "Failed" });
+      return;
+    }
+    setCopied(false);
+    setResult({
+      name: u.name,
+      email: u.email,
+      action,
+      password: data.password as string | undefined,
+      emailed: data.emailed as boolean | undefined,
+      emailError: data.emailError as string | undefined,
+      message: data.emailed
+        ? `${action === "reinvite" ? "Invite" : "Login details"} emailed to ${u.email}.`
+        : `Email could NOT be sent${data.emailError ? ` (${data.emailError})` : ""} — share the password below manually.`,
+    });
+    load();
+  }
+
+  function copyPassword() {
+    if (!result?.password) return;
+    navigator.clipboard?.writeText(result.password).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
+
   async function load() {
     const res = await authFetch("/api/users");
     if (res.ok) setUsers(await res.json());
@@ -135,6 +248,111 @@ export default function UsersPage() {
         </div>
       )}
 
+      {result && (
+        <div
+          className={`mb-6 rounded-xl border p-4 ${
+            result.error ? "border-red-200 bg-red-50" : "border-green-200 bg-green-50"
+          }`}
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex-1">
+              <p className={`text-sm font-medium ${result.error ? "text-red-700" : "text-green-800"}`}>
+                {result.message}
+              </p>
+              {result.password && (
+                <div className="mt-3 flex items-center gap-2">
+                  <span className="text-xs text-[var(--color-text-muted)]">Temporary password:</span>
+                  <code className="rounded bg-white px-2 py-1 text-sm font-semibold text-[var(--color-text)] ring-1 ring-[var(--color-border)]">
+                    {result.password}
+                  </code>
+                  <button
+                    onClick={copyPassword}
+                    className="rounded-lg border border-[var(--color-border)] bg-white px-2.5 py-1 text-xs font-medium text-[var(--color-text)] hover:bg-zinc-50"
+                  >
+                    {copied ? "Copied!" : "Copy"}
+                  </button>
+                </div>
+              )}
+              {result.password && (
+                <p className="mt-2 text-xs text-[var(--color-text-muted)]">
+                  Shown once — copy it now if you need to share it manually. It is stored only as a hash and cannot be retrieved again.
+                </p>
+              )}
+            </div>
+            <button onClick={() => setResult(null)} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
+      {pwModalUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-xl border border-[var(--color-border)] bg-white p-6 shadow-xl">
+            <h2 className="mb-1 text-base font-semibold text-[var(--color-text)]">Reset password</h2>
+            <p className="mb-4 text-sm text-[var(--color-text-muted)]">
+              {pwModalUser.name} <span className="text-xs">({pwModalUser.email})</span>
+            </p>
+            {pwError && <div className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{pwError}</div>}
+
+            <div className="mb-4 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setPwMode("generate")}
+                className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium ${
+                  pwMode === "generate" ? "border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"
+                }`}
+              >
+                Generate random
+              </button>
+              <button
+                type="button"
+                onClick={() => setPwMode("set")}
+                className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium ${
+                  pwMode === "set" ? "border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"
+                }`}
+              >
+                Set specific
+              </button>
+            </div>
+
+            {pwMode === "set" && (
+              <input
+                placeholder="New password (min 6 chars)"
+                value={pwValue}
+                onChange={(e) => setPwValue(e.target.value)}
+                className="mb-4 w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm"
+              />
+            )}
+
+            <label className="mb-2 flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={pwForce} onChange={(e) => setPwForce(e.target.checked)} />
+              Force password change on next login
+            </label>
+            <label className="mb-5 flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={pwEmail} onChange={(e) => setPwEmail(e.target.checked)} />
+              Email the new login details to the user
+            </label>
+
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setPwModalUser(null)}
+                className="rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm font-medium text-[var(--color-text-muted)] hover:bg-zinc-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={submitPw}
+                disabled={busy === "pw"}
+                className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)] disabled:opacity-50"
+              >
+                {busy === "pw" ? "Working…" : pwMode === "set" ? "Set password" : "Generate & apply"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="rounded-xl border border-[var(--color-border)] bg-white">
         {loading ? (
           <div className="px-6 py-8 text-center text-sm text-[var(--color-text-muted)]">Loading...</div>
@@ -174,12 +392,23 @@ export default function UsersPage() {
                       )}
                     </td>
                     <td className="px-6 py-3">
-                      <div className="flex gap-2">
+                      <div className="flex flex-wrap gap-x-3 gap-y-1">
                         <button onClick={() => startEdit(u)} className="text-xs text-[var(--color-primary)] hover:underline">Edit</button>
                         {u.id !== me?.userId && (
                           <button onClick={() => toggleActive(u)} className="text-xs text-[var(--color-text-muted)] hover:underline">
                             {u.active ? "Deactivate" : "Activate"}
                           </button>
+                        )}
+                        {isSuperAdmin && (
+                          <>
+                            <button onClick={() => openPwModal(u)} className="text-xs text-[var(--color-primary)] hover:underline">Reset PW</button>
+                            <button onClick={() => quickAction(u, "reinvite")} disabled={busy === u.id + "reinvite"} className="text-xs text-[var(--color-primary)] hover:underline disabled:opacity-50">
+                              {busy === u.id + "reinvite" ? "Sending…" : "Re-invite"}
+                            </button>
+                            <button onClick={() => quickAction(u, "send-credentials")} disabled={busy === u.id + "send-credentials"} className="text-xs text-[var(--color-primary)] hover:underline disabled:opacity-50">
+                              {busy === u.id + "send-credentials" ? "Sending…" : "Send creds"}
+                            </button>
+                          </>
                         )}
                       </div>
                     </td>

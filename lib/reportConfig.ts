@@ -8,7 +8,7 @@ import { readJson, writeJson } from "./blob";
 
 export interface DSCBrackets {
   oosThreshold: number;   // below this = "Out of Stock" (default 2)
-  alertThreshold: number; // at or above this = "ALERT" (default 300)
+  alertThreshold: number; // at or above this = "ALERT" (default 90)
 }
 
 export interface ReportConfig {
@@ -21,7 +21,7 @@ export interface ReportConfig {
 
 export const DEFAULT_DSC_BRACKETS: DSCBrackets = {
   oosThreshold: 2,
-  alertThreshold: 300,
+  alertThreshold: 90,
 };
 
 const DEFAULT_CONFIG: ReportConfig = {
@@ -64,10 +64,13 @@ export async function saveReportConfig(
 
 export function classifyDSC(actDsc: number, brackets: DSCBrackets): string {
   if (actDsc < brackets.oosThreshold) return "Out of Stock";
+  // Anything at or above the alert threshold is an ALERT. Checked first so the
+  // threshold actually governs (lowering it to 90 flags 90+ days, not just 210+).
+  // Behaviour-preserving for the legacy 300 default (210-300 band still shown below).
+  if (actDsc >= brackets.alertThreshold) return "ALERT";
   if (actDsc < 10) return "0-10";
   if (actDsc < 90) return "10-90";
   if (actDsc < 150) return "90-150";
   if (actDsc < 210) return "150-210";
-  if (actDsc < brackets.alertThreshold) return `210-${brackets.alertThreshold}`;
-  return "ALERT";
+  return `210-${brackets.alertThreshold}`;
 }

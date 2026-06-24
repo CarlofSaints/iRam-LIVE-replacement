@@ -77,13 +77,14 @@ export async function updateUser(
 
 export async function setUserPassword(
   userId: string,
-  newPassword: string
+  newPassword: string,
+  forceChange = false
 ): Promise<void> {
   const users = await getUsers();
   const idx = users.findIndex((u) => u.id === userId);
   if (idx === -1) throw new Error("User not found");
   users[idx].password = await bcrypt.hash(newPassword, 10);
-  users[idx].forcePasswordChange = false;
+  users[idx].forcePasswordChange = forceChange;
   await writeJson(USERS_KEY, users);
 }
 

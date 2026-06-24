@@ -58,6 +58,7 @@ export default function ClientDetailPage() {
   const [logo, setLogo] = useState<string | null>(null);
   const [logoBusy, setLogoBusy] = useState(false);
   const [uploading, setUploading] = useState<ControlFileType | null>(null);
+  const [downloading, setDownloading] = useState<ControlFileType | null>(null);
   const [toast, setToast] = useState("");
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -83,7 +84,7 @@ export default function ClientDetailPage() {
 
   // Report config state
   const [rcOos, setRcOos] = useState(2);
-  const [rcAlert, setRcAlert] = useState(300);
+  const [rcAlert, setRcAlert] = useState(90);
   const [rcOtoMultipliers, setRcOtoMultipliers] = useState<Record<string, number>>({});
   const [rcCategories, setRcCategories] = useState<string[]>([]);
   const [rcSpUrls, setRcSpUrls] = useState<Record<string, string>>({});
@@ -348,6 +349,38 @@ export default function ClientDetailPage() {
     }
     setTimeout(() => setToast(""), 3000);
     setRcSaving(false);
+  }
+
+  async function handleControlFileDownload(type: ControlFileType) {
+    setDownloading(type);
+    try {
+      const res = await authFetch(`/api/clients/${id}/control-files/${type}/download`);
+      if (!res.ok) {
+        let msg = "Download failed";
+        try { msg = (await res.json()).error || msg; } catch { /* non-JSON */ }
+        setToast(msg);
+        setTimeout(() => setToast(""), 3000);
+        return;
+      }
+      const blob = await res.blob();
+      // Derive filename from the Content-Disposition header (falls back to type).
+      const disp = res.headers.get("Content-Disposition") || "";
+      const match = disp.match(/filename="?([^"]+)"?/i);
+      const fileName = match?.[1] || `${type}.xlsx`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setToast("Download failed");
+      setTimeout(() => setToast(""), 3000);
+    } finally {
+      setDownloading(null);
+    }
   }
 
   async function handleControlFileDelete(type: ControlFileType) {
@@ -628,8 +661,16 @@ export default function ClientDetailPage() {
                   </div>
                   {!isCollapsed(type) && (
                     meta ? (
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-3">
                         <span className="text-xs text-[var(--color-text-muted)]">{meta.fileName}</span>
+                        <button
+                          onClick={() => handleControlFileDownload(type)}
+                          disabled={downloading === type}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-white px-3 py-1.5 text-xs font-medium text-[var(--color-primary)] hover:bg-zinc-50 disabled:opacity-50"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
+                          {downloading === type ? "Preparing…" : "Download current file"}
+                        </button>
                       </div>
                     ) : (
                       <UploadZone
