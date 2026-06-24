@@ -33,6 +33,7 @@ export const ALL_PERMISSIONS = [
   { key: "view_uploads" as const, label: "View Uploads" },
   { key: "view_activity_log" as const, label: "View Activity Log" },
   { key: "view_charts" as const, label: "View Charts" },
+  { key: "download_templates" as const, label: "Download Control File Templates" },
   { key: "export_data" as const, label: "Export Data" },
 ] as const;
 
@@ -59,7 +60,7 @@ export const ROLE_DEFINITIONS: RoleDefinition[] = [
     permissions: [
       "manage_users", "manage_channels", "manage_clients", "manage_cams",
       "manage_store_files", "manage_statuses", "upload_data", "manage_control_files",
-      "delete_uploads", "view_dashboard", "view_uploads", "view_activity_log", "view_charts", "export_data",
+      "delete_uploads", "view_dashboard", "view_uploads", "view_activity_log", "view_charts", "download_templates", "export_data",
     ],
   },
   {
@@ -67,7 +68,7 @@ export const ROLE_DEFINITIONS: RoleDefinition[] = [
     label: "CAM",
     description: "Upload data and manage client control files",
     permissions: [
-      "upload_data", "manage_control_files", "view_dashboard", "view_uploads", "view_charts",
+      "upload_data", "manage_control_files", "view_dashboard", "view_uploads", "view_charts", "download_templates",
     ],
   },
   {

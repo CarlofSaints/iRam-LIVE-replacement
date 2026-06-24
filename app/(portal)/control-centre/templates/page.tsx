@@ -1,3 +1,7 @@
+"use client";
+
+import { usePermissions } from "@/lib/useAuth";
+
 const TEMPLATES: {
   file: string;
   downloadName: string;
@@ -58,6 +62,24 @@ function DownloadIcon() {
 }
 
 export default function TemplatesPage() {
+  const { can, loaded } = usePermissions();
+
+  if (!loaded) {
+    return <div className="p-8 text-sm text-[var(--color-text-muted)]">Loading…</div>;
+  }
+
+  if (!can("download_templates")) {
+    return (
+      <div className="p-8">
+        <h1 className="text-2xl font-bold text-[var(--color-text)]">Control File Templates</h1>
+        <p className="mt-4 max-w-2xl rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+          You don&apos;t have permission to download control file templates. Ask an administrator to grant the
+          <span className="font-medium"> Download Control File Templates</span> permission to your role.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="p-8">
       <div className="mb-2">

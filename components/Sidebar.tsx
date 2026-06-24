@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useAuth } from "@/lib/useAuth";
+import { useAuth, usePermissions } from "@/lib/useAuth";
 
 interface NavItem {
   label: string;
@@ -148,9 +148,19 @@ function NavLink({ item, collapsed }: { item: NavItem; collapsed?: boolean }) {
 export default function Sidebar() {
   const pathname = usePathname();
   const { user, logout } = useAuth();
+  const { can } = usePermissions();
   const [ccOpen, setCcOpen] = useState(
     pathname.startsWith("/control-centre")
   );
+
+  // Per-permission nav gating. Items not listed here are always shown.
+  const navPermission: Record<string, string> = {
+    "/control-centre/templates": "download_templates",
+  };
+  const visibleControlCentreNav = controlCentreNav.filter((item) => {
+    const perm = navPermission[item.href];
+    return !perm || can(perm);
+  });
 
   return (
     <aside className="flex h-full w-60 flex-col border-r border-[var(--color-border)] bg-white">
@@ -199,7 +209,7 @@ export default function Sidebar() {
           </button>
           {ccOpen && (
             <div className="mt-0.5 space-y-0.5">
-              {controlCentreNav.map((item) => (
+              {visibleControlCentreNav.map((item) => (
                 <NavLink key={item.href} item={item} collapsed />
               ))}
             </div>

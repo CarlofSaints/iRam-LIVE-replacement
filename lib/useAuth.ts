@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import type { SessionPayload } from "./types";
+import type { SessionPayload, RolePermissions, PermissionKey } from "./types";
 import { SYSTEM_ROLES } from "./types";
 
 interface AuthState {
@@ -66,6 +66,39 @@ export function useAuth() {
     hasRole,
     isAuthenticated: !!state.user,
   };
+}
+
+/**
+ * Client-side permission check. Fetches the role→permissions matrix once and
+ * exposes `can(perm)`. Super-admin always passes. `loaded` lets callers avoid a
+ * "no access" flash before the matrix arrives. (Authoritative checks still live
+ * server-side via requirePermission — this only governs UI visibility.)
+ */
+export function usePermissions() {
+  const { user } = useAuth();
+  const [perms, setPerms] = useState<RolePermissions[] | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    authFetch("/api/role-permissions")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (active) setPerms(d as RolePermissions[] | null); })
+      .catch(() => { if (active) setPerms(null); });
+    return () => { active = false; };
+  }, []);
+
+  const can = useCallback(
+    (perm: PermissionKey | string): boolean => {
+      if (!user) return false;
+      if (user.role === "super_admin") return true;
+      if (!perms) return false;
+      const entry = perms.find((p) => p.role === user.role);
+      return entry ? entry.permissions.includes(perm as PermissionKey) : false;
+    },
+    [user, perms],
+  );
+
+  return { can, loaded: user?.role === "super_admin" || perms !== null };
 }
 
 export async function authFetch(
