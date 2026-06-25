@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { requirePermission, handleAuthError } from "@/lib/auth";
 import { getSalesLedger, getSalesLedgerMeta } from "@/lib/salesData";
 import { enrichLedger } from "@/lib/enrichment";
-import { getReportConfig, classifyDSC } from "@/lib/reportConfig";
+import { getReportConfig, classifyDSC, dscBracketLabels } from "@/lib/reportConfig";
 import { getClientById } from "@/lib/clientData";
 import { addLog } from "@/lib/activityLog";
 import { incrementReportCount } from "@/lib/reportCounts";
@@ -17,6 +17,8 @@ import {
   buildPhantomAnalysis,
   buildNumericalDistribution,
   buildOpenToOrder,
+  buildDscSummary,
+  buildDscDetail,
 } from "@/lib/monthEndReport";
 import { buildMonthEndWorkbook } from "@/lib/monthEndExcel";
 import { calcMonthLastSold } from "@/lib/vitalSigns";
@@ -166,6 +168,8 @@ export async function GET(req: NextRequest) {
     const statusSummary = buildStatusSummary(reportRows, dateColumns, statusDefs, statusScenarios);
     const statusDetail = buildStatusDetail(reportRows, dateColumns, statusDefs, statusScenarios);
     const marginAnalysis = buildMarginAnalysis(reportRows);
+    const dscSummary = buildDscSummary(reportRows, dateColumns, dscBracketLabels(config.dscBrackets));
+    const dscDetail = buildDscDetail(reportRows, dateColumns);
 
     // 7. Build period label
     const client = await getClientById(clientId);
@@ -244,6 +248,8 @@ export async function GET(req: NextRequest) {
       clientLogo?.dataUrl,
       channelLogo?.dataUrl,
       otoAnalysis,
+      dscSummary,
+      dscDetail,
     );
 
     // 9. Log activity

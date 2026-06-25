@@ -19,6 +19,8 @@ const REPORT_SHEETS = [
   { key: "sales", label: "Sales" },
   { key: "oos", label: "OOS" },
   { key: "oosDetail", label: "OOS Detail" },
+  { key: "dsc", label: "DSC" },
+  { key: "dscDetail", label: "DSC Detail" },
   { key: "status", label: "Status" },
   { key: "statusDetail", label: "Status Detail" },
   { key: "margin", label: "Margin" },

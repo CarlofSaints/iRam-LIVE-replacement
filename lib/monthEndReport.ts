@@ -631,6 +631,214 @@ export function buildOOSDetail(rows: Row[], dateColumns: string[]): OOSDetailRow
   return detail;
 }
 
+// ── DSC (Days of Stock Cover) distribution ─────────────────────
+//
+// Act DSC = how many days the current stock-on-hand will last at the recent
+// run-rate. The route classifies every row into a bracket (`_dscAlert`) via
+// classifyDSC — from "Out of Stock" (no cover) through to "ALERT" (overstock,
+// ≥ the client's alert threshold). These builders aggregate SOH (the stock
+// actually sitting in each bracket) plus distinct SKU / site counts, so the
+// summary answers "how much of my stock is over-/under-covered, and where".
+//
+// Universe = the OOS base (SKU×store with stock and/or sales). SOH is summed
+// per bracket, so "Out of Stock" naturally contributes ~0 SOH but still carries
+// a line/SKU/site count.
+
+const DSC_BLANK = "(unclassified)";
+
+function dscBracketOf(row: Row): string {
+  const b = String(row["_dscAlert"] ?? "").trim();
+  return b === "" ? DSC_BLANK : b;
+}
+
+export interface DscBracketRow {
+  bracket: string;
+  lines: number;        // SKU×store rows in this bracket
+  skus: number;         // distinct articles
+  sites: number;        // distinct sites
+  soh: number;          // total stock-on-hand sitting in this bracket
+  sohPct: number;       // share of total SOH across all brackets
+}
+
+// Per-entity (category / SKU / store) row: SOH split across the bracket
+// columns, plus distinct counts and a row total.
+export interface DscEntityRow {
+  name: string;
+  skus: number;          // distinct articles in this entity
+  sites: number;         // distinct sites in this entity
+  totalSoh: number;
+  bracketSoh: number[];  // SOH per bracket, aligned to `brackets`
+}
+
+export interface DscSummary {
+  brackets: string[];        // ordered bracket labels (the column/row set)
+  totalSoh: number;
+  totalLines: number;
+  totalSkus: number;         // distinct articles across the whole base
+  totalSites: number;        // distinct sites across the whole base
+  overall: DscBracketRow[];
+  byCategory: DscEntityRow[];
+  bySku: DscEntityRow[];
+  byStore: DscEntityRow[];
+}
+
+export function buildDscSummary(
+  rows: Row[],
+  dateColumns: string[],
+  bracketOrder: string[],
+): DscSummary {
+  // Final ordered bracket set: the configured order, plus any stray label that
+  // actually appears in the data (defensive — never silently drop a bracket).
+  const seen = new Set<string>();
+  for (const row of rows) {
+    if (!classifyOOS(row, dateColumns).inBase) continue;
+    seen.add(dscBracketOf(row));
+  }
+  const brackets = [...bracketOrder.filter((b) => seen.has(b))];
+  for (const b of seen) if (!brackets.includes(b)) brackets.push(b);
+  const bIdx = new Map(brackets.map((b, i) => [b, i]));
+
+  // Overall accumulators (per bracket)
+  const overallAcc = brackets.map(() => ({ lines: 0, soh: 0, skus: new Set<string>(), sites: new Set<string>() }));
+
+  // Entity accumulators: name → { skus, sites, bracketSoh[] }
+  type EntAcc = { skus: Set<string>; sites: Set<string>; bracketSoh: number[]; totalSoh: number };
+  const mkEnt = (): EntAcc => ({ skus: new Set(), sites: new Set(), bracketSoh: brackets.map(() => 0), totalSoh: 0 });
+  const catAcc = new Map<string, EntAcc>();
+  const skuAcc = new Map<string, EntAcc>();
+  const storeAcc = new Map<string, EntAcc>();
+
+  let totalSoh = 0;
+  let totalLines = 0;
+  const allSkus = new Set<string>();
+  const allSites = new Set<string>();
+
+  for (const row of rows) {
+    if (!classifyOOS(row, dateColumns).inBase) continue;
+    const bracket = dscBracketOf(row);
+    const idx = bIdx.get(bracket);
+    if (idx === undefined) continue;
+
+    const sohRaw = parseNum(row["SOH"], 0);
+    const soh = isNaN(sohRaw) ? 0 : Math.max(sohRaw, 0);
+    const article = String(row["Article"] ?? "").trim();
+    const site = String(row["Site"] ?? "").trim();
+    const category = String(row["_category"] || "Unknown");
+    const skuLabel = `${article || String(row["Article Desc"] ?? "")}`.trim() || "Unknown";
+    const skuName = article && row["Article Desc"] ? `${article} — ${row["Article Desc"]}` : skuLabel;
+    const storeName = String(row["_storeName"] || row["Site Name"] || row["Site"] || "Unknown");
+
+    totalLines++;
+    totalSoh += soh;
+    if (article) allSkus.add(article);
+    if (site) allSites.add(site);
+
+    const oa = overallAcc[idx];
+    oa.lines++;
+    oa.soh += soh;
+    if (article) oa.skus.add(article);
+    if (site) oa.sites.add(site);
+
+    const bump = (map: Map<string, EntAcc>, key: string) => {
+      let e = map.get(key);
+      if (!e) { e = mkEnt(); map.set(key, e); }
+      e.bracketSoh[idx] += soh;
+      e.totalSoh += soh;
+      if (article) e.skus.add(article);
+      if (site) e.sites.add(site);
+    };
+    bump(catAcc, category);
+    bump(skuAcc, skuName);
+    bump(storeAcc, storeName);
+  }
+
+  const overall: DscBracketRow[] = brackets.map((bracket, i) => {
+    const a = overallAcc[i];
+    return {
+      bracket,
+      lines: a.lines,
+      skus: a.skus.size,
+      sites: a.sites.size,
+      soh: r2(a.soh),
+      sohPct: totalSoh > 0 ? r2((a.soh / totalSoh) * 100) : 0,
+    };
+  });
+
+  const toEntityRows = (map: Map<string, EntAcc>): DscEntityRow[] =>
+    [...map.entries()]
+      .map(([name, e]) => ({
+        name,
+        skus: e.skus.size,
+        sites: e.sites.size,
+        totalSoh: r2(e.totalSoh),
+        bracketSoh: e.bracketSoh.map(r2),
+      }))
+      .sort((a, b) => b.totalSoh - a.totalSoh);
+
+  return {
+    brackets,
+    totalSoh: r2(totalSoh),
+    totalLines,
+    totalSkus: allSkus.size,
+    totalSites: allSites.size,
+    overall,
+    byCategory: toEntityRows(catAcc),
+    bySku: toEntityRows(skuAcc),
+    byStore: toEntityRows(storeAcc),
+  };
+}
+
+// ── DSC Detail (every in-base SKU×store line, with bracket + Act DSC) ──
+// Sorted by Act DSC descending (overstock first) so the worst cover surfaces;
+// the Excel sheet carries an AutoFilter so a viewer can isolate any bracket.
+
+export interface DscDetailRow {
+  subChannel: string;
+  province: string;
+  category: string;
+  brand: string;
+  article: string;
+  description: string;
+  site: string;
+  siteName: string;
+  soh: number;
+  soo: number;
+  sit: number;
+  actDsc: number;
+  bracket: string;
+  dateLastSold: string;
+}
+
+export function buildDscDetail(rows: Row[], dateColumns: string[]): DscDetailRow[] {
+  const detail: DscDetailRow[] = [];
+
+  for (const row of rows) {
+    if (!classifyOOS(row, dateColumns).inBase) continue;
+    const soh = parseNum(row["SOH"], 0);
+    const actDsc = parseNum(row["Act DSC"], 0);
+
+    detail.push({
+      subChannel: String(row["_storeSubChannel"] || row["_storeChannel"] || ""),
+      province: String(row["_province"] || ""),
+      category: String(row["_category"] || ""),
+      brand: String(row["_brand"] || ""),
+      article: String(row["Article"] ?? ""),
+      description: String(row["Article Desc"] ?? ""),
+      site: String(row["Site"] ?? ""),
+      siteName: String(row["_storeName"] || row["Site Name"] || ""),
+      soh: isNaN(soh) ? 0 : soh,
+      soo: parseNum(row["SOO"], 0) || 0,
+      sit: parseNum(row["SIT"], 0) || 0,
+      actDsc: isNaN(actDsc) ? 0 : actDsc,
+      bracket: dscBracketOf(row),
+      dateLastSold: String(row["_dateLastSold"] || ""),
+    });
+  }
+
+  detail.sort((a, b) => b.actDsc - a.actDsc);
+  return detail;
+}
+
 // ── Status (PMF Product Status vs DISPO PR ST) ─────────────────
 //
 // Classification reuses the Status Reference logic: a scenario match

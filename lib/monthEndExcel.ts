@@ -13,6 +13,8 @@ import type {
   SummaryRow,
   OOSSummary,
   OOSDetailRow,
+  DscSummary,
+  DscDetailRow,
   StatusSummary,
   StatusDetailRow,
   MarginAnalysis,
@@ -56,7 +58,8 @@ const HEADER_ICONS: Record<string, string> = {
   "margin support (r)": "💰", "free stock units": "📦", "suggested sp (incl vat)": "💲",
   "phantom lines": "👻", "total lines": "🔢", "phantom %": "👻",
   "date last sold": "📅", "date last received": "📅", ranging: "📋", classification: "🏷️",
-  "act dsc": "⏳",
+  "act dsc": "⏳", "dsc bracket": "⏳", bracket: "⏳", "soh (units)": "📦",
+  "total soh": "📦", "soh %": "📦",
 };
 
 function thinBorder(): Partial<ExcelJS.Borders> {
@@ -140,6 +143,8 @@ export async function buildMonthEndWorkbook(
   clientLogo?: string,
   channelLogo?: string,
   otoAnalysis?: OTOAnalysis,
+  dscSummary?: DscSummary,
+  dscDetail: DscDetailRow[] = [],
 ): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
   wb.creator = "iRam LIVE Replacement";
@@ -367,6 +372,10 @@ export async function buildMonthEndWorkbook(
   // Freeze top row on detail sheet
   detailSheet.views = [{ state: "frozen", ySplit: 1 }];
 
+  // ── DSC (Days of Stock Cover) sheets ─────────────────────────
+  if (dscSummary && want("dsc")) buildDscSheet(wb, dscSummary, clientName, channelLabel, periodLabel);
+  if (dscDetail.length > 0 && want("dscDetail")) buildDscDetailSheet(wb, dscDetail);
+
   // ── Status + Status Detail sheets ────────────────────────────
   if (statusSummary && want("status")) buildStatusSheet(wb, statusSummary, clientName, channelLabel, periodLabel);
   if (statusDetail.length > 0 && want("statusDetail")) buildStatusDetailSheet(wb, statusDetail);
@@ -584,6 +593,221 @@ function toNum(v: unknown): number {
   if (v == null) return 0;
   const n = Number(String(v).replace(/,/g, "").trim());
   return isNaN(n) ? 0 : n;
+}
+
+// ── DSC sheet — stock-cover distribution across brackets ────────
+// Table 1 (Overall): one row per DSC bracket with Lines / # SKUs / # Sites /
+// SOH / SOH %. Tables 2-4 (Category / SKU / Store) are matrices — one row per
+// entity, SOH split across the bracket columns + a row total — so the reader
+// sees how much stock sits in each cover band per dimension.
+
+// Column letter for a 1-based column index (A, B, … Z, AA, …).
+function colLetter(n: number): string {
+  let s = "";
+  while (n > 0) { const r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = Math.floor((n - 1) / 26); }
+  return s;
+}
+
+function dscBracketFill(bracket: string): string | null {
+  if (bracket === "Out of Stock") return GROWTH_RED;   // no cover
+  if (bracket === "ALERT") return MIXED_BG;            // overstock
+  return null;
+}
+
+function buildDscSheet(
+  wb: ExcelJS.Workbook,
+  dsc: DscSummary,
+  clientName: string,
+  channelLabel: string,
+  periodLabel: string,
+): void {
+  const sheet = wb.addWorksheet("DSC", { properties: { defaultColWidth: 14 } });
+  const brackets = dsc.brackets;
+  const span = Math.max(6, brackets.length + 3); // widest table width
+
+  let cur = 1;
+  const title = sheet.getCell(cur, 1);
+  title.value = `DSC — Days of Stock Cover — ${clientName} — ${channelLabel} — ${periodLabel}`;
+  title.font = { name: "Calibri", size: 14, bold: true, color: { argb: HEADER_BG } };
+  sheet.mergeCells(cur, 1, cur, span);
+  cur += 1;
+
+  const note = sheet.getCell(cur, 1);
+  note.value =
+    "Act DSC = the number of days the current stock-on-hand will last at the recent run-rate. SOH below is the stock " +
+    "sitting in each cover band. \"Out of Stock\" carries no stock but still counts lines / SKUs / sites; \"ALERT\" = " +
+    "overstock (cover at or above the client's alert threshold). Base = SKU×store lines with stock and/or sales.";
+  note.font = { name: "Calibri", size: 10, italic: true, color: { argb: "828282" } };
+  note.alignment = { wrapText: true, vertical: "top" };
+  sheet.mergeCells(cur, 1, cur, span);
+  sheet.getRow(cur).height = 44;
+  cur += 2;
+
+  const titleBar = (text: string, width: number) => {
+    const c = sheet.getCell(cur, 1);
+    c.value = text;
+    c.font = { name: "Calibri", size: 11, bold: true, color: { argb: HEADER_BG } };
+    c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: SUBHEADER_BG } };
+    sheet.mergeCells(cur, 1, cur, width);
+    for (let cc = 1; cc <= width; cc++) sheet.getCell(cur, cc).border = thinBorder();
+    cur++;
+  };
+  const headerRow = (headers: string[], leftCols: number) => {
+    headers.forEach((h, i) => {
+      const c = sheet.getCell(cur, i + 1);
+      c.value = h; c.font = headerFont();
+      c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_BG } };
+      c.border = thinBorder(); c.alignment = { horizontal: i < leftCols ? "left" : "center", wrapText: true };
+    });
+    cur++;
+  };
+
+  // ── Table 1 — Overall by bracket ──
+  titleBar("Overall — DSC Bracket Distribution", 6);
+  headerRow(["DSC Bracket", "Lines", "# SKUs", "# Sites", "SOH (Units)", "SOH %"], 1);
+  sheet.getColumn(1).width = 18;
+  for (let i = 2; i <= 6; i++) sheet.getColumn(i).width = 13;
+  const overallStart = cur;
+  for (const b of dsc.overall) {
+    const a = sheet.getCell(cur, 1); a.value = b.bracket; a.font = bodyFont(); a.border = thinBorder();
+    const fill = dscBracketFill(b.bracket);
+    if (fill) a.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
+    const ln = sheet.getCell(cur, 2); ln.value = b.lines; ln.numFmt = "#,##0"; ln.font = bodyFont(); ln.border = thinBorder(); ln.alignment = { horizontal: "center" };
+    const sk = sheet.getCell(cur, 3); sk.value = b.skus; sk.numFmt = "#,##0"; sk.font = bodyFont(); sk.border = thinBorder(); sk.alignment = { horizontal: "center" };
+    const si = sheet.getCell(cur, 4); si.value = b.sites; si.numFmt = "#,##0"; si.font = bodyFont(); si.border = thinBorder(); si.alignment = { horizontal: "center" };
+    const so = sheet.getCell(cur, 5); so.value = b.soh; so.numFmt = "#,##0"; so.font = bodyFont(); so.border = thinBorder(); so.alignment = { horizontal: "right" };
+    const pc = sheet.getCell(cur, 6);
+    pc.value = { formula: `IF(SUM($E$${overallStart}:$E$${overallStart + dsc.overall.length - 1})=0,0,E${cur}/SUM($E$${overallStart}:$E$${overallStart + dsc.overall.length - 1}))`, result: b.sohPct / 100 };
+    pc.numFmt = "0.0%"; pc.font = bodyFont(); pc.border = thinBorder(); pc.alignment = { horizontal: "center" };
+    cur++;
+  }
+  const overallEnd = cur - 1;
+  // Total row — Lines + SOH are additive (SUM); SKUs/Sites are distinct unions.
+  {
+    const a = sheet.getCell(cur, 1); a.value = "Total"; a.font = bodyFont(true); a.border = thinBorder();
+    a.fill = { type: "pattern", pattern: "solid", fgColor: { argb: TOTAL_BG } };
+    const ln = sheet.getCell(cur, 2); ln.value = { formula: `SUM(B${overallStart}:B${overallEnd})`, result: dsc.totalLines }; ln.numFmt = "#,##0"; ln.font = bodyFont(true); ln.border = thinBorder(); ln.alignment = { horizontal: "center" }; ln.fill = { type: "pattern", pattern: "solid", fgColor: { argb: TOTAL_BG } };
+    const sk = sheet.getCell(cur, 3); sk.value = dsc.totalSkus; sk.numFmt = "#,##0"; sk.font = bodyFont(true); sk.border = thinBorder(); sk.alignment = { horizontal: "center" }; sk.fill = { type: "pattern", pattern: "solid", fgColor: { argb: TOTAL_BG } };
+    const si = sheet.getCell(cur, 4); si.value = dsc.totalSites; si.numFmt = "#,##0"; si.font = bodyFont(true); si.border = thinBorder(); si.alignment = { horizontal: "center" }; si.fill = { type: "pattern", pattern: "solid", fgColor: { argb: TOTAL_BG } };
+    const so = sheet.getCell(cur, 5); so.value = { formula: `SUM(E${overallStart}:E${overallEnd})`, result: dsc.totalSoh }; so.numFmt = "#,##0"; so.font = bodyFont(true); so.border = thinBorder(); so.alignment = { horizontal: "right" }; so.fill = { type: "pattern", pattern: "solid", fgColor: { argb: TOTAL_BG } };
+    const pc = sheet.getCell(cur, 6); pc.value = 1; pc.numFmt = "0.0%"; pc.font = bodyFont(true); pc.border = thinBorder(); pc.alignment = { horizontal: "center" }; pc.fill = { type: "pattern", pattern: "solid", fgColor: { argb: TOTAL_BG } };
+    cur++;
+  }
+  cur += 2;
+
+  // ── Tables 2-4 — entity × bracket SOH matrices ──
+  const writeMatrix = (
+    dimLabel: string,
+    countLabel: "# SKUs" | "# Sites",
+    countKey: "skus" | "sites",
+    rows: DscSummary["byCategory"],
+    globalCount: number,
+  ) => {
+    const nb = brackets.length;
+    const totalWidth = 2 + nb + 1; // dim + count + brackets + total
+    titleBar(`${dimLabel} — SOH by DSC Bracket`, totalWidth);
+
+    const headers = [dimLabel, countLabel, ...brackets, "Total SOH"];
+    headerRow(headers, 1);
+    sheet.getColumn(1).width = Math.max(sheet.getColumn(1).width ?? 0, 28);
+    sheet.getColumn(2).width = Math.max(sheet.getColumn(2).width ?? 0, 11);
+    for (let i = 0; i < nb; i++) sheet.getColumn(3 + i).width = Math.max(sheet.getColumn(3 + i).width ?? 0, 12);
+    sheet.getColumn(3 + nb).width = Math.max(sheet.getColumn(3 + nb).width ?? 0, 14);
+
+    const firstBracketCol = 3;            // column index of the first bracket
+    const totalCol = 2 + nb + 1;          // Total SOH column index
+    const dataStart = cur;
+    for (const row of rows) {
+      const a = sheet.getCell(cur, 1); a.value = row.name; a.font = bodyFont(); a.border = thinBorder();
+      const cnt = sheet.getCell(cur, 2); cnt.value = row[countKey]; cnt.numFmt = "#,##0"; cnt.font = bodyFont(); cnt.border = thinBorder(); cnt.alignment = { horizontal: "center" };
+      row.bracketSoh.forEach((v, i) => {
+        const c = sheet.getCell(cur, firstBracketCol + i);
+        c.value = v; c.numFmt = "#,##0"; c.font = bodyFont(); c.border = thinBorder(); c.alignment = { horizontal: "right" };
+      });
+      const firstL = colLetter(firstBracketCol);
+      const lastL = colLetter(firstBracketCol + nb - 1);
+      const tot = sheet.getCell(cur, totalCol);
+      tot.value = { formula: `SUM(${firstL}${cur}:${lastL}${cur})`, result: row.totalSoh };
+      tot.numFmt = "#,##0"; tot.font = bodyFont(true); tot.border = thinBorder(); tot.alignment = { horizontal: "right" };
+      cur++;
+    }
+    const dataEnd = cur - 1;
+
+    // Total row
+    if (rows.length > 0) {
+      const a = sheet.getCell(cur, 1); a.value = "Total"; a.font = bodyFont(true); a.border = thinBorder();
+      a.fill = { type: "pattern", pattern: "solid", fgColor: { argb: TOTAL_BG } };
+      const cnt = sheet.getCell(cur, 2); cnt.value = globalCount; cnt.numFmt = "#,##0"; cnt.font = bodyFont(true); cnt.border = thinBorder(); cnt.alignment = { horizontal: "center" }; cnt.fill = { type: "pattern", pattern: "solid", fgColor: { argb: TOTAL_BG } };
+      for (let i = 0; i < nb; i++) {
+        const L = colLetter(firstBracketCol + i);
+        const c = sheet.getCell(cur, firstBracketCol + i);
+        c.value = { formula: `SUM(${L}${dataStart}:${L}${dataEnd})`, result: 0 };
+        c.numFmt = "#,##0"; c.font = bodyFont(true); c.border = thinBorder(); c.alignment = { horizontal: "right" };
+        c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: TOTAL_BG } };
+      }
+      const TL = colLetter(totalCol);
+      const t = sheet.getCell(cur, totalCol);
+      t.value = { formula: `SUM(${TL}${dataStart}:${TL}${dataEnd})`, result: dsc.totalSoh };
+      t.numFmt = "#,##0"; t.font = bodyFont(true); t.border = thinBorder(); t.alignment = { horizontal: "right" };
+      t.fill = { type: "pattern", pattern: "solid", fgColor: { argb: TOTAL_BG } };
+      cur++;
+    }
+    cur += 2;
+  };
+
+  writeMatrix("Category", "# SKUs", "skus", dsc.byCategory, dsc.totalSkus);
+  writeMatrix("SKU", "# Sites", "sites", dsc.bySku, dsc.totalSites);
+  writeMatrix("Store", "# SKUs", "skus", dsc.byStore, dsc.totalSkus);
+}
+
+// ── DSC Detail — every in-base SKU×store line, sorted by Act DSC desc ──
+function buildDscDetailSheet(wb: ExcelJS.Workbook, rows: DscDetailRow[]): void {
+  const sheet = wb.addWorksheet("DSC Detail", { properties: { defaultColWidth: 14 } });
+  const cols: { header: string; width: number; key: keyof DscDetailRow; num?: boolean }[] = [
+    { header: "Sub-Channel", width: 14, key: "subChannel" },
+    { header: "Province", width: 14, key: "province" },
+    { header: "Category", width: 16, key: "category" },
+    { header: "Brand", width: 14, key: "brand" },
+    { header: "Article", width: 12, key: "article" },
+    { header: "Description", width: 30, key: "description" },
+    { header: "Site", width: 10, key: "site" },
+    { header: "Site Name", width: 22, key: "siteName" },
+    { header: "SOH", width: 8, key: "soh", num: true },
+    { header: "SOO", width: 8, key: "soo", num: true },
+    { header: "SIT", width: 8, key: "sit", num: true },
+    { header: "Act DSC", width: 9, key: "actDsc", num: true },
+    { header: "DSC Bracket", width: 14, key: "bracket" },
+    { header: "Date Last Sold", width: 14, key: "dateLastSold" },
+  ];
+
+  cols.forEach((c, i) => {
+    const cell = sheet.getCell(1, i + 1);
+    cell.value = c.header; cell.font = headerFont();
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_BG } };
+    cell.border = thinBorder();
+    sheet.getColumn(i + 1).width = c.width;
+  });
+
+  const bracketColIdx = cols.findIndex((c) => c.key === "bracket") + 1;
+  let r = 2;
+  for (const row of rows) {
+    cols.forEach((c, i) => {
+      const cell = sheet.getCell(r, i + 1);
+      cell.value = row[c.key] as string | number;
+      cell.font = bodyFont();
+      cell.border = thinBorder();
+      if (c.num) cell.numFmt = c.key === "actDsc" ? "#,##0.00" : "#,##0";
+    });
+    const bCell = sheet.getCell(r, bracketColIdx);
+    const fill = dscBracketFill(row.bracket);
+    if (fill) bCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
+    r++;
+  }
+
+  if (rows.length > 0) {
+    sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: rows.length + 1, column: cols.length } };
+  }
+  sheet.views = [{ state: "frozen", ySplit: 1 }];
 }
 
 // ── Status sheet — PR ST breakdown + PR ST × PMF Product Status ──

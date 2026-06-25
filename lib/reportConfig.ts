@@ -74,3 +74,21 @@ export function classifyDSC(actDsc: number, brackets: DSCBrackets): string {
   if (actDsc < 210) return "150-210";
   return `210-${brackets.alertThreshold}`;
 }
+
+// The ordered set of DSC bracket labels classifyDSC can emit for a given
+// threshold, from no cover (Out of Stock) through to overstock (ALERT). Bands
+// above the alert threshold are unreachable (everything ≥ alert is ALERT), so
+// the list collapses as the threshold lowers — e.g. at the default 90 only
+// "Out of Stock", "0-10", "10-90", "ALERT" are reachable. Used to lay out the
+// DSC summary tables deterministically (one column/row per reachable bracket).
+export function dscBracketLabels(brackets: DSCBrackets): string[] {
+  const alert = brackets.alertThreshold;
+  const labels = ["Out of Stock"];
+  if (alert > 0) labels.push("0-10");
+  if (alert > 10) labels.push("10-90");
+  if (alert > 90) labels.push("90-150");
+  if (alert > 150) labels.push("150-210");
+  if (alert > 210) labels.push(`210-${alert}`);
+  labels.push("ALERT");
+  return labels;
+}
