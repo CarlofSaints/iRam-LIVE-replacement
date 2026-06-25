@@ -205,6 +205,9 @@ export interface Client {
   linkedClientIds: string[];
   controlFiles: Record<ControlFileType, ControlFileMeta | null>;
   notes?: string;
+  // When true, this client's data is pooled into the consolidated store
+  // reports emailed to reps (see the Send Store Reports module).
+  sendConsolidatedStoreReports?: boolean;
 }
 
 // ── Uploads ──

@@ -51,6 +51,12 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: "File, clientId, channelId, and fileType are required" }, { status: 400, headers: noCacheHeaders() });
     }
 
+    // A DISPO load must be stamped with the week it is for — the load checklist
+    // buckets loads by (year, month, week), so a missing week can't be placed.
+    if (fileType === "dispo" && (reportWeek === undefined || isNaN(reportWeek) || reportWeek < 1)) {
+      return Response.json({ error: "A report week is required for DISPO uploads" }, { status: 400, headers: noCacheHeaders() });
+    }
+
     const client = await getClientById(clientId);
     if (!client) return Response.json({ error: "Client not found" }, { status: 404, headers: noCacheHeaders() });
 

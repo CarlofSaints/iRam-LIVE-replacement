@@ -60,6 +60,7 @@ export async function updateClient(
       | "linkedClientIds"
       | "controlFiles"
       | "notes"
+      | "sendConsolidatedStoreReports"
     >
   >
 ): Promise<Client> {

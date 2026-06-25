@@ -24,7 +24,9 @@ export default function DataLoadPage() {
   const [fileType, setFileType] = useState<FileType>("dispo");
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
   const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
-  const [reportWeek, setReportWeek] = useState(Math.ceil(new Date().getDate() / 7));
+  // Week must be chosen deliberately (no default guess) so every DISPO load is
+  // stamped with the correct week for the load checklist.
+  const [reportWeek, setReportWeek] = useState<number | "">("");
   const [uploading, setUploading] = useState(false);
 
   // Keep a ref to the uploaded file so we can re-submit with force=true
@@ -237,17 +239,23 @@ export default function DataLoadPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-[var(--color-text-muted)]">Week</label>
-                  <select value={reportWeek} onChange={(e) => setReportWeek(Number(e.target.value))}
-                    className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm">
+                  <label className="mb-1 block text-xs text-[var(--color-text-muted)]">
+                    Week <span className="text-red-500">*</span>
+                  </label>
+                  <select value={reportWeek} onChange={(e) => setReportWeek(e.target.value === "" ? "" : Number(e.target.value))}
+                    className={`w-full rounded-lg border px-3 py-2 text-sm ${reportWeek === "" ? "border-red-300" : "border-[var(--color-border)]"}`}>
+                    <option value="">Select week…</option>
                     {[1, 2, 3, 4, 5].map((w) => (
                       <option key={w} value={w}>Week {w}</option>
                     ))}
                   </select>
                 </div>
               </div>
+              {reportWeek === "" && (
+                <p className="mt-1.5 text-xs text-red-500">Pick the week this load is for — it&apos;s required for the DISPO checklist.</p>
+              )}
             </div>
-            <button onClick={() => setStep("upload")} disabled={!clientId || !channelId}
+            <button onClick={() => setStep("upload")} disabled={!clientId || !channelId || reportWeek === ""}
               className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)] disabled:opacity-50">
               Next
             </button>

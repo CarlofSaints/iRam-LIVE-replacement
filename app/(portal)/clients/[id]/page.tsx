@@ -64,6 +64,7 @@ export default function ClientDetailPage() {
   const [saving, setSaving] = useState(false);
   const [editForm, setEditForm] = useState({
     name: "", vendorNumbers: "", camId: "", channelIds: [] as string[], notes: "",
+    sendConsolidatedStoreReports: false,
   });
 
   // Product mapping state
@@ -431,6 +432,7 @@ export default function ClientDetailPage() {
       camId: client.camId ?? "",
       channelIds: validChannelIds,
       notes: client.notes ?? "",
+      sendConsolidatedStoreReports: client.sendConsolidatedStoreReports ?? false,
     });
     setEditing(true);
   }
@@ -454,6 +456,7 @@ export default function ClientDetailPage() {
         camId: editForm.camId || undefined,
         channelIds: editForm.channelIds,
         notes: editForm.notes || undefined,
+        sendConsolidatedStoreReports: editForm.sendConsolidatedStoreReports,
       }),
     });
     if (res.ok) {
@@ -550,6 +553,12 @@ export default function ClientDetailPage() {
               <span className="text-[var(--color-text-muted)]">Linked Clients</span>
               <div className="font-medium">{client.linkedClientIds.length > 0 ? client.linkedClientIds.join(", ") : "None"}</div>
             </div>
+            <div>
+              <span className="text-[var(--color-text-muted)]">Consolidated Store Reports</span>
+              <div className="font-medium">{client.sendConsolidatedStoreReports
+                ? <span className="rounded-full bg-green-50 px-2 py-0.5 text-xs text-green-700">Included</span>
+                : <span className="text-[var(--color-text-muted)]">Not included</span>}</div>
+            </div>
             {client.notes && <div className="col-span-2"><span className="text-[var(--color-text-muted)]">Notes</span><div className="mt-1">{client.notes}</div></div>}
           </div>
         </div>
@@ -610,6 +619,15 @@ export default function ClientDetailPage() {
               <textarea value={editForm.notes} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })}
                 className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm" rows={2} />
             </div>
+            <label className="flex items-start gap-2.5 rounded-lg border border-[var(--color-border)] p-3 cursor-pointer">
+              <input type="checkbox" checked={editForm.sendConsolidatedStoreReports}
+                onChange={(e) => setEditForm({ ...editForm, sendConsolidatedStoreReports: e.target.checked })}
+                className="mt-0.5 h-4 w-4" />
+              <span>
+                <span className="block text-sm font-medium text-[var(--color-text)]">Send Consolidated Store Reports</span>
+                <span className="block text-xs text-[var(--color-text-muted)]">Include this client&apos;s data in the store reports emailed to reps on the ground.</span>
+              </span>
+            </label>
             <div className="flex gap-3">
               <button onClick={saveEdit} disabled={saving}
                 className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)] disabled:opacity-50">
