@@ -9,14 +9,17 @@ interface ChecklistRow {
   clientId: string;
   clientName: string;
   active: boolean;
+  channelId: string;
+  channelName: string;
   vendorNumber: string;
+  placeholder: boolean;
   cells: Record<string, Cell>;
 }
 interface ChecklistData {
   periods: Period[];
   rows: ChecklistRow[];
   outstanding: Record<string, number>;
-  totalRows: number;
+  totalStreams: number;
 }
 
 function fmtDate(iso?: string): string {
@@ -122,7 +125,7 @@ export default function DispoChecklistPage() {
             </thead>
             <tbody>
               {rowsWithGroup.map(({ row, firstOfClient }) => (
-                <tr key={`${row.clientId}|${row.vendorNumber}`}
+                <tr key={`${row.clientId}|${row.channelId}|${row.vendorNumber}`}
                   className={`${firstOfClient ? "border-t-2 border-[var(--color-border)]" : "border-t border-zinc-100"}`}>
                   <td className="sticky left-0 z-10 px-4 py-2.5" style={{ background: "white" }}>
                     <div className={`font-medium ${row.active ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
@@ -130,7 +133,13 @@ export default function DispoChecklistPage() {
                       {!row.active && firstOfClient && <span className="ml-2 text-xs text-[var(--color-text-muted)]">(inactive)</span>}
                     </div>
                     <div className="text-xs text-[var(--color-text-muted)]">
-                      {row.vendorNumber ? `Vendor ${row.vendorNumber}` : "No vendor #"}
+                      {row.placeholder
+                        ? "No DISPO loads yet"
+                        : <>
+                            <span className="text-[var(--color-text)]">{row.channelName || "—"}</span>
+                            {" · "}
+                            {row.vendorNumber ? `Vendor ${row.vendorNumber}` : "No vendor #"}
+                          </>}
                     </div>
                   </td>
                   {data.periods.map((p) => {
@@ -169,7 +178,7 @@ export default function DispoChecklistPage() {
             <span className="inline-block h-5 w-5 rounded-full border border-dashed border-zinc-300" />
             Outstanding
           </span>
-          <span>{data.totalRows} client/vendor rows</span>
+          <span>{data.totalStreams} load streams (channel × vendor)</span>
         </div>
       )}
     </div>

@@ -16,7 +16,10 @@ interface ChecklistRow {
   clientId: string;
   clientName: string;
   active: boolean;
+  channelId: string;
+  channelName: string;
   vendorNumber: string;
+  placeholder: boolean;       // a client with no load streams discovered yet
   cells: Record<string, Cell>;
 }
 
@@ -56,52 +59,82 @@ export async function GET(req: NextRequest) {
       .reverse(); // chronological: oldest → newest, left → right
     const periodKeys = new Set(periods.map((p) => p.key));
 
-    // Index loads by client|vendor|period → latest date + count (within the window).
+    // A DISPO is loaded per (client, channel, vendor) — one vendor can span
+    // channels (e.g. 2394 in Makro + Massbuild) and one channel can hold many
+    // vendors (e.g. Massbuild = 2394 Tools + 5478 Lighting), so the load stream
+    // is the (channel, vendor) pair, not the vendor alone.
+    const streamId = (clientId: string, channelId: string, vendor: string) =>
+      `${clientId}|${channelId}|${vendor}`;
+
+    // Discover each client's real load streams from history (any period), so
+    // we never invent phantom channel×vendor combos that never load.
+    const streams = new Map<string, { clientId: string; channelId: string; channelName: string; vendor: string }>();
+    for (const u of dispos) {
+      const vendor = (u.vendorNumber || "").trim();
+      const id = streamId(u.clientId, u.channelId, vendor);
+      if (!streams.has(id)) {
+        streams.set(id, { clientId: u.clientId, channelId: u.channelId, channelName: u.channelName, vendor });
+      }
+    }
+
+    // Index loads by stream|period → latest date + count (within the window).
     const cellIndex = new Map<string, Cell>();
     for (const u of dispos) {
       const pk = periodKey(u.reportYear!, u.reportMonth!, u.reportWeek!);
       if (!periodKeys.has(pk)) continue;
       const vendor = (u.vendorNumber || "").trim();
-      const ck = `${u.clientId}|${vendor}|${pk}`;
+      const ck = `${streamId(u.clientId, u.channelId, vendor)}|${pk}`;
       const existing = cellIndex.get(ck);
       if (!existing) {
         cellIndex.set(ck, { loaded: true, date: u.uploadDate, count: 1 });
       } else {
         existing.count = (existing.count ?? 1) + 1;
-        // keep the most recent load date
         if (u.uploadDate > (existing.date ?? "")) existing.date = u.uploadDate;
       }
     }
 
-    // One row per (client, vendor number). Clients with no vendor numbers get a
-    // single placeholder row so they still appear in the checklist.
+    // One row per (client, channel, vendor) stream. Every client appears — a
+    // client with no discovered streams yet gets a single placeholder row.
     const rows: ChecklistRow[] = [];
     const sortedClients = [...clients].sort((a, b) => a.name.localeCompare(b.name));
     for (const c of sortedClients) {
-      const vendors = c.vendorNumbers.length > 0 ? c.vendorNumbers.map((v) => v.trim()).filter(Boolean) : [""];
-      for (const vendor of vendors) {
+      const clientStreams = [...streams.values()]
+        .filter((s) => s.clientId === c.id)
+        .sort((a, b) => a.channelName.localeCompare(b.channelName) || a.vendor.localeCompare(b.vendor));
+
+      if (clientStreams.length === 0) {
+        rows.push({
+          clientId: c.id, clientName: c.name, active: c.active,
+          channelId: "", channelName: "", vendorNumber: "",
+          placeholder: true,
+          cells: Object.fromEntries(periods.map((p) => [p.key, { loaded: false } as Cell])),
+        });
+        continue;
+      }
+
+      for (const s of clientStreams) {
         const cells: Record<string, Cell> = {};
         for (const p of periods) {
-          cells[p.key] = cellIndex.get(`${c.id}|${vendor}|${p.key}`) ?? { loaded: false };
+          cells[p.key] = cellIndex.get(`${streamId(c.id, s.channelId, s.vendor)}|${p.key}`) ?? { loaded: false };
         }
         rows.push({
-          clientId: c.id,
-          clientName: c.name,
-          active: c.active,
-          vendorNumber: vendor,
+          clientId: c.id, clientName: c.name, active: c.active,
+          channelId: s.channelId, channelName: s.channelName, vendorNumber: s.vendor,
+          placeholder: false,
           cells,
         });
       }
     }
 
-    // Per-period outstanding counts (rows with no load) for the summary strip.
+    // Per-period outstanding counts — only real streams (placeholders excluded).
     const outstanding: Record<string, number> = {};
+    const streamRows = rows.filter((r) => !r.placeholder);
     for (const p of periods) {
-      outstanding[p.key] = rows.filter((r) => !r.cells[p.key]?.loaded).length;
+      outstanding[p.key] = streamRows.filter((r) => !r.cells[p.key]?.loaded).length;
     }
 
     return Response.json(
-      { periods, rows, outstanding, totalRows: rows.length },
+      { periods, rows, outstanding, totalStreams: streamRows.length },
       { headers: noCacheHeaders() },
     );
   } catch (err) {
