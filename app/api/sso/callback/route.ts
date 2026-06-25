@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifySSOToken } from "@/lib/sso";
-import { getUsers, getUserByEmail } from "@/lib/userData";
+import { getUsers, getUserByEmail, updateUser } from "@/lib/userData";
 import { writeJson } from "@/lib/blob";
 import { encodeSession, sessionCookieOptions, noCacheHeaders } from "@/lib/auth";
 import type { SessionPayload, User } from "@/lib/types";
@@ -40,10 +40,16 @@ export async function POST(req: NextRequest) {
     users.push(newUser);
     await writeJson("users.json", users);
     user = newUser;
+  } else if (user.forcePasswordChange) {
+    // SSO authenticates via the Hub — there is no LIVE password to change.
+    // Clear the stale force-change gate so the user isn't trapped on /account.
+    await updateUser(user.id, { forcePasswordChange: false });
+    user = { ...user, forcePasswordChange: false };
   }
 
   const session: SessionPayload = {
-    userId: user.id, email: user.email, name: user.name, role: user.role, forcePasswordChange: user.forcePasswordChange,
+    userId: user.id, email: user.email, name: user.name, role: user.role,
+    forcePasswordChange: false, // SSO sessions are never force-gated
     clientIds: user.clientIds && user.clientIds.length > 0 ? user.clientIds : undefined,
   };
 
