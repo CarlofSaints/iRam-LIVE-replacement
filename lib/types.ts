@@ -28,6 +28,7 @@ export const ALL_PERMISSIONS = [
   { key: "upload_data" as const, label: "Upload Data" },
   { key: "manage_control_files" as const, label: "Manage Client Control Files" },
   { key: "delete_uploads" as const, label: "Delete Uploads" },
+  { key: "manage_store_reports" as const, label: "Manage Store Reports (arm/exclude/send)" },
   // View
   { key: "view_dashboard" as const, label: "View Dashboard" },
   { key: "view_uploads" as const, label: "View Uploads" },
@@ -60,7 +61,7 @@ export const ROLE_DEFINITIONS: RoleDefinition[] = [
     permissions: [
       "manage_users", "manage_channels", "manage_clients", "manage_cams",
       "manage_store_files", "manage_statuses", "upload_data", "manage_control_files",
-      "delete_uploads", "view_dashboard", "view_uploads", "view_activity_log", "view_charts", "download_templates", "export_data",
+      "delete_uploads", "manage_store_reports", "view_dashboard", "view_uploads", "view_activity_log", "view_charts", "download_templates", "export_data",
     ],
   },
   {
@@ -68,7 +69,7 @@ export const ROLE_DEFINITIONS: RoleDefinition[] = [
     label: "CAM",
     description: "Upload data and manage client control files",
     permissions: [
-      "upload_data", "manage_control_files", "view_dashboard", "view_uploads", "view_charts", "download_templates",
+      "upload_data", "manage_control_files", "manage_store_reports", "view_dashboard", "view_uploads", "view_charts", "download_templates",
     ],
   },
   {
@@ -316,6 +317,28 @@ export interface StatusScenario {
   description?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+// ── Store-Report Sends (per-store report log + dedup ledger) ──
+
+export interface StoreReportIncludedStream {
+  clientId: string;
+  clientName: string;
+  channel: string;
+  vendor: string;
+}
+
+export interface StoreReportSend {
+  id: string;
+  periodKey: string;            // armed week the send belongs to (year-MM-week)
+  siteCode: string;
+  storeName: string;
+  repEmail: string;
+  visitGuid: string;            // dedupes Perigee's duplicate check-in/check-out fires
+  sentAt: string;               // ISO
+  status: "sent" | "failed" | "skipped_no_data";
+  includedStreams: StoreReportIncludedStream[];
+  error?: string;
 }
 
 // ── Activity Log ──
