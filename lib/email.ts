@@ -217,6 +217,22 @@ export async function sendMissingStoresEmail(params: {
   });
 }
 
+// Store-report summary email (the "stock action report" teaser). The HTML is
+// pre-rendered by lib/storeReportEmail.ts; this just posts it via Resend.
+export async function sendStoreReportEmail(params: {
+  to: string | string[];
+  subject: string;
+  html: string;
+}): Promise<void> {
+  const resend = getResend();
+  await resend.emails.send({
+    from: FROM,
+    to: params.to,
+    subject: params.subject,
+    html: params.html,
+  });
+}
+
 export async function sendPasswordResetEmail(params: {
   to: string;
   name: string;
