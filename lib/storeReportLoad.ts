@@ -173,16 +173,18 @@ export async function listStoresForClients(clientIds?: string[]): Promise<StoreP
 // store's sub-channel / channel. All served as hosted files (so they render in
 // Outlook, which blocks data-URL images). Drop new retailer files into
 // public/brand/retailers/ and add the mapping below.
+// Builders covers BWH, BEX, BTD, SS (and the MASSBUILD main channel).
 const RETAILER_FILE: Record<string, string> = {
-  makro: "makro.png",
-  "makro-liquor": "makro.png",
-  massbuild: "builders.png",
-  builders: "builders.png",
-  "builders warehouse": "builders.png",
-  bwh: "builders.png",
-  bex: "builders.png",
-  btd: "builders.png",
-  bss: "builders.png",
+  makro: "makro.jpg",
+  "makro-liquor": "makro.jpg",
+  massbuild: "builders.jpg",
+  builders: "builders.jpg",
+  "builders warehouse": "builders.jpg",
+  bwh: "builders.jpg",
+  bex: "builders.jpg",
+  btd: "builders.jpg",
+  ss: "builders.jpg",
+  bss: "builders.jpg",
   game: "game.png",
 };
 
