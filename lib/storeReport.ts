@@ -90,13 +90,20 @@ export interface StoreReportCounts {
   marginOpp: number;
 }
 
+export interface StoreReportClient {
+  clientId: string;
+  clientName: string;
+  asOf?: string;       // freshness label, e.g. "Wk 25 · Jun 2026"
+  loadedAt?: string;   // ISO of the last DISPO load for this client
+}
+
 export interface StoreReport {
   siteCode: string;
   storeName: string;
   storeType: string;
   subChannel: string;
   province: string;
-  clients: { clientId: string; clientName: string }[];
+  clients: StoreReportClient[];
   totalProducts: number;        // distinct in-base lines = "All products"
   counts: StoreReportCounts;
   totalActions: number;         // distinct lines carrying ≥1 flag
@@ -202,7 +209,7 @@ export function buildStoreReport(
   const counts: StoreReportCounts = {
     oos: 0, lowCover: 0, phantom: 0, status: 0, marginRisk: 0, marginOpp: 0,
   };
-  const participating: { clientId: string; clientName: string }[] = [];
+  const participating: StoreReportClient[] = [];
 
   let storeName = "";
   let storeType = "";
@@ -215,8 +222,9 @@ export function buildStoreReport(
     for (const d of client.statusDefs) labelByCode.set(d.code, d.description || "");
 
     for (const row of client.rows) {
-      const { inBase, soh } = classifyBase(row, client.dateColumns);
-      if (!inBase) continue; // ignore never-stocked, never-sold combos
+      // Include every listed SKU at this store — don't hide SOH=0 lines that have
+      // no recent sales; those are exactly the out-of-stock gaps a rep must see.
+      const { soh } = classifyBase(row, client.dateColumns);
 
       // Capture store header off the first usable row.
       if (!storeName) storeName = String(row["_storeName"] || row["Site Name"] || "");
@@ -283,7 +291,8 @@ export function buildStoreReport(
         article: String(row["Article"] ?? ""),
         barcode: String(row["_barcode"] || ""),
         productCode: String(row["_clientProductId"] || ""),
-        description: String(row["_productDescription"] || row["Article Desc"] || ""),
+        // DISPO/channel description first (what the rep sees in-store); PMF as fallback.
+        description: String(row["Article Desc"] || row["_productDescription"] || ""),
         category: String(row["_category"] || ""),
         soh,
         dros: round2(dros),

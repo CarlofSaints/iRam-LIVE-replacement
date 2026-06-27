@@ -62,6 +62,8 @@ export async function loadStoreReport(opts: LoadStoreReportOpts): Promise<Loaded
   // All date columns across every client — the latest one is the data's true
   // "as of" month, which we anchor age / DROS / phantom to.
   const allDateCols = new Set<string>();
+  // Per-client data freshness (latest loaded period + when), shown on the report.
+  const freshness = new Map<string, { y: number; m: number; w: number; loadedAt: string }>();
 
   for (const client of clients) {
     const ledgers = await getAllSalesLedgers(client.id);
@@ -70,6 +72,8 @@ export async function loadStoreReport(opts: LoadStoreReportOpts): Promise<Loaded
     const rows: Record<string, unknown>[] = [];
     const dateCols = new Set<string>();
     const channelIds: string[] = [];
+    let cBest: { y: number; m: number; w: number } | null = null;
+    let cLoadedAt = "";
 
     const excluded = new Set(opts.excludedStreams ?? []);
     for (const meta of ledgers) {
@@ -77,6 +81,12 @@ export async function loadStoreReport(opts: LoadStoreReportOpts): Promise<Loaded
       // Skip a channel stream that's been excluded for this week.
       const streamId = `${client.id}|${meta.channelId}|${meta.vendorNumber ?? ""}`;
       if (excluded.has(streamId)) continue;
+      // Track this client's freshest loaded period + load timestamp.
+      if (meta.reportYear) {
+        const cand = { y: meta.reportYear, m: meta.reportMonth ?? 1, w: meta.reportWeek ?? 1 };
+        if (!cBest || cand.y > cBest.y || (cand.y === cBest.y && cand.m > cBest.m) || (cand.y === cBest.y && cand.m === cBest.m && cand.w > cBest.w)) cBest = cand;
+      }
+      if (meta.lastMergedAt && meta.lastMergedAt > cLoadedAt) cLoadedAt = meta.lastMergedAt;
       for (const dc of meta.dateColumns ?? []) { dateCols.add(dc); allDateCols.add(dc); }
       const ledger = await getSalesLedger(client.id, meta.channelId);
       const filtered = ledger.filter((r) => norm(r["Site"]) === site);
@@ -87,6 +97,7 @@ export async function loadStoreReport(opts: LoadStoreReportOpts): Promise<Loaded
     }
 
     if (!rows.length) continue;
+    if (cBest) freshness.set(client.id, { ...cBest, loadedAt: cLoadedAt });
 
     const enriched = await enrichLedger(rows, client.id);
     const scenarios = allScenarios.filter((s) => channelIds.includes(s.channelId));
@@ -126,8 +137,20 @@ export async function loadStoreReport(opts: LoadStoreReportOpts): Promise<Loaded
   }
 
   const report = buildStoreReport(inputs, { siteCode: opts.siteCode, referenceDate });
-  const periodLabel = `Wk ${week} · ${MONTHS[month] || month} ${year}`;
 
+  // Attach per-client freshness ("data as of …") to the participating clients.
+  const fmtLoaded = (iso: string) => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? "" : d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", timeZone: "Africa/Johannesburg" });
+  };
+  report.clients = report.clients.map((c) => {
+    const f = freshness.get(c.clientId);
+    if (!f) return c;
+    return { ...c, asOf: `Wk ${f.w} · ${MONTHS[f.m] || f.m} ${f.y}`, loadedAt: fmtLoaded(f.loadedAt) };
+  });
+
+  const periodLabel = `Wk ${week} · ${MONTHS[month] || month} ${year}`;
   return { report, year, month, week, periodLabel };
 }
 

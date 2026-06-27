@@ -122,8 +122,8 @@ export function renderStoreReportEmail(report: StoreReport, meta: StoreReportEma
 
   <!-- helper -->
   <tr><td align="center" style="padding:10px 36px 18px 36px;font:400 12px/1.5 Arial,Helvetica,sans-serif;color:${GREY};">
-    Tap the report above to open this week&rsquo;s stock action list &mdash; your in-store punch-list of what to fix.<br>
-    The link stays live for the next several days; a fresh report is generated each run.
+    Tap the report above to open your stock action list &mdash; your in-store punch-list of what to fix.<br>
+    Each client shows its most recently loaded data (per-client dates are in the report). The link stays live for several days.
   </td></tr>
 
   <!-- divider -->

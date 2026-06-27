@@ -280,8 +280,9 @@ export default function StoreReportsTestPage() {
         <div className="mt-10">
           <h2 className="mb-1 text-lg font-bold text-[var(--color-text)]">Auto-send (check-in trigger)</h2>
           <p className="mb-4 max-w-2xl text-sm text-[var(--color-text-muted)]">
-            A scheduled job runs every 3 minutes: it reads today&apos;s Massmart check-ins, and for each one — if a week is
-            armed — emails that store&apos;s consolidated report to the rep (once per store + rep per week).
+            A scheduled job runs every 3 minutes: it reads today&apos;s Massmart check-ins and emails each store&apos;s
+            consolidated report to the rep — using each client&apos;s latest loaded data, once per store + rep per day.
+            No arming needed; this toggle is the only on/off.
           </p>
 
           {proxyOk === false && (
@@ -355,7 +356,7 @@ export default function StoreReportsTestPage() {
           {runResult && (
             <div className="mt-4 rounded-xl border border-[var(--color-border)] bg-white p-5">
               <p className="text-sm font-semibold text-[var(--color-text)]">
-                {runResult.dryRun ? "Dry run" : "Run"} — armed: {runResult.armedPeriod || "none"} · {runResult.visitsSeen} visits ·
+                {runResult.dryRun ? "Dry run" : "Run"} — day: {runResult.armedPeriod || "none"} · {runResult.visitsSeen} visits ·
                 {" "}{runResult.sent} sent · {runResult.skipped} skipped · {runResult.failed} failed
                 {runResult.message ? ` · ${runResult.message}` : ""}
               </p>

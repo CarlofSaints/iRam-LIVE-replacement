@@ -15,7 +15,6 @@
    ────────────────────────────────────────────────────────────── */
 
 import { getSyncSettings, recordLastRun, normaliseVisit, type SyncLastRun } from "./storeReportSync";
-import { getStoreReportState } from "./storeReportState";
 import { getTodayMassmartVisits } from "./sqlProxy";
 import { hasProcessedVisit, hasSent, addSend } from "./storeReportLog";
 import { loadStoreReport, formatGeneratedAt, storeReportLogos } from "./storeReportLoad";
@@ -73,21 +72,11 @@ export async function runStoreReportSync(opts: RunOptions): Promise<RunResult> {
     }
   }
 
-  // 2. Require an armed week.
-  const state = await getStoreReportState();
-  const activeKey = state.activePeriodKey;
-  base.armedPeriod = activeKey;
-  if (!activeKey) {
-    const run: SyncLastRun = { at: new Date().toISOString(), ok: true, visitsSeen: 0, sent: 0, skipped: 0, failed: 0, message: "No week armed" };
-    if (!opts.dryRun) await recordLastRun(run);
-    return { ...base, ok: true, outcomes, message: "No week armed — check-ins ignored" };
-  }
-  const period = state.periods[activeKey];
-  const m = activeKey.match(/^(\d{4})-(\d{2})-(\d+)$/);
-  const year = m ? Number(m[1]) : undefined;
-  const month = m ? Number(m[2]) : undefined;
-  const week = m ? Number(m[3]) : undefined;
-  const excludedStreams = period?.excludedStreams ?? [];
+  // 2. No arming — every allowed check-in sends the store's latest data, deduped
+  //    once per store+rep per DAY (and per exact Perigee visit GUID). The day key
+  //    is the SAST calendar day; a revisit on a later day gets a fresh report.
+  const dedupKey = trackingDay();
+  base.armedPeriod = dedupKey;
 
   // 3. Pull today's visits.
   let visits: Record<string, unknown>[];
@@ -114,20 +103,20 @@ export async function runStoreReportSync(opts: RunOptions): Promise<RunResult> {
       skipped++; outcomes.push({ siteCode: v.siteCode, repEmail: v.repEmail, store: "", status: "skipped-channel", detail: v.channel }); continue;
     }
 
-    // Dedup: same visit GUID already processed, or this store×rep already sent.
-    if (v.visitGuid && await hasProcessedVisit(activeKey, v.visitGuid)) {
-      skipped++; outcomes.push({ siteCode: v.siteCode, repEmail: v.repEmail, store: "", status: "skipped-duplicate", detail: "visit already processed" }); continue;
+    // Dedup: same visit GUID already processed today, or this store×rep already sent today.
+    if (v.visitGuid && await hasProcessedVisit(dedupKey, v.visitGuid)) {
+      skipped++; outcomes.push({ siteCode: v.siteCode, repEmail: v.repEmail, store: "", status: "skipped-duplicate", detail: "visit already processed today" }); continue;
     }
-    if (v.repEmail && await hasSent(activeKey, v.siteCode, v.repEmail)) {
-      skipped++; outcomes.push({ siteCode: v.siteCode, repEmail: v.repEmail, store: "", status: "skipped-duplicate", detail: "store+rep already sent" }); continue;
+    if (v.repEmail && await hasSent(dedupKey, v.siteCode, v.repEmail)) {
+      skipped++; outcomes.push({ siteCode: v.siteCode, repEmail: v.repEmail, store: "", status: "skipped-duplicate", detail: "store+rep already sent today" }); continue;
     }
     if (!v.repEmail) {
       skipped++; outcomes.push({ siteCode: v.siteCode, repEmail: "", store: "", status: "skipped-no-email", detail: `rep "${v.repName}" has no email` }); continue;
     }
 
-    // Live-render the store's consolidated report (minus excluded streams).
+    // Live-render the store's consolidated report (each client's latest data).
     try {
-      const loaded = await loadStoreReport({ siteCode: v.siteCode, year, month, week, excludedStreams });
+      const loaded = await loadStoreReport({ siteCode: v.siteCode });
       const report = loaded.report;
       const store = report.storeName || v.siteCode;
 
@@ -136,7 +125,7 @@ export async function runStoreReportSync(opts: RunOptions): Promise<RunResult> {
         outcomes.push({ siteCode: v.siteCode, repEmail: v.repEmail, store, status: "skipped-no-data", actions: 0 });
         if (!opts.dryRun) {
           await addSend({
-            periodKey: activeKey, siteCode: v.siteCode, storeName: store, repEmail: v.repEmail,
+            periodKey: dedupKey, siteCode: v.siteCode, storeName: store, repEmail: v.repEmail,
             visitGuid: v.visitGuid, sentAt: new Date().toISOString(), status: "skipped_no_data",
             includedStreams: report.clients.map((c) => ({ clientId: c.clientId, clientName: c.clientName, channel: report.subChannel, vendor: "" })),
           });
@@ -166,11 +155,11 @@ export async function runStoreReportSync(opts: RunOptions): Promise<RunResult> {
 
       await sendStoreReportEmail({ to: v.repEmail, subject: `Store Report — ${store} — ${loaded.periodLabel}`, html });
       await addTrackingSend({
-        token, day, periodKey: activeKey, siteCode: v.siteCode, store,
+        token, day, periodKey: dedupKey, siteCode: v.siteCode, store,
         channel: report.subChannel, repEmail: v.repEmail, repName: v.repName, sentAt: new Date().toISOString(),
       });
       await addSend({
-        periodKey: activeKey, siteCode: v.siteCode, storeName: store, repEmail: v.repEmail,
+        periodKey: dedupKey, siteCode: v.siteCode, storeName: store, repEmail: v.repEmail,
         visitGuid: v.visitGuid, sentAt: new Date().toISOString(), status: "sent",
         includedStreams: report.clients.map((c) => ({ clientId: c.clientId, clientName: c.clientName, channel: report.subChannel, vendor: "" })),
       });

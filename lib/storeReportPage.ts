@@ -65,6 +65,9 @@ export function renderStoreReportPage(report: StoreReport, meta: StoreReportPage
   .pad{padding:14px 16px}
   select,input{font:inherit}
   .client{width:100%;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink)}
+  .fresh{font-size:11.5px;color:var(--grey);padding:8px 2px 0;line-height:1.6}
+  .fresh b{color:#46525e;font-weight:600}
+  .fresh .stale{color:var(--red);font-weight:600}
   .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:12px}
   .card{border:2px solid transparent;border-radius:12px;padding:14px 8px;text-align:center;cursor:pointer;background:var(--redbg);user-select:none}
   .card .n{font:700 26px/1 Arial;color:var(--red)}
@@ -126,6 +129,7 @@ export function renderStoreReportPage(report: StoreReport, meta: StoreReportPage
   </div>
   <div class="pad">
     <select class="client" id="clientSel" onchange="render()"></select>
+    <div class="fresh" id="fresh"></div>
     <div class="cards" id="cards"></div>
     <div class="tools">
       <input id="search" placeholder="Search article, barcode or client" oninput="render()">
@@ -271,6 +275,7 @@ function oosAlert(l){
 function render(){
   document.getElementById("storeName").textContent = R.storeName || R.siteCode;
   renderClientOptionsOnce();
+  renderFreshness();
   renderCards();
   let lines = visibleLines();
   lines.sort((a,b)=> sortMode==="az" ? (a.description||"").localeCompare(b.description||"") : metricNum(a,active)-metricNum(b,active));
@@ -291,8 +296,20 @@ function renderClientOptionsOnce(){
   const sel=document.getElementById("clientSel");
   const total=R.lines.length;
   let html='<option value="all">All clients ('+total+')</option>';
-  for(const c of R.clients){ const n=R.lines.filter(l=>l.clientId===c.clientId).length; html+='<option value="'+esc(c.clientId)+'">'+esc(c.clientName)+' ('+n+')</option>'; }
+  for(const c of R.clients){ const n=R.lines.filter(l=>l.clientId===c.clientId).length; var af=c.asOf?(' — '+c.asOf):''; html+='<option value="'+esc(c.clientId)+'">'+esc(c.clientName)+' ('+n+')'+esc(af)+'</option>'; }
   sel.innerHTML=html;
+}
+function renderFreshness(){
+  const el=document.getElementById("fresh");
+  if(!el) return;
+  const cl=curClient();
+  const list=(cl==="all")? R.clients : R.clients.filter(function(c){return c.clientId===cl;});
+  if(!list.length || !list.some(function(c){return c.asOf;})){ el.innerHTML=""; return; }
+  const parts=list.map(function(c){
+    if(!c.asOf) return "<b>"+esc(c.clientName)+"</b>";
+    return "<b>"+esc(c.clientName)+"</b> "+esc(c.asOf)+(c.loadedAt?(" · loaded "+esc(c.loadedAt)):"");
+  });
+  el.innerHTML="Latest data per client — "+parts.join(" &nbsp;·&nbsp; ");
 }
 function beacon(ev, card){
   try{
