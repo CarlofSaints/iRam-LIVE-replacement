@@ -28,8 +28,23 @@ function esc(s: unknown): string {
   return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+// Safe-embed JSON into an inline <script>: escape characters that would either
+// break out of the <script> tag (`<`, `>`, `&` → `</script>`, `<!--`) or are
+// illegal as raw JS string content (U+2028 / U+2029 line separators). Without
+// this, a single odd character in real DISPO data blanks the whole page.
+function embedJson(value: unknown): string {
+  // U+2028 / U+2029 referenced by code point so no literal separator chars sit
+  // in this source file (they are invisible and easy to mangle).
+  const SEP = new RegExp("[\\u2028\\u2029]", "g");
+  return JSON.stringify(value)
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/&/g, "\\u0026")
+    .replace(SEP, (ch) => (ch.charCodeAt(0) === 0x2028 ? "\\u2028" : "\\u2029"));
+}
+
 export function renderStoreReportPage(report: StoreReport, meta: StoreReportPageMeta): string {
-  const data = JSON.stringify({ report, meta });
+  const data = embedJson({ report, meta });
   const subline = [report.siteCode, report.subChannel, meta.periodLabel].filter(Boolean).map(esc).join(" &middot; ");
 
   return `<!doctype html>
@@ -133,6 +148,8 @@ export function renderStoreReportPage(report: StoreReport, meta: StoreReportPage
 <script>
 const PAYLOAD = ${data};
 const R = PAYLOAD.report, M = PAYLOAD.meta;
+// Browser-side HTML escaper (separate from the server esc() in the .ts module).
+function esc(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
 const CATS = [
   {key:"oos",      label:"Out of Stock",       cls:"red",   metric:"dros"},
   {key:"lowCover", label:"Low Stock Cover",     cls:"red",   metric:"days"},
@@ -302,7 +319,11 @@ function buildInfo(){
 function openInfo(){ document.getElementById("infoModal").classList.add("on"); }
 function closeInfo(){ document.getElementById("infoModal").classList.remove("on"); }
 
-logos(); buildInfo(); render();
+try { logos(); buildInfo(); render(); }
+catch (e) {
+  document.getElementById("list").innerHTML =
+    '<div class="empty">Sorry — this report could not be displayed. ' + (e && e.message ? esc(e.message) : "") + '</div>';
+}
 </script>
 </body></html>`;
 }
