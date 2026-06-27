@@ -69,9 +69,21 @@ export async function GET(req: NextRequest) {
       const scenarios = allScenarios.filter((s) => channelIds.includes(s.channelId));
       const cols = Array.from(dateCols);
 
+      // Latest load stamp per vendor — to flag stale rows (not in the latest DISPO).
+      const vendorMax = new Map<string, string>();
+      for (const row of enriched.rows) {
+        const v = String(row["_vendor"] ?? "");
+        const s = String(row["_lastLoadedAt"] ?? "");
+        if (s > (vendorMax.get(v) ?? "")) vendorMax.set(v, s);
+      }
+
       for (const row of enriched.rows) {
         const art = String(row["Article"] ?? "");
         if (article && art.toLowerCase() !== article) continue;
+        const vend = String(row["_vendor"] ?? "");
+        const stamp = String(row["_lastLoadedAt"] ?? "");
+        const maxStamp = vendorMax.get(vend) ?? "";
+        const isCurrent = !maxStamp ? true : stamp === maxStamp;
         const soh = num(row["SOH"]);
         let sales = 0;
         for (const c of cols) { const v = num(row[c]); if (!isNaN(v)) sales += v; }
@@ -79,6 +91,8 @@ export async function GET(req: NextRequest) {
           client: client.name,
           channel: row.__channel ?? "",
           vendor: row.__vendor ?? "",
+          isCurrent,
+          lastLoadedAt: stamp,
           loadedPeriod: row.__loadedPeriod ?? "",
           loadedAt: row.__loadedAt ?? "",
           article: art,
@@ -100,13 +114,17 @@ export async function GET(req: NextRequest) {
       Number(b.isOOS) - Number(a.isOOS) ||
       String(a.article).localeCompare(String(b.article)),
     );
+    const current = out.filter((r) => r.isCurrent);
     return Response.json(
       {
         site,
         totalRows: out.length,
-        oosCount: out.filter((r) => r.isOOS).length,
-        statusCount: out.filter((r) => String(r.prst).trim() !== "").length,
+        currentRows: current.length,
+        staleRows: out.length - current.length,
+        oosCount_current: current.filter((r) => r.isOOS).length,
+        statusCount_current: current.filter((r) => String(r.prst).trim() !== "").length,
         rowsByChannel: byChannel,
+        note: "currentRows = SKUs in the latest DISPO load (per vendor). The store report now uses only these. Re-upload the latest DISPO to stamp existing rows.",
         rows: out,
       },
       { headers: noCacheHeaders() },

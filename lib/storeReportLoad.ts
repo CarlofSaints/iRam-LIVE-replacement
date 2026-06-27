@@ -26,6 +26,28 @@ function norm(v: unknown): string {
   return String(v ?? "").trim().toLowerCase();
 }
 
+// Keep only SKUs from the LATEST DISPO load, per vendor. Each row is stamped at
+// merge time with `_vendor` + `_lastLoadedAt`; for each vendor the newest stamp
+// is the latest load, and rows with an older stamp are stale (dropped out of a
+// later DISPO) so their point-in-time fields (STATUS/SOH/SOO/SIT) are invalid.
+// Rows with no stamp (legacy, pre-stamping) are kept until that vendor is
+// re-uploaded (then the stamped rows win and the legacy ones drop).
+export function latestLoadPerVendor<T extends Record<string, unknown>>(rows: T[]): T[] {
+  const groups = new Map<string, T[]>();
+  for (const r of rows) {
+    const v = String(r["_vendor"] ?? "");
+    (groups.get(v) ?? groups.set(v, []).get(v)!).push(r);
+  }
+  const out: T[] = [];
+  for (const g of groups.values()) {
+    let max = "";
+    for (const r of g) { const s = String(r["_lastLoadedAt"] ?? ""); if (s > max) max = s; }
+    if (!max) { out.push(...g); continue; }          // no stamps → legacy, keep all
+    for (const r of g) if (String(r["_lastLoadedAt"] ?? "") === max) out.push(r);
+  }
+  return out;
+}
+
 export interface LoadStoreReportOpts {
   siteCode: string;
   clientIds?: string[];        // omit → all clients with sendConsolidatedStoreReports
@@ -89,7 +111,8 @@ export async function loadStoreReport(opts: LoadStoreReportOpts): Promise<Loaded
       if (meta.lastMergedAt && meta.lastMergedAt > cLoadedAt) cLoadedAt = meta.lastMergedAt;
       for (const dc of meta.dateColumns ?? []) { dateCols.add(dc); allDateCols.add(dc); }
       const ledger = await getSalesLedger(client.id, meta.channelId);
-      const filtered = ledger.filter((r) => norm(r["Site"]) === site);
+      // Latest load per vendor only — drop SKUs that fell out of a later DISPO.
+      const filtered = latestLoadPerVendor(ledger.filter((r) => norm(r["Site"]) === site));
       if (filtered.length) {
         rows.push(...filtered);
         channelIds.push(meta.channelId);

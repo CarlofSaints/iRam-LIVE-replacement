@@ -204,6 +204,13 @@ export async function mergeDispo(params: MergeDispoParams): Promise<MergeResult>
   let updated = 0;
   let unchanged = 0;
 
+  // Stamp every row this upload touches with the upload's vendor + a load marker
+  // so reports can tell which SKUs are in the LATEST DISPO (point-in-time fields:
+  // STATUS/SOH/SOO/SIT) vs stale rows that lingered from an earlier load. Sales
+  // (date) columns still accumulate across loads for YTD — only presence/snapshot
+  // freshness is gated by this stamp downstream.
+  const loadStamp = new Date().toISOString();
+
   for (const row of rows) {
     const key = buildRowKey(row);
     if (!key) continue; // skip rows with no Article or Site
@@ -236,6 +243,8 @@ export async function mergeDispo(params: MergeDispoParams): Promise<MergeResult>
 
     if (!existingRow) {
       // INSERT — new combination
+      normalizedRow["_vendor"] = vendorNumber;
+      normalizedRow["_lastLoadedAt"] = loadStamp;
       ledgerMap.set(key, normalizedRow);
       inserted++;
     } else {
@@ -267,6 +276,11 @@ export async function mergeDispo(params: MergeDispoParams): Promise<MergeResult>
         }
       }
 
+      // Always re-stamp: this row WAS in the current upload, so it's part of the
+      // latest load even if no field value changed.
+      existingRow["_vendor"] = vendorNumber;
+      existingRow["_lastLoadedAt"] = loadStamp;
+
       if (changed) {
         updated++;
       } else {
@@ -296,7 +310,7 @@ export async function mergeDispo(params: MergeDispoParams): Promise<MergeResult>
     totalRows: mergedRows.length,
     dateColumns: Array.from(allDateCols).sort(),
     mergedUploadIds,
-    lastMergedAt: new Date().toISOString(),
+    lastMergedAt: loadStamp,
     reportYear: reportYear ?? existingMeta?.reportYear,
     reportMonth: reportMonth ?? existingMeta?.reportMonth,
     reportWeek: reportWeek ?? existingMeta?.reportWeek,
