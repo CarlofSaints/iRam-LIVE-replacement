@@ -96,7 +96,9 @@ export function renderStoreReportPage(report: StoreReport, meta: StoreReportPage
   .grid{margin-top:12px;border:1px solid var(--line);border-radius:10px;padding:14px;display:grid;grid-template-columns:repeat(3,1fr);gap:14px 10px}
   .g .k{color:var(--grey);font-size:11px}.g .val{font-weight:600;font-size:14px;margin-top:2px}
   .item.tick .nm{text-decoration:line-through;color:#9aa3ad}
+  .item{transition:opacity .25s ease, background-color .25s ease}
   .item.tick{opacity:.7}
+  .item.leaving{background:#e9f6ee}
   .secttl{padding:18px 6px 2px;font:700 13px Arial;color:var(--grey)}
   .empty{padding:26px 16px;text-align:center;color:#9aa3ad;font-size:13px}
   .foot{text-align:center;color:#9aa3ad;font-size:11px;padding:22px 16px}
@@ -237,7 +239,7 @@ function itemHtml(l){
   const alert = oosAlert(l);
   return '<div class="item'+(ticked?" tick":"")+'" data-id="'+esc(id)+'">'
     + '<div class="row" onclick="toggleOpen(this)">'
-      + '<input type="checkbox" class="ck" '+(ticked?"checked":"")+' onclick="event.stopPropagation();tick(\\''+esc(id)+'\\',this.checked)">'
+      + '<input type="checkbox" class="ck" '+(ticked?"checked":"")+' onclick="event.stopPropagation();tick(\\''+esc(id)+'\\',this.checked,this)">'
       + '<div class="main"><div class="nm">'+esc(l.description||l.article)+'</div>'
         + '<div class="meta">#'+esc(l.article)+(l.barcode?'  '+esc(l.barcode):'')+'  <b>'+esc(l.clientName)+'</b></div>'
         + (chips?'<div class="chips">'+chips+'</div>':'')
@@ -294,7 +296,18 @@ function renderClientOptionsOnce(){
 function setCat(k){ active=k; render(); }
 function toggleOpen(el){ el.parentElement.classList.toggle("open"); }
 function toggleSort(){ sortMode = sortMode==="urgent"?"az":"urgent"; document.getElementById("sortBtn").textContent = sortMode==="urgent"?"⇅ Most urgent":"⇅ A–Z"; render(); }
-function tick(id,on){ if(on) ticks[id]=1; else delete ticks[id]; localStorage.setItem(TKEY,JSON.stringify(ticks)); render(); }
+function tick(id,on,box){
+  if(on) ticks[id]=1; else delete ticks[id];
+  localStorage.setItem(TKEY,JSON.stringify(ticks));
+  // When ticking ON, briefly show the checked tick + strikethrough in place,
+  // then re-render (which moves it down to Completed). Feels less jarring than
+  // an instant jump. Unticking re-renders immediately.
+  if(on && box){
+    const item = box.closest(".item");
+    if(item){ item.classList.add("tick","leaving"); setTimeout(render, 650); return; }
+  }
+  render();
+}
 
 function logos(){
   const L=(u,alt)=> u? '<img src="'+esc(u)+'" alt="'+esc(alt)+'">' : '<span style="color:#9aa3ad;font-weight:600;font-size:12px">'+esc(alt)+'</span>';
