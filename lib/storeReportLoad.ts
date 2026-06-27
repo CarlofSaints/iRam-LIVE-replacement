@@ -32,6 +32,7 @@ export interface LoadStoreReportOpts {
   year?: number;
   month?: number;
   week?: number;
+  excludedStreams?: string[];  // `${clientId}|${channelId}|${vendor}` to omit (per-week exclusions)
 }
 
 export interface LoadedStoreReport {
@@ -70,8 +71,12 @@ export async function loadStoreReport(opts: LoadStoreReportOpts): Promise<Loaded
     const dateCols = new Set<string>();
     const channelIds: string[] = [];
 
+    const excluded = new Set(opts.excludedStreams ?? []);
     for (const meta of ledgers) {
       if (meta.reportYear) periods.push({ y: meta.reportYear, m: meta.reportMonth ?? 1, w: meta.reportWeek ?? 1 });
+      // Skip a channel stream that's been excluded for this week.
+      const streamId = `${client.id}|${meta.channelId}|${meta.vendorNumber ?? ""}`;
+      if (excluded.has(streamId)) continue;
       for (const dc of meta.dateColumns ?? []) { dateCols.add(dc); allDateCols.add(dc); }
       const ledger = await getSalesLedger(client.id, meta.channelId);
       const filtered = ledger.filter((r) => norm(r["Site"]) === site);

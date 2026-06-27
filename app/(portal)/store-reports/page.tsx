@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { authFetch, usePermissions } from "@/lib/useAuth";
+import { authFetch, useAuth, usePermissions } from "@/lib/useAuth";
 
 interface ClientOpt { id: string; name: string; flagged: boolean }
 interface StoreOpt { siteCode: string; siteName: string; subChannel: string }
@@ -24,9 +24,15 @@ const CARD_LABELS: [string, string][] = [
   ["marginOpp", "Margin Opportunity"],
 ];
 
+interface SyncSettings { enabled: boolean; channels: string[]; minIntervalSeconds: number; lastRun?: { at: string; ok: boolean; visitsSeen: number; sent: number; skipped: number; failed: number; message?: string } }
+interface RunOutcome { siteCode: string; repEmail: string; store: string; status: string; actions?: number; detail?: string }
+interface RunResult { ok: boolean; armedPeriod: string | null; visitsSeen: number; sent: number; skipped: number; failed: number; dryRun: boolean; outcomes: RunOutcome[]; message?: string }
+
 export default function StoreReportsTestPage() {
   const { can } = usePermissions();
+  const { user } = useAuth();
   const canManage = can("manage_store_reports");
+  const isSuperAdmin = user?.role === "super_admin";
 
   const [clients, setClients] = useState<ClientOpt[]>([]);
   const [stores, setStores] = useState<StoreOpt[]>([]);
@@ -87,6 +93,60 @@ export default function StoreReportsTestPage() {
       setError("Network error");
     }
     setSending(false);
+  }
+
+  // ── Sync settings (super-admin) ──
+  const [sync, setSync] = useState<SyncSettings | null>(null);
+  const [channelsText, setChannelsText] = useState("");
+  const [proxyOk, setProxyOk] = useState<boolean | null>(null);
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [syncMsg, setSyncMsg] = useState("");
+  const [runResult, setRunResult] = useState<RunResult | null>(null);
+
+  async function loadSync() {
+    try {
+      const res = await authFetch("/api/store-reports/sync");
+      if (res.ok) {
+        const d = await res.json();
+        setSync(d.settings);
+        setChannelsText((d.settings.channels || []).join("\n"));
+        setProxyOk(!!d.proxyConfigured);
+      }
+    } catch { /* ignore */ }
+  }
+  useEffect(() => { if (isSuperAdmin) loadSync(); /* eslint-disable-next-line */ }, [isSuperAdmin]);
+
+  async function saveSync(next: Partial<SyncSettings>) {
+    setSyncBusy(true); setSyncMsg(""); setRunResult(null);
+    try {
+      const res = await authFetch("/api/store-reports/sync", {
+        method: "POST",
+        body: JSON.stringify({
+          action: "save",
+          enabled: next.enabled ?? sync?.enabled,
+          channels: channelsText.split(/[\n,]/).map((s) => s.trim()).filter(Boolean),
+          minIntervalSeconds: next.minIntervalSeconds ?? sync?.minIntervalSeconds ?? 0,
+        }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok) { setSync(d.settings); setSyncMsg("Saved"); setTimeout(() => setSyncMsg(""), 2500); }
+      else setSyncMsg(d.error || "Save failed");
+    } catch { setSyncMsg("Network error"); }
+    setSyncBusy(false);
+  }
+
+  async function runSync(dry: boolean) {
+    setSyncBusy(true); setSyncMsg(""); setRunResult(null);
+    try {
+      const res = await authFetch("/api/store-reports/sync", {
+        method: "POST",
+        body: JSON.stringify({ action: dry ? "dryrun" : "run" }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok) { setRunResult(d as RunResult); loadSync(); }
+      else setSyncMsg(d.error || "Run failed");
+    } catch { setSyncMsg("Network error"); }
+    setSyncBusy(false);
   }
 
   if (!canManage) {
@@ -178,6 +238,114 @@ export default function StoreReportsTestPage() {
             className="mt-3 inline-block text-xs font-semibold text-[var(--color-primary)] underline">
             Open the hosted report ↗
           </a>
+        </div>
+      )}
+
+      {/* ── Sync (auto-trigger) — super admin only ── */}
+      {isSuperAdmin && (
+        <div className="mt-10">
+          <h2 className="mb-1 text-lg font-bold text-[var(--color-text)]">Auto-send (check-in trigger)</h2>
+          <p className="mb-4 max-w-2xl text-sm text-[var(--color-text-muted)]">
+            A scheduled job runs every 3 minutes: it reads today&apos;s Massmart check-ins, and for each one — if a week is
+            armed — emails that store&apos;s consolidated report to the rep (once per store + rep per week).
+          </p>
+
+          {proxyOk === false && (
+            <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
+              SQL proxy not configured (SQL_PROXY_URL / SQL_PROXY_API_KEY). The trigger can&apos;t read check-ins until that&apos;s set.
+            </div>
+          )}
+          {syncMsg && <div className="mb-3 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-2 text-sm text-[var(--color-text)]">{syncMsg}</div>}
+
+          {sync && (
+            <div className="rounded-xl border border-[var(--color-border)] bg-white p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-semibold text-[var(--color-text)]">Auto-send enabled</div>
+                  <div className="text-xs text-[var(--color-text-muted)]">Master switch for the scheduled job.</div>
+                </div>
+                <button
+                  onClick={() => saveSync({ enabled: !sync.enabled })}
+                  disabled={syncBusy}
+                  className={`relative h-7 w-12 rounded-full transition-colors ${sync.enabled ? "bg-[var(--color-primary)]" : "bg-zinc-300"} disabled:opacity-50`}>
+                  <span className={`absolute top-0.5 h-6 w-6 rounded-full bg-white transition-all ${sync.enabled ? "left-[22px]" : "left-0.5"}`} />
+                </button>
+              </div>
+
+              <label className="mt-6 block">
+                <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">Channel allow-list (one per line)</span>
+                <textarea
+                  value={channelsText}
+                  onChange={(e) => setChannelsText(e.target.value)}
+                  rows={6}
+                  className="w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm font-mono"
+                  placeholder="Makro&#10;BWH&#10;..." />
+                <span className="mt-1 block text-xs text-[var(--color-text-muted)]">Only check-ins on these Perigee channels trigger a report (matched ignoring case / spaces / dashes).</span>
+              </label>
+
+              <label className="mt-4 block max-w-xs">
+                <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">Min seconds between runs (throttle)</span>
+                <input
+                  type="number" min={0}
+                  value={sync.minIntervalSeconds}
+                  onChange={(e) => setSync({ ...sync, minIntervalSeconds: Number(e.target.value) || 0 })}
+                  className="w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm" />
+                <span className="mt-1 block text-xs text-[var(--color-text-muted)]">0 = run every time the cron fires (every 3 min).</span>
+              </label>
+
+              <div className="mt-6 flex flex-wrap gap-3">
+                <button onClick={() => saveSync({})} disabled={syncBusy}
+                  className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)] disabled:opacity-40">
+                  {syncBusy ? "Saving…" : "Save settings"}
+                </button>
+                <button onClick={() => runSync(true)} disabled={syncBusy}
+                  className="rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm font-semibold text-[var(--color-text)] hover:border-zinc-400 disabled:opacity-50">
+                  Dry run (preview)
+                </button>
+                <button onClick={() => runSync(false)} disabled={syncBusy}
+                  className="rounded-lg border border-red-300 px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50">
+                  Run now (sends!)
+                </button>
+              </div>
+
+              {sync.lastRun && (
+                <div className="mt-4 text-xs text-[var(--color-text-muted)]">
+                  Last run {new Date(sync.lastRun.at).toLocaleString("en-GB")} — {sync.lastRun.ok ? "OK" : "error"} ·
+                  {" "}{sync.lastRun.visitsSeen} visits · {sync.lastRun.sent} sent · {sync.lastRun.skipped} skipped · {sync.lastRun.failed} failed
+                  {sync.lastRun.message ? ` · ${sync.lastRun.message}` : ""}
+                </div>
+              )}
+            </div>
+          )}
+
+          {runResult && (
+            <div className="mt-4 rounded-xl border border-[var(--color-border)] bg-white p-5">
+              <p className="text-sm font-semibold text-[var(--color-text)]">
+                {runResult.dryRun ? "Dry run" : "Run"} — armed: {runResult.armedPeriod || "none"} · {runResult.visitsSeen} visits ·
+                {" "}{runResult.sent} sent · {runResult.skipped} skipped · {runResult.failed} failed
+                {runResult.message ? ` · ${runResult.message}` : ""}
+              </p>
+              {runResult.outcomes.length > 0 && (
+                <div className="mt-3 max-h-64 overflow-y-auto rounded-lg border border-[var(--color-border)]">
+                  <table className="w-full text-xs">
+                    <thead className="bg-zinc-50 text-[var(--color-text-muted)]">
+                      <tr><th className="px-3 py-2 text-left">Store</th><th className="px-3 py-2 text-left">Rep</th><th className="px-3 py-2 text-left">Status</th><th className="px-3 py-2 text-right">Actions</th></tr>
+                    </thead>
+                    <tbody>
+                      {runResult.outcomes.map((o, i) => (
+                        <tr key={i} className="border-t border-zinc-100">
+                          <td className="px-3 py-1.5">{o.store || o.siteCode}</td>
+                          <td className="px-3 py-1.5">{o.repEmail || "—"}</td>
+                          <td className="px-3 py-1.5">{o.status}{o.detail ? ` (${o.detail})` : ""}</td>
+                          <td className="px-3 py-1.5 text-right">{o.actions ?? ""}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
