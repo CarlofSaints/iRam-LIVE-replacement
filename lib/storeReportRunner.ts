@@ -21,6 +21,8 @@ import { hasProcessedVisit, hasSent, addSend } from "./storeReportLog";
 import { loadStoreReport, formatGeneratedAt, storeReportLogos } from "./storeReportLoad";
 import { renderStoreReportEmail } from "./storeReportEmail";
 import { sendStoreReportEmail } from "./email";
+import { addTrackingSend, trackingDay } from "./storeReportTracking";
+import { v4 as uuid } from "uuid";
 
 const normCh = (s: string) => s.toLowerCase().replace(/[\s_-]+/g, "");
 
@@ -147,18 +149,26 @@ export async function runStoreReportSync(opts: RunOptions): Promise<RunResult> {
         continue;
       }
 
-      const params = new URLSearchParams({ site: v.siteCode, year: String(loaded.year), month: String(loaded.month), week: String(loaded.week) });
+      const token = uuid();
+      const day = trackingDay();
+      const params = new URLSearchParams({ site: v.siteCode, year: String(loaded.year), month: String(loaded.month), week: String(loaded.week), t: token, d: day });
       const reportUrl = `${opts.origin}/r?${params.toString()}`;
+      const trackingPixelUrl = `${opts.origin}/api/store-reports/track?t=${token}&d=${day}&e=open`;
       const html = renderStoreReportEmail(report, {
         repName: v.repName || "there",
         periodLabel: loaded.periodLabel,
         reportUrl,
         generatedAt: formatGeneratedAt(),
         version: "iRam LIVE",
+        trackingPixelUrl,
         ...storeReportLogos(opts.origin, report.subChannel),
       });
 
       await sendStoreReportEmail({ to: v.repEmail, subject: `Store Report — ${store} — ${loaded.periodLabel}`, html });
+      await addTrackingSend({
+        token, day, periodKey: activeKey, siteCode: v.siteCode, store,
+        channel: report.subChannel, repEmail: v.repEmail, repName: v.repName, sentAt: new Date().toISOString(),
+      });
       await addSend({
         periodKey: activeKey, siteCode: v.siteCode, storeName: store, repEmail: v.repEmail,
         visitGuid: v.visitGuid, sentAt: new Date().toISOString(), status: "sent",

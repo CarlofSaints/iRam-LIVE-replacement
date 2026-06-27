@@ -63,6 +63,7 @@ export async function updateUser(
       | "lastLoginAt"
       | "profilePicUrl"
       | "receiveStoreAlerts"
+      | "receiveStoreReportDigest"
       | "clientIds"
     >
   >

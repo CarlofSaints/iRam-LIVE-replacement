@@ -21,6 +21,7 @@ export interface StoreReportEmailMeta {
   iramLogoUrl?: string;      // data: URL or https
   outerjoinLogoUrl?: string;
   retailerLogoUrl?: string;  // store's own main-channel logo (Makro / Builders)
+  trackingPixelUrl?: string; // 1×1 open-tracking pixel
 }
 
 const NAVY = "#1c3d5a";
@@ -145,5 +146,6 @@ export function renderStoreReportEmail(report: StoreReport, meta: StoreReportEma
 </table>
 </td></tr>
 </table>
+${meta.trackingPixelUrl ? `<img src="${esc(meta.trackingPixelUrl)}" width="1" height="1" alt="" style="display:none;width:1px;height:1px;">` : ""}
 </body></html>`;
 }

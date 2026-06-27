@@ -22,6 +22,7 @@ export interface StoreReportPageMeta {
   iramLogoUrl?: string;
   outerjoinLogoUrl?: string;
   retailerLogoUrl?: string;
+  track?: { url: string; token: string; day: string };  // engagement beacons
 }
 
 function esc(s: unknown): string {
@@ -293,7 +294,15 @@ function renderClientOptionsOnce(){
   for(const c of R.clients){ const n=R.lines.filter(l=>l.clientId===c.clientId).length; html+='<option value="'+esc(c.clientId)+'">'+esc(c.clientName)+' ('+n+')</option>'; }
   sel.innerHTML=html;
 }
-function setCat(k){ active=k; render(); }
+function beacon(ev, card){
+  try{
+    if(!M.track || !M.track.url) return;
+    var u = M.track.url + "?t=" + encodeURIComponent(M.track.token) + "&d=" + encodeURIComponent(M.track.day) + "&e=" + ev + (card? "&c=" + encodeURIComponent(card) : "");
+    if(navigator.sendBeacon){ navigator.sendBeacon(u); }
+    else { fetch(u, {method:"GET", keepalive:true, mode:"no-cors"}).catch(function(){}); }
+  }catch(e){}
+}
+function setCat(k){ active=k; beacon("card", k); render(); }
 function toggleOpen(el){ el.parentElement.classList.toggle("open"); }
 function toggleSort(){ sortMode = sortMode==="urgent"?"az":"urgent"; document.getElementById("sortBtn").textContent = sortMode==="urgent"?"⇅ Most urgent":"⇅ A–Z"; render(); }
 function tick(id,on,box){
@@ -332,7 +341,7 @@ function buildInfo(){
 function openInfo(){ document.getElementById("infoModal").classList.add("on"); }
 function closeInfo(){ document.getElementById("infoModal").classList.remove("on"); }
 
-try { logos(); buildInfo(); render(); }
+try { logos(); buildInfo(); render(); beacon("view"); }
 catch (e) {
   document.getElementById("list").innerHTML =
     '<div class="empty">Sorry — this report could not be displayed. ' + (e && e.message ? esc(e.message) : "") + '</div>';

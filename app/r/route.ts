@@ -30,12 +30,15 @@ export async function GET(req: NextRequest) {
       week: intParam(u.searchParams.get("week")),
     });
 
+    const token = u.searchParams.get("t") || "";
+    const day = u.searchParams.get("d") || "";
     const html = renderStoreReportPage(loaded.report, {
       periodLabel: loaded.periodLabel,
       generatedAt: formatGeneratedAt(),
       version: "iRam LIVE",
       reportId: `${site}-${loaded.year}-${loaded.month}-${loaded.week}`,
       ...storeReportLogos(u.origin, loaded.report.subChannel),
+      ...(token && day ? { track: { url: `${u.origin}/api/store-reports/track`, token, day } } : {}),
     });
 
     return new Response(html, {

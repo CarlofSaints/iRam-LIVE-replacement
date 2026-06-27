@@ -4,6 +4,8 @@ import { loadStoreReport, formatGeneratedAt, storeReportLogos } from "@/lib/stor
 import { renderStoreReportEmail } from "@/lib/storeReportEmail";
 import { sendStoreReportEmail } from "@/lib/email";
 import { addLog } from "@/lib/activityLog";
+import { addTrackingSend, trackingDay } from "@/lib/storeReportTracking";
+import { v4 as uuid } from "uuid";
 
 // Sends a one-off store-report email to the logged-in user (Outlook rendering
 // test). Real data, no SQL proxy needed — reads DISPO data from Blob + Resend.
@@ -41,14 +43,19 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const token = uuid();
+    const day = trackingDay();
     const params = new URLSearchParams({
       site: siteCode,
       year: String(loaded.year),
       month: String(loaded.month),
       week: String(loaded.week),
+      t: token,
+      d: day,
     });
     if (body.clientId) params.set("clientId", body.clientId);
     const reportUrl = `${req.nextUrl.origin}/r?${params.toString()}`;
+    const trackingPixelUrl = `${req.nextUrl.origin}/api/store-reports/track?t=${token}&d=${day}&e=open`;
 
     const html = renderStoreReportEmail(loaded.report, {
       repName: session.name || "there",
@@ -56,6 +63,7 @@ export async function POST(req: NextRequest) {
       reportUrl,
       generatedAt: formatGeneratedAt(),
       version: "iRam LIVE",
+      trackingPixelUrl,
       ...storeReportLogos(req.nextUrl.origin, loaded.report.subChannel),
     });
 
@@ -64,6 +72,11 @@ export async function POST(req: NextRequest) {
       to: session.email,
       subject: `[TEST] Store Report — ${store} — ${loaded.periodLabel}`,
       html,
+    });
+    await addTrackingSend({
+      token, day, periodKey: `${loaded.year}-${String(loaded.month).padStart(2, "0")}-${loaded.week}`,
+      siteCode, store, channel: loaded.report.subChannel, repEmail: session.email,
+      repName: session.name || "", sentAt: new Date().toISOString(), test: true,
     });
 
     addLog({

@@ -233,6 +233,63 @@ export async function sendStoreReportEmail(params: {
   });
 }
 
+// Daily store-report engagement digest for managers.
+export async function sendStoreReportDigestEmail(params: {
+  to: string[];
+  dayLabel: string;                 // e.g. "27 Jun 2026"
+  totalSent: number;
+  rows: { channel: string; sent: number; opened: number; used: number }[];
+}): Promise<void> {
+  if (params.to.length === 0) return;
+  const resend = getResend();
+  const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 100) : 0);
+  const body = params.rows.map((r) => `
+    <tr>
+      <td style="padding:8px 10px;font-size:13px;color:#2D3748;font-weight:600;border-bottom:1px solid #EDF2F7;">${r.channel}</td>
+      <td style="padding:8px 10px;font-size:13px;color:#2D3748;text-align:center;border-bottom:1px solid #EDF2F7;">${r.sent}</td>
+      <td style="padding:8px 10px;font-size:13px;color:#2D3748;text-align:center;border-bottom:1px solid #EDF2F7;">${r.opened} <span style="color:#A0AEC0;">(${pct(r.opened, r.sent)}%)</span></td>
+      <td style="padding:8px 10px;font-size:13px;color:#2D3748;text-align:center;border-bottom:1px solid #EDF2F7;">${r.used} <span style="color:#A0AEC0;">(${pct(r.used, r.sent)}%)</span></td>
+    </tr>`).join("");
+
+  await resend.emails.send({
+    from: FROM,
+    to: params.to,
+    subject: `Store Report Digest — ${params.dayLabel} — ${params.totalSent} sent`,
+    html: `
+      <div style="font-family:Arial,Helvetica,sans-serif;max-width:600px;margin:0 auto;background:#ffffff;">
+        <div style="background:#7CC042;padding:24px 32px;text-align:center;border-radius:8px 8px 0 0;">
+          <h1 style="color:#ffffff;font-size:20px;margin:0;font-weight:700;">Store Report Digest</h1>
+          <p style="color:rgba(255,255,255,0.9);font-size:13px;margin:6px 0 0;">${params.dayLabel}</p>
+        </div>
+        <div style="padding:28px 32px;border:1px solid #E2E8F0;border-top:none;border-radius:0 0 8px 8px;">
+          <p style="font-size:15px;color:#2D3748;margin:0 0 18px;">
+            Today <strong>${params.totalSent}</strong> store report${params.totalSent === 1 ? " was" : "s were"} sent.
+          </p>
+          <table style="width:100%;border-collapse:collapse;">
+            <thead>
+              <tr>
+                <th style="padding:8px 10px;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#718096;text-align:left;border-bottom:2px solid #E2E8F0;">Channel</th>
+                <th style="padding:8px 10px;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#718096;text-align:center;border-bottom:2px solid #E2E8F0;">Sent</th>
+                <th style="padding:8px 10px;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#718096;text-align:center;border-bottom:2px solid #E2E8F0;">Opened</th>
+                <th style="padding:8px 10px;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#718096;text-align:center;border-bottom:2px solid #E2E8F0;">Used</th>
+              </tr>
+            </thead>
+            <tbody>${body || `<tr><td colspan="4" style="padding:14px;text-align:center;color:#A0AEC0;font-size:13px;">No reports sent today.</td></tr>`}</tbody>
+          </table>
+          <p style="font-size:12px;color:#A0AEC0;margin:18px 0 0;line-height:1.6;">
+            <strong>Opened</strong> = the email was opened or the report page was viewed.
+            <strong>Used</strong> = the rep clicked more than one KPI card on the report.
+            Open tracking can over-count slightly (some mail apps pre-load images); &ldquo;used&rdquo; is the reliable engagement signal.
+          </p>
+          <div style="margin-top:24px;padding-top:18px;border-top:1px solid #E2E8F0;text-align:center;">
+            <p style="font-size:12px;color:#A0AEC0;margin:0;">Powered by <strong style="color:#718096;">OuterJoin</strong></p>
+          </div>
+        </div>
+      </div>
+    `,
+  });
+}
+
 export async function sendPasswordResetEmail(params: {
   to: string;
   name: string;

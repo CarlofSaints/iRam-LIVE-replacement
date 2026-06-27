@@ -105,6 +105,7 @@ export interface User {
   lastLoginAt?: string; // ISO
   profilePicUrl?: string;
   receiveStoreAlerts?: boolean;
+  receiveStoreReportDigest?: boolean;  // gets the daily store-report engagement digest
   // Client scoping — when non-empty, this user may only see data for these
   // client IDs (external "client" accounts). Empty/undefined = all clients.
   clientIds?: string[];

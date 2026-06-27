@@ -27,6 +27,9 @@ const CARD_LABELS: [string, string][] = [
 interface SyncSettings { enabled: boolean; channels: string[]; minIntervalSeconds: number; lastRun?: { at: string; ok: boolean; visitsSeen: number; sent: number; skipped: number; failed: number; message?: string } }
 interface RunOutcome { siteCode: string; repEmail: string; store: string; status: string; actions?: number; detail?: string }
 interface RunResult { ok: boolean; armedPeriod: string | null; visitsSeen: number; sent: number; skipped: number; failed: number; dryRun: boolean; outcomes: RunOutcome[]; message?: string }
+interface EngSummary { channel: string; sent: number; opened: number; used: number }
+interface EngDetail { store: string; siteCode: string; channel: string; repName: string; repEmail: string; sentAt: string; opened: boolean; used: boolean; cardClicks: number; distinctCards: string[]; test: boolean }
+interface EngResult { day: string; summary: EngSummary[]; totalSent: number; detail: EngDetail[] }
 
 export default function StoreReportsTestPage() {
   const { can } = usePermissions();
@@ -147,6 +150,37 @@ export default function StoreReportsTestPage() {
       else setSyncMsg(d.error || "Run failed");
     } catch { setSyncMsg("Network error"); }
     setSyncBusy(false);
+  }
+
+  // ── Engagement / detail log ──
+  const todayStr = new Date().toLocaleDateString("en-CA");
+  const [engDay, setEngDay] = useState(todayStr);
+  const [eng, setEng] = useState<EngResult | null>(null);
+  const [engBusy, setEngBusy] = useState(false);
+  const [engMsg, setEngMsg] = useState("");
+
+  async function loadEng(day: string) {
+    setEngBusy(true);
+    try {
+      const res = await authFetch(`/api/store-reports/engagement?day=${encodeURIComponent(day)}`);
+      if (res.ok) setEng(await res.json());
+    } catch { /* ignore */ }
+    setEngBusy(false);
+  }
+  useEffect(() => { if (canManage) loadEng(engDay); /* eslint-disable-next-line */ }, [engDay, canManage]);
+
+  async function sendDigest(send: boolean) {
+    setEngBusy(true); setEngMsg("");
+    try {
+      const res = await authFetch("/api/store-reports/engagement", {
+        method: "POST", body: JSON.stringify({ day: engDay, send }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok) setEngMsg(send ? `Digest sent to ${d.recipients?.length ?? 0} manager(s)` : `Preview: ${d.totalSent} sent, ${d.recipients?.length ?? 0} manager recipient(s)`);
+      else setEngMsg(d.error || "Failed");
+    } catch { setEngMsg("Network error"); }
+    setEngBusy(false);
+    setTimeout(() => setEngMsg(""), 4000);
   }
 
   if (!canManage) {
@@ -348,6 +382,107 @@ export default function StoreReportsTestPage() {
           )}
         </div>
       )}
+
+      {/* ── Engagement / detail log ── */}
+      <div className="mt-10">
+        <div className="mb-1 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-lg font-bold text-[var(--color-text)]">Engagement</h2>
+          <div className="flex items-center gap-2">
+            <input type="date" value={engDay} onChange={(e) => setEngDay(e.target.value)}
+              className="rounded-lg border border-[var(--color-border)] bg-white px-3 py-1.5 text-sm" />
+            <button onClick={() => loadEng(engDay)} disabled={engBusy}
+              className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-sm font-medium text-[var(--color-text-muted)] hover:border-zinc-400 disabled:opacity-50">
+              {engBusy ? "…" : "Refresh"}
+            </button>
+            {isSuperAdmin && (
+              <>
+                <button onClick={() => sendDigest(false)} disabled={engBusy}
+                  className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-sm font-medium text-[var(--color-text)] hover:border-zinc-400 disabled:opacity-50">
+                  Preview digest
+                </button>
+                <button onClick={() => sendDigest(true)} disabled={engBusy}
+                  className="rounded-lg bg-[var(--color-primary)] px-3 py-1.5 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)] disabled:opacity-40">
+                  Send digest now
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+        <p className="mb-4 max-w-2xl text-sm text-[var(--color-text-muted)]">
+          Who&apos;s actually using the reports. <b>Opened</b> = email opened or page viewed; <b>Used</b> = clicked more than one KPI card.
+        </p>
+        {engMsg && <div className="mb-3 rounded-lg border border-green-200 bg-green-50 px-4 py-2 text-sm text-green-700">{engMsg}</div>}
+
+        {eng && (
+          <>
+            {/* Per-channel summary */}
+            <div className="mb-4 overflow-x-auto rounded-xl border border-[var(--color-border)] bg-white">
+              <table className="w-full text-sm">
+                <thead className="bg-zinc-50 text-[var(--color-text-muted)]">
+                  <tr>
+                    <th className="px-4 py-2.5 text-left font-semibold">Channel</th>
+                    <th className="px-4 py-2.5 text-center font-semibold">Sent</th>
+                    <th className="px-4 py-2.5 text-center font-semibold">Opened</th>
+                    <th className="px-4 py-2.5 text-center font-semibold">Used</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {eng.summary.length === 0 ? (
+                    <tr><td colSpan={4} className="px-4 py-6 text-center text-[var(--color-text-muted)]">No reports sent on this day.</td></tr>
+                  ) : eng.summary.map((s) => (
+                    <tr key={s.channel} className="border-t border-zinc-100">
+                      <td className="px-4 py-2.5 font-medium text-[var(--color-text)]">{s.channel}</td>
+                      <td className="px-4 py-2.5 text-center">{s.sent}</td>
+                      <td className="px-4 py-2.5 text-center">{s.opened} <span className="text-[var(--color-text-muted)]">({s.sent ? Math.round((s.opened / s.sent) * 100) : 0}%)</span></td>
+                      <td className="px-4 py-2.5 text-center">{s.used} <span className="text-[var(--color-text-muted)]">({s.sent ? Math.round((s.used / s.sent) * 100) : 0}%)</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+                {eng.summary.length > 0 && (
+                  <tfoot>
+                    <tr className="border-t-2 border-[var(--color-border)] bg-zinc-50 font-semibold">
+                      <td className="px-4 py-2.5">Total</td>
+                      <td className="px-4 py-2.5 text-center">{eng.totalSent}</td>
+                      <td className="px-4 py-2.5 text-center">{eng.summary.reduce((a, s) => a + s.opened, 0)}</td>
+                      <td className="px-4 py-2.5 text-center">{eng.summary.reduce((a, s) => a + s.used, 0)}</td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+
+            {/* Detail log */}
+            {eng.detail.length > 0 && (
+              <div className="max-h-96 overflow-y-auto rounded-xl border border-[var(--color-border)] bg-white">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-zinc-50 text-[var(--color-text-muted)]">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-semibold">Store</th>
+                      <th className="px-3 py-2 text-left font-semibold">Channel</th>
+                      <th className="px-3 py-2 text-left font-semibold">Rep</th>
+                      <th className="px-3 py-2 text-center font-semibold">Opened</th>
+                      <th className="px-3 py-2 text-center font-semibold">Used</th>
+                      <th className="px-3 py-2 text-center font-semibold">Cards</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {eng.detail.map((d, i) => (
+                      <tr key={i} className="border-t border-zinc-100">
+                        <td className="px-3 py-1.5">{d.store}{d.test && <span className="ml-1 rounded bg-zinc-100 px-1 text-[10px] text-zinc-500">test</span>}</td>
+                        <td className="px-3 py-1.5">{d.channel}</td>
+                        <td className="px-3 py-1.5">{d.repName || d.repEmail}</td>
+                        <td className="px-3 py-1.5 text-center">{d.opened ? "✓" : "—"}</td>
+                        <td className="px-3 py-1.5 text-center">{d.used ? <span className="font-semibold text-green-600">✓</span> : "—"}</td>
+                        <td className="px-3 py-1.5 text-center">{d.distinctCards.length}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }
