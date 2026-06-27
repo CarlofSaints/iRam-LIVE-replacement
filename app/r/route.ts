@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { loadStoreReport, formatGeneratedAt } from "@/lib/storeReportLoad";
+import { loadStoreReport, formatGeneratedAt, storeReportLogos } from "@/lib/storeReportLoad";
 import { renderStoreReportPage } from "@/lib/storeReportPage";
 
 // PUBLIC hosted action-list page — reps open this from the email link, so it is
@@ -35,6 +35,7 @@ export async function GET(req: NextRequest) {
       generatedAt: formatGeneratedAt(),
       version: "iRam LIVE",
       reportId: `${site}-${loaded.year}-${loaded.month}-${loaded.week}`,
+      ...storeReportLogos(u.origin, loaded.report.subChannel),
     });
 
     return new Response(html, {

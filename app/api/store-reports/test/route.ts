@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { requirePermission, handleAuthError, noCacheHeaders } from "@/lib/auth";
-import { loadStoreReport, formatGeneratedAt } from "@/lib/storeReportLoad";
+import { loadStoreReport, formatGeneratedAt, storeReportLogos } from "@/lib/storeReportLoad";
 import { renderStoreReportEmail } from "@/lib/storeReportEmail";
 import { sendStoreReportEmail } from "@/lib/email";
 import { addLog } from "@/lib/activityLog";
@@ -56,6 +56,7 @@ export async function POST(req: NextRequest) {
       reportUrl,
       generatedAt: formatGeneratedAt(),
       version: "iRam LIVE",
+      ...storeReportLogos(req.nextUrl.origin, loaded.report.subChannel),
     });
 
     const store = loaded.report.storeName || siteCode;

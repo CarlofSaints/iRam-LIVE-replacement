@@ -10,6 +10,8 @@
    trigger — same code path, so what a rep gets is exactly what we preview.
    ────────────────────────────────────────────────────────────── */
 
+import { existsSync } from "fs";
+import { join } from "path";
 import { getClients } from "./clientData";
 import { getAllSalesLedgers, getSalesLedger } from "./salesData";
 import { enrichLedger } from "./enrichment";
@@ -56,6 +58,9 @@ export async function loadStoreReport(opts: LoadStoreReportOpts): Promise<Loaded
 
   // Collect stamped periods so we can default to the latest one.
   const periods: { y: number; m: number; w: number }[] = [];
+  // All date columns across every client — the latest one is the data's true
+  // "as of" month, which we anchor age / DROS / phantom to.
+  const allDateCols = new Set<string>();
 
   for (const client of clients) {
     const ledgers = await getAllSalesLedgers(client.id);
@@ -67,7 +72,7 @@ export async function loadStoreReport(opts: LoadStoreReportOpts): Promise<Loaded
 
     for (const meta of ledgers) {
       if (meta.reportYear) periods.push({ y: meta.reportYear, m: meta.reportMonth ?? 1, w: meta.reportWeek ?? 1 });
-      for (const dc of meta.dateColumns ?? []) dateCols.add(dc);
+      for (const dc of meta.dateColumns ?? []) { dateCols.add(dc); allDateCols.add(dc); }
       const ledger = await getSalesLedger(client.id, meta.channelId);
       const filtered = ledger.filter((r) => norm(r["Site"]) === site);
       if (filtered.length) {
@@ -99,8 +104,21 @@ export async function loadStoreReport(opts: LoadStoreReportOpts): Promise<Loaded
   const month = opts.month ?? best?.m ?? (now.getUTCMonth() + 1);
   const week = opts.week ?? best?.w ?? 1;
 
-  // Phantom / DROS anchor = last day of the report month.
-  const referenceDate = new Date(Date.UTC(year, month, 0));
+  // Reference ("as of") date = end of the LATEST month present in the data, so
+  // "days since last sold/received", DROS and the phantom cutoff are measured
+  // against the data's own latest month — not a stale stamped period (which can
+  // sit before the actual Last Sold dates and make recent dates clamp to 0d).
+  let referenceDate = new Date(Date.UTC(year, month, 0));
+  let latestKey = 0;
+  for (const col of allDateCols) {
+    const m = col.match(/^(\d{2})-(\d{4})$/);
+    if (!m) continue;
+    const key = Number(m[2]) * 100 + Number(m[1]);
+    if (key > latestKey) {
+      latestKey = key;
+      referenceDate = new Date(Date.UTC(Number(m[2]), Number(m[1]), 0));
+    }
+  }
 
   const report = buildStoreReport(inputs, { siteCode: opts.siteCode, referenceDate });
   const periodLabel = `Wk ${week} · ${MONTHS[month] || month} ${year}`;
@@ -148,6 +166,46 @@ export async function listStoresForClients(clientIds?: string[]): Promise<StoreP
 
   out.sort((a, b) => (a.subChannel || "").localeCompare(b.subChannel || "") || (a.siteName || a.siteCode).localeCompare(b.siteName || b.siteCode));
   return out;
+}
+
+// ── Footer logos ─────────────────────────────────────────────────────────────
+// iRam + OuterJoin are fixed brand marks; the retailer mark is chosen from the
+// store's sub-channel / channel. All served as hosted files (so they render in
+// Outlook, which blocks data-URL images). Drop new retailer files into
+// public/brand/retailers/ and add the mapping below.
+const RETAILER_FILE: Record<string, string> = {
+  makro: "makro.png",
+  "makro-liquor": "makro.png",
+  massbuild: "builders.png",
+  builders: "builders.png",
+  "builders warehouse": "builders.png",
+  bwh: "builders.png",
+  bex: "builders.png",
+  btd: "builders.png",
+  bss: "builders.png",
+  game: "game.png",
+};
+
+export function storeReportLogos(origin: string, subChannel: string): {
+  iramLogoUrl: string;
+  outerjoinLogoUrl: string;
+  retailerLogoUrl?: string;
+} {
+  const file = RETAILER_FILE[norm(subChannel)];
+  let retailerLogoUrl: string | undefined;
+  if (file) {
+    // Only advertise the URL if the file actually ships (else fall back to text).
+    try {
+      if (existsSync(join(process.cwd(), "public", "brand", "retailers", file))) {
+        retailerLogoUrl = `${origin}/brand/retailers/${file}`;
+      }
+    } catch { /* ignore — fall back to text */ }
+  }
+  return {
+    iramLogoUrl: `${origin}/brand/iram.png`,
+    outerjoinLogoUrl: `${origin}/brand/outerjoin.png`,
+    retailerLogoUrl,
+  };
 }
 
 // "26 Jun 2026 at 13:36" in SA local time.
