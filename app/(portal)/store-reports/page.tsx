@@ -160,11 +160,17 @@ export default function StoreReportsTestPage() {
   const [engMsg, setEngMsg] = useState("");
 
   async function loadEng(day: string) {
-    setEngBusy(true);
+    setEngBusy(true); setEngMsg("");
+    const empty: EngResult = { day, summary: [], totalSent: 0, detail: [] };
     try {
       const res = await authFetch(`/api/store-reports/engagement?day=${encodeURIComponent(day)}`);
-      if (res.ok) setEng(await res.json());
-    } catch { /* ignore */ }
+      const d = await res.json().catch(() => ({}));
+      if (res.ok) setEng(d);
+      else { setEng(empty); setEngMsg(d.error || `Couldn't load engagement (${res.status})`); }
+    } catch {
+      setEng(empty);
+      setEngMsg("Network error loading engagement");
+    }
     setEngBusy(false);
   }
   useEffect(() => { if (canManage) loadEng(engDay); /* eslint-disable-next-line */ }, [engDay, canManage]);

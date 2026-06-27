@@ -71,6 +71,7 @@ export interface StoreLine {
 
   prst: string;                 // PR ST code (display)
   statusLabel: string;          // status definition description (e.g. "Active") or ""
+  statusClass: "POSITIVE" | "NEGATIVE" | "UNCLASSIFIED";  // per-line classification
   vendorStatus: string;         // PMF product status (Active / Discontinued)
   ranging: "TRUE" | "FALSE" | "";  // "" when no ranging file loaded for the client
   rpType: string;               // RP replenishment code
@@ -257,8 +258,12 @@ export function buildStoreReport(
         flags.phantom = soldOld && recOld;
       }
 
-      // Status — negative PR ST classification (same engine as Month-End)
-      flags.status = classifyRowStatus(row, client.statusDefs, client.scenarios) === "NEGATIVE";
+      // Status — flag any SKU carrying a (non-blank) PR ST status. The per-line
+      // classification (positive/negative) is computed too and shown in the detail
+      // when a Status Reference rule exists for that code.
+      const statusRaw = String(row["Status"] ?? row["PR ST"] ?? "").trim();
+      const statusClass = classifyRowStatus(row, client.statusDefs, client.scenarios);
+      flags.status = statusRaw !== "";
 
       // Margin Risk / Opportunity
       const mac = num(row["MAC"], NaN);
@@ -303,6 +308,7 @@ export function buildStoreReport(
         lastReceivedDays: ageDays(row["Last Recv"], opts.referenceDate),
         prst,
         statusLabel: labelByCode.get(prst) || "",
+        statusClass,
         vendorStatus: pmfStatusDisplay(row),
         ranging: client.hasRanging ? (row["_rangingStatus"] === true ? "TRUE" : "FALSE") : "",
         rpType: String(row["RP"] ?? ""),
