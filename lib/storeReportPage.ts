@@ -348,7 +348,7 @@ const INFO = [
   ["#df332c","Out of Stock","A line that normally sells or holds stock here but is now at 0 or below on hand. Shelf's empty — raise an order. Ranked by DROS so the fastest sellers surface first."],
   ["#df332c","Low Stock Cover","Still selling (DROS &gt; 0) with 14 days cover or less left (days cover = on hand ÷ DROS). About to run out — reorder now."],
   ["#df332c","Phantom","On hand above 0 but no sale and no receipt in the last 3 months (blank/old dates count as stale). The system shows stock that may not be on the shelf — verify with a physical count."],
-  ["#df332c","Status","The line's store status (PR ST) is flagged negative by the client's status rules (e.g. delisted/blocked while still ranged or holding stock). Query the block or delist."],
+  ["#df332c","Status","Any SKU carrying a status flag on its store record (PR ST) — open the line to see whether that status is Positive or Negative (shown when we have a rule for it). Action anything negative; query the block or delist."],
   ["#df332c","Margin Risk","On hand above 0 and the store's cost (MAC) is higher than our cost (Nett) — margin eroded; we may owe support or free stock. At risk = on hand × (MAC − Nett)."],
   ["#2e9e5b","Margin Opportunity","On hand above 0 and the store's cost (MAC) is below ours (Nett) — drop the shelf price and hold margin, or push sales. Upside = on hand × (Nett − MAC)."],
 ];
