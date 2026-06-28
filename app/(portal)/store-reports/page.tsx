@@ -1,7 +1,20 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { authFetch, useAuth, usePermissions } from "@/lib/useAuth";
+
+// Loose code compare (mirrors the server) + light name-similarity ranking
+// (Bravo-style: normalise, then shared-token + substring score).
+const looseCode = (s: string) => String(s ?? "").trim().toLowerCase().replace(/[\s\-_]+/g, "");
+const normName = (s: string) => String(s ?? "").toLowerCase().replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").trim();
+function nameScore(query: string, candName: string): number {
+  const q = normName(query), n = normName(candName);
+  if (!q || !n) return 0;
+  const nSet = new Set(n.split(" ").filter(Boolean));
+  let s = q.split(" ").filter(Boolean).filter((t) => nSet.has(t)).length;
+  if (n.includes(q) || q.includes(n)) s += 2;
+  return s;
+}
 
 interface ClientOpt { id: string; name: string; flagged: boolean }
 interface StoreOpt { siteCode: string; siteName: string; subChannel: string }
@@ -201,7 +214,7 @@ export default function StoreReportsTestPage() {
   const [codeErr, setCodeErr] = useState("");
   const [codeFilter, setCodeFilter] = useState<CodeFilter>("all");
   const [linkFor, setLinkFor] = useState<string | null>(null);   // perigee code being linked
-  const [linkTo, setLinkTo] = useState("");                       // chosen dispo code
+  const [linkSearch, setLinkSearch] = useState("");              // candidate search text
 
   // Persist the pasted list so a refresh doesn't lose it (the links themselves
   // are saved server-side regardless). Restore + auto-check on mount.
@@ -249,9 +262,22 @@ export default function StoreReportsTestPage() {
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) { setCodeErr(d.error || "Link failed"); }
-      else { setLinkFor(null); setLinkTo(""); await checkCodes(); }
+      else { setLinkFor(null); setLinkSearch(""); await checkCodes(); }
     } catch { setCodeErr("Network error"); }
     setCodeBusy(false);
+  }
+
+  // Remove a Perigee store from the pasted list entirely (e.g. DC / online /
+  // closed that you don't need). Edits the textarea + re-checks.
+  function removeFromList(code: string) {
+    const text = codeText.split(/\r?\n/).filter((line) => {
+      const m = line.match(/^([^\t,;]+)[\t,;]+/);
+      const c = (m ? m[1] : line).trim();
+      return c && looseCode(c) !== looseCode(code);
+    }).join("\n");
+    setCodeText(text);
+    try { localStorage.setItem(CODE_LS, text); } catch { /* ignore */ }
+    checkCodes(text);
   }
 
   async function unlink(perigeeCode: string) {
@@ -412,50 +438,79 @@ export default function StoreReportsTestPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {codeRes.results.filter((r) => codeFilter === "all" || r.status === codeFilter).map((r, i) => (
-                      <tr key={i} className="border-t border-zinc-100 align-top">
-                        <td className="px-3 py-2 font-mono">{r.code}</td>
-                        <td className="px-3 py-2">{r.name || ""}</td>
-                        <td className="px-3 py-2">
-                          <span className={
-                            r.status === "match" ? "text-green-600 font-semibold"
-                              : r.status === "linked" ? "text-blue-600 font-semibold"
-                              : r.status === "format-diff" ? "text-amber-600 font-semibold"
-                              : "text-red-600 font-semibold"}>
-                            {r.status === "match" ? "✓ match" : r.status === "linked" ? "🔗 linked" : r.status === "format-diff" ? "~ format diff" : "✗ no match"}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 font-mono">{r.dispoCode || ""}</td>
-                        <td className="px-3 py-2">{r.dispoName || ""}</td>
-                        <td className="px-3 py-2 text-[var(--color-text-muted)]">
-                          {r.status === "linked" ? (
-                            <button onClick={() => unlink(r.code)} disabled={codeBusy} className="text-red-600 hover:underline disabled:opacity-50">Unlink</button>
-                          ) : (r.status === "no-match" || r.status === "format-diff") ? (
-                            linkFor === r.code ? (
-                              <span className="flex flex-wrap items-center gap-1">
-                                <input list="dispoCodes" value={linkTo} onChange={(e) => setLinkTo(e.target.value)}
-                                  placeholder="DISPO code" className="w-32 rounded border border-[var(--color-border)] px-2 py-1 font-mono" />
-                                <button onClick={() => saveLink(r.code, linkTo)} disabled={codeBusy || !linkTo.trim()} className="rounded bg-[var(--color-primary)] px-2 py-1 font-semibold text-white disabled:opacity-40">Save</button>
-                                <button onClick={() => { setLinkFor(null); setLinkTo(""); }} className="px-1 text-[var(--color-text-muted)]">✕</button>
-                              </span>
-                            ) : (
-                              <button onClick={() => { setLinkFor(r.code); setLinkTo(r.dispoCode || ""); }} className="rounded border border-[var(--color-border)] px-2 py-1 font-medium text-[var(--color-text)] hover:border-zinc-400">
-                                🔗 Link{r.reason ? <span className="ml-1 font-normal text-[var(--color-text-muted)]">— {r.reason}</span> : ""}
-                              </button>
-                            )
-                          ) : (r.reason || "")}
-                        </td>
-                      </tr>
-                    ))}
+                    {codeRes.results.filter((r) => codeFilter === "all" || r.status === codeFilter).map((r, i) => {
+                      const candidates = (codeRes.dispoOnly || [])
+                        .filter((c) => { const q = linkSearch.trim().toLowerCase(); return !q || (c.code + " " + (c.name || "")).toLowerCase().includes(q); })
+                        .map((c) => ({ ...c, _s: nameScore(r.name || "", c.name || "") }))
+                        .sort((a, b) => b._s - a._s || (a.name || a.code).localeCompare(b.name || b.code))
+                        .slice(0, 60);
+                      return (
+                      <Fragment key={i}>
+                        <tr className="border-t border-zinc-100 align-top">
+                          <td className="px-3 py-2 font-mono">{r.code}</td>
+                          <td className="px-3 py-2">{r.name || ""}</td>
+                          <td className="px-3 py-2">
+                            <span className={
+                              r.status === "match" ? "text-green-600 font-semibold"
+                                : r.status === "linked" ? "text-blue-600 font-semibold"
+                                : r.status === "format-diff" ? "text-amber-600 font-semibold"
+                                : "text-red-600 font-semibold"}>
+                              {r.status === "match" ? "✓ match" : r.status === "linked" ? "🔗 linked" : r.status === "format-diff" ? "~ format diff" : "✗ no match"}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 font-mono">{r.dispoCode || ""}</td>
+                          <td className="px-3 py-2">{r.dispoName || ""}</td>
+                          <td className="px-3 py-2">
+                            <div className="flex flex-wrap items-center gap-2 text-xs">
+                              {r.status === "linked" ? (
+                                <button onClick={() => unlink(r.code)} disabled={codeBusy} className="font-medium text-red-600 hover:underline disabled:opacity-50">Unlink</button>
+                              ) : (r.status === "no-match" || r.status === "format-diff") ? (
+                                <button onClick={() => { setLinkFor(linkFor === r.code ? null : r.code); setLinkSearch(""); }} className="rounded border border-[var(--color-border)] px-2 py-1 font-medium text-[var(--color-text)] hover:border-zinc-400">
+                                  {linkFor === r.code ? "Close" : "🔗 Link"}
+                                </button>
+                              ) : null}
+                              <button onClick={() => removeFromList(r.code)} disabled={codeBusy} title="Remove from list" className="font-medium text-[var(--color-text-muted)] hover:text-red-600 hover:underline disabled:opacity-50">Remove</button>
+                              {r.reason && r.status !== "linked" && <span className="text-[var(--color-text-muted)]">{r.reason}</span>}
+                            </div>
+                          </td>
+                        </tr>
+                        {linkFor === r.code && (
+                          <tr className="bg-blue-50/60">
+                            <td colSpan={6} className="px-3 py-3">
+                              <div className="mb-2 flex flex-wrap items-center gap-2">
+                                <span className="text-xs font-semibold text-[var(--color-text)]">Link <span className="font-mono">{r.code}</span>{r.name ? ` — ${r.name}` : ""} to a DISPO store:</span>
+                                <input autoFocus value={linkSearch} onChange={(e) => setLinkSearch(e.target.value)} placeholder="Search store name or code…"
+                                  className="w-64 rounded border border-[var(--color-border)] px-2 py-1 text-xs" />
+                                <button onClick={() => { setLinkFor(null); setLinkSearch(""); }} className="text-xs text-[var(--color-text-muted)] hover:underline">Cancel</button>
+                              </div>
+                              <div className="max-h-56 overflow-y-auto rounded-lg border border-[var(--color-border)] bg-white">
+                                {candidates.length === 0 ? (
+                                  <div className="px-3 py-3 text-xs text-[var(--color-text-muted)]">No unmatched stores{linkSearch.trim() ? " for that search" : ""}.</div>
+                                ) : candidates.map((c) => (
+                                  <button key={c.code} onClick={() => saveLink(r.code, c.code)} disabled={codeBusy}
+                                    className="flex w-full items-center justify-between gap-3 border-b border-zinc-100 px-3 py-1.5 text-left text-xs hover:bg-blue-50 disabled:opacity-50">
+                                    <span><span className="font-mono">{c.code}</span> — {c.name || <span className="text-[var(--color-text-muted)]">(no name)</span>}</span>
+                                    {c._s > 0 && <span className="rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700">name match</span>}
+                                  </button>
+                                ))}
+                              </div>
+                              {linkSearch.trim() && !candidates.some((c) => looseCode(c.code) === looseCode(linkSearch)) && (
+                                <button onClick={() => saveLink(r.code, linkSearch.trim())} disabled={codeBusy} className="mt-2 text-xs font-semibold text-[var(--color-primary)] hover:underline disabled:opacity-50">
+                                  Link to typed code &quot;{linkSearch.trim()}&quot;
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    ); })}
                   </tbody>
                 </table>
               </div>
-              <datalist id="dispoCodes">{codeRes.dispoOnly.map((c) => <option key={c.code} value={c.code}>{c.name ? `${c.code} — ${c.name}` : c.code}</option>)}</datalist>
-
               {codeRes.dispoOnly.length > 0 && (
                 <details className="mt-3 text-xs text-[var(--color-text-muted)]">
-                  <summary className="cursor-pointer">DISPO codes not in your list ({codeRes.dispoOnlyCount})</summary>
-                  <div className="mt-2 font-mono break-words">{codeRes.dispoOnly.map((c) => c.name ? `${c.code} (${c.name})` : c.code).join(", ")}</div>
+                  <summary className="cursor-pointer">Unmatched, unlinked DISPO stores you could link to ({codeRes.dispoOnlyCount}) — excludes DC / online / closed</summary>
+                  <div className="mt-2 break-words">{codeRes.dispoOnly.map((c) => c.name ? `${c.code} (${c.name})` : c.code).join("  ·  ")}</div>
                 </details>
               )}
             </div>

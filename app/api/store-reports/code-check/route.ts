@@ -4,6 +4,20 @@ import { getClients } from "@/lib/clientData";
 import { getAllSalesLedgers, getSalesLedger } from "@/lib/salesData";
 import { getMergedStores } from "@/lib/storeFileData";
 import { getCodeMap, buildResolver, looseCode } from "@/lib/storeReportCodeMap";
+import type { StoreRecord } from "@/lib/types";
+
+// Reps don't call on DCs, online stores or closed stores — so they never need
+// linking and shouldn't clutter the candidate list.
+function isCallableStore(rec: StoreRecord | undefined): boolean {
+  if (!rec) return true; // unknown to the store master → keep (can't tell)
+  const status = String(rec.status ?? "").toLowerCase();
+  if (/clos|shut|inactiv|ceas|delist|not\s*trad/.test(status)) return false;
+  const sub = String(rec.subChannel ?? "").toLowerCase().replace(/[\s_-]+/g, "");
+  if (sub === "dc" || sub.includes("dconline") || sub.includes("online")) return false;
+  const hay = `${rec.storeName ?? ""} ${rec.type ?? ""} ${rec.channel ?? ""}`.toLowerCase();
+  if (/\bonline\b|e-?commerce|distribution\s*cent|\bdc\b/.test(hay)) return false;
+  return true;
+}
 
 // Compare a pasted list of Perigee site codes (optionally with their store names)
 // against the DISPO ledgers + store master — accounting for the DISPO↔Perigee
@@ -41,6 +55,7 @@ export async function POST(req: NextRequest) {
     const dispoLoose = new Map<string, string>();   // loose → exact example
     const dispoDigits = new Map<string, string>();
     const nameByLoose = new Map<string, string>();  // loose code → store name
+    const recByLoose = new Map<string, StoreRecord>(); // loose code → store master record
     const add = (raw: string, name?: string) => {
       const e = raw.trim(); if (!e) return;
       dispoExact.add(e);
@@ -55,7 +70,10 @@ export async function POST(req: NextRequest) {
         for (const r of ledger) add(String(r["Site"] ?? ""), String(r["_storeName"] ?? r["Site Name"] ?? ""));
       }
     }
-    for (const s of await getMergedStores()) add(String(s.siteNum ?? ""), String(s.storeName ?? ""));
+    for (const s of await getMergedStores()) {
+      add(String(s.siteNum ?? ""), String(s.storeName ?? ""));
+      recByLoose.set(looseCode(String(s.siteNum ?? "")), s);
+    }
 
     const map = await getCodeMap();
     const resolve = buildResolver(map);
@@ -77,9 +95,16 @@ export async function POST(req: NextRequest) {
       return { code, name: e.name, status: "no-match" as const, dispoName: "" };
     });
 
+    // Candidates for linking = DISPO codes NOT in the pasted list, NOT already a
+    // link target, and callable (drop DC / online / closed stores).
     const inputLoose = new Set(entries.map((e) => looseCode(e.code)));
+    const linkedTargets = new Set(map.map((m) => looseCode(m.dispoCode)));
     const dispoOnly = [...dispoExact]
-      .filter((d) => !inputLoose.has(looseCode(d)))
+      .filter((d) => {
+        const lc = looseCode(d);
+        if (inputLoose.has(lc) || linkedTargets.has(lc)) return false;
+        return isCallableStore(recByLoose.get(lc));
+      })
       .sort()
       .map((code) => ({ code, name: dispoName(code) }));
 
