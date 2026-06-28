@@ -97,13 +97,15 @@ function pick(row: Record<string, unknown>, candidates: string[]): string {
   return "";
 }
 
+// Confirmed against gettodayvisitsmassmart columns (2026-06-28):
+//   storeCode, channelName, StoreName, email, UserName, visitStart, DateAdded, id
 export function normaliseVisit(row: Record<string, unknown>): NormalisedVisit {
   return {
-    siteCode: pick(row, ["sitecode", "site", "storecode", "siteid", "storeid", "storenumber", "sitenumber"]),
-    repEmail: pick(row, ["repemail", "email", "useremail", "agentemail", "merchandiseremail", "useremailaddress", "emailaddress"]),
-    repName: pick(row, ["repname", "rep", "username", "agentname", "merchandiser", "name", "fullname", "user"]),
-    visitGuid: pick(row, ["visitguid", "visitid", "guid", "visituuid", "uuid", "visitkey", "id"]),
-    channel: pick(row, ["channel", "channelname", "store", "storechannel", "retailer"]),
-    checkInAt: pick(row, ["checkin", "checkintime", "checkinat", "visitdate", "datetime", "starttime", "createddate"]),
+    siteCode: pick(row, ["storecode", "sitecode", "site", "siteid", "storeid", "storenumber", "sitenumber"]),
+    repEmail: pick(row, ["email", "repemail", "useremail", "agentemail", "merchandiseremail", "useremailaddress", "emailaddress"]),
+    repName: pick(row, ["username", "repname", "rep", "agentname", "merchandiser", "name", "fullname", "user"]),
+    visitGuid: pick(row, ["id", "visitguid", "visitid", "guid", "visituuid", "uuid", "visitkey"]),
+    channel: pick(row, ["channelname", "channel", "storechannel", "retailer"]),
+    checkInAt: pick(row, ["visitstart", "checkin", "checkintime", "checkinat", "visitdate", "datetime", "starttime", "dateadded", "createddate"]),
   };
 }
