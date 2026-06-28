@@ -19,11 +19,15 @@ import { getStatusDefinitions } from "./statusData";
 import { getStatusScenarios } from "./statusScenarioData";
 import { getMergedStores } from "./storeFileData";
 import { buildStoreReport, type ClientStoreInput, type StoreReport } from "./storeReport";
+import { resolveDispoCode, looseCode } from "./storeReportCodeMap";
 
 const MONTHS = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
+// Site-code comparison: loose (case/space/dash-insensitive) so minor format
+// differences between Perigee and DISPO line up automatically; genuine code
+// differences are bridged by the DISPO↔Perigee map (resolveDispoCode).
 function norm(v: unknown): string {
-  return String(v ?? "").trim().toLowerCase();
+  return looseCode(v);
 }
 
 // Keep only SKUs from the LATEST DISPO load, per vendor. Each row is stamped at
@@ -75,7 +79,10 @@ export interface LoadedStoreReport {
 }
 
 export async function loadStoreReport(opts: LoadStoreReportOpts): Promise<LoadedStoreReport> {
-  const site = norm(opts.siteCode);
+  // Resolve the incoming code through the DISPO↔Perigee map first (a linked
+  // Perigee code points at its DISPO code); then match loosely.
+  const mapped = await resolveDispoCode(opts.siteCode);
+  const site = norm(mapped ?? opts.siteCode);
   const allClients = await getClients();
   const clients = opts.clientIds && opts.clientIds.length
     ? allClients.filter((c) => opts.clientIds!.includes(c.id))

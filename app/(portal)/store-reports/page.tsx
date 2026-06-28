@@ -30,8 +30,10 @@ interface RunResult { ok: boolean; armedPeriod: string | null; visitsSeen: numbe
 interface EngSummary { channel: string; sent: number; opened: number; used: number }
 interface EngDetail { store: string; siteCode: string; channel: string; repName: string; repEmail: string; sentAt: string; opened: boolean; used: boolean; cardClicks: number; distinctCards: string[]; test: boolean }
 interface EngResult { day: string; summary: EngSummary[]; totalSent: number; detail: EngDetail[] }
-interface CodeRow { code: string; status: "match" | "format-diff" | "no-match"; dispoCode?: string; reason?: string }
-interface CodeCheck { checked: number; matched: number; formatDiff: number; noMatch: number; dispoCodeCount: number; dispoOnlyCount: number; results: CodeRow[]; dispoOnly: string[] }
+interface CodeRow { code: string; status: "match" | "linked" | "format-diff" | "no-match"; dispoCode?: string; reason?: string }
+interface CodeMapping { perigeeCode: string; dispoCode: string }
+interface CodeCheck { checked: number; matched: number; linked: number; formatDiff: number; noMatch: number; dispoCodeCount: number; dispoOnlyCount: number; results: CodeRow[]; dispoOnly: string[]; mappings: CodeMapping[] }
+type CodeFilter = "all" | "match" | "linked" | "format-diff" | "no-match";
 
 export default function StoreReportsTestPage() {
   const { can } = usePermissions();
@@ -196,11 +198,14 @@ export default function StoreReportsTestPage() {
   const [codeRes, setCodeRes] = useState<CodeCheck | null>(null);
   const [codeBusy, setCodeBusy] = useState(false);
   const [codeErr, setCodeErr] = useState("");
+  const [codeFilter, setCodeFilter] = useState<CodeFilter>("all");
+  const [linkFor, setLinkFor] = useState<string | null>(null);   // perigee code being linked
+  const [linkTo, setLinkTo] = useState("");                       // chosen dispo code
 
   async function checkCodes() {
     const codes = codeText.split(/[\n,;\t]/).map((s) => s.trim()).filter(Boolean);
     if (!codes.length) { setCodeErr("Paste some site codes first"); return; }
-    setCodeBusy(true); setCodeErr(""); setCodeRes(null);
+    setCodeBusy(true); setCodeErr(""); setCodeRes(null); setLinkFor(null);
     try {
       const res = await authFetch("/api/store-reports/code-check", {
         method: "POST", body: JSON.stringify({ codes }),
@@ -208,6 +213,31 @@ export default function StoreReportsTestPage() {
       const d = await res.json().catch(() => ({}));
       if (res.ok) setCodeRes(d as CodeCheck);
       else setCodeErr(d.error || "Check failed");
+    } catch { setCodeErr("Network error"); }
+    setCodeBusy(false);
+  }
+
+  async function saveLink(perigeeCode: string, dispoCode: string) {
+    if (!dispoCode.trim()) return;
+    setCodeBusy(true); setCodeErr("");
+    try {
+      const res = await authFetch("/api/store-reports/code-map", {
+        method: "POST", body: JSON.stringify({ perigeeCode, dispoCode }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { setCodeErr(d.error || "Link failed"); }
+      else { setLinkFor(null); setLinkTo(""); await checkCodes(); }
+    } catch { setCodeErr("Network error"); }
+    setCodeBusy(false);
+  }
+
+  async function unlink(perigeeCode: string) {
+    setCodeBusy(true); setCodeErr("");
+    try {
+      const res = await authFetch("/api/store-reports/code-map", {
+        method: "DELETE", body: JSON.stringify({ perigeeCode }),
+      });
+      if (res.ok) await checkCodes();
     } catch { setCodeErr("Network error"); }
     setCodeBusy(false);
   }
@@ -328,33 +358,67 @@ export default function StoreReportsTestPage() {
 
           {codeRes && (
             <div className="mt-5">
+              {/* Cards = filters */}
               <div className="mb-3 flex flex-wrap gap-2 text-xs">
-                <span className="rounded-md bg-green-50 px-2.5 py-1 font-medium text-green-700 border border-green-200">✓ Match: {codeRes.matched}</span>
-                <span className="rounded-md bg-amber-50 px-2.5 py-1 font-medium text-amber-700 border border-amber-200">~ Format diff: {codeRes.formatDiff}</span>
-                <span className="rounded-md bg-red-50 px-2.5 py-1 font-medium text-red-700 border border-red-200">✗ No match: {codeRes.noMatch}</span>
-                <span className="rounded-md bg-zinc-50 px-2.5 py-1 font-medium text-[var(--color-text-muted)] border border-[var(--color-border)]">{codeRes.dispoCodeCount} DISPO codes · {codeRes.dispoOnlyCount} not in your list</span>
+                {([
+                  ["all", `All ${codeRes.checked}`, "bg-zinc-50 text-[var(--color-text)] border-[var(--color-border)]"],
+                  ["match", `✓ Match ${codeRes.matched}`, "bg-green-50 text-green-700 border-green-200"],
+                  ["linked", `🔗 Linked ${codeRes.linked}`, "bg-blue-50 text-blue-700 border-blue-200"],
+                  ["format-diff", `~ Format diff ${codeRes.formatDiff}`, "bg-amber-50 text-amber-700 border-amber-200"],
+                  ["no-match", `✗ No match ${codeRes.noMatch}`, "bg-red-50 text-red-700 border-red-200"],
+                ] as [CodeFilter, string, string][]).map(([key, label, cls]) => (
+                  <button key={key} onClick={() => setCodeFilter(key)}
+                    className={`rounded-md px-2.5 py-1 font-medium border ${cls} ${codeFilter === key ? "ring-2 ring-[var(--color-primary)] ring-offset-1" : ""}`}>
+                    {label}
+                  </button>
+                ))}
+                <span className="rounded-md bg-zinc-50 px-2.5 py-1 font-medium text-[var(--color-text-muted)] border border-[var(--color-border)]">{codeRes.dispoCodeCount} DISPO codes</span>
               </div>
-              <div className="max-h-72 overflow-y-auto rounded-lg border border-[var(--color-border)]">
+
+              <div className="max-h-80 overflow-y-auto rounded-lg border border-[var(--color-border)]">
                 <table className="w-full text-xs">
                   <thead className="sticky top-0 bg-zinc-50 text-[var(--color-text-muted)]">
-                    <tr><th className="px-3 py-2 text-left">Your code</th><th className="px-3 py-2 text-left">Status</th><th className="px-3 py-2 text-left">DISPO code</th><th className="px-3 py-2 text-left">Note</th></tr>
+                    <tr><th className="px-3 py-2 text-left">Perigee code</th><th className="px-3 py-2 text-left">Status</th><th className="px-3 py-2 text-left">DISPO code</th><th className="px-3 py-2 text-left">Action / note</th></tr>
                   </thead>
                   <tbody>
-                    {codeRes.results.map((r, i) => (
-                      <tr key={i} className="border-t border-zinc-100">
-                        <td className="px-3 py-1.5 font-mono">{r.code}</td>
-                        <td className="px-3 py-1.5">
-                          <span className={r.status === "match" ? "text-green-600 font-semibold" : r.status === "format-diff" ? "text-amber-600 font-semibold" : "text-red-600 font-semibold"}>
-                            {r.status === "match" ? "✓ match" : r.status === "format-diff" ? "~ format diff" : "✗ no match"}
+                    {codeRes.results.filter((r) => codeFilter === "all" || r.status === codeFilter).map((r, i) => (
+                      <tr key={i} className="border-t border-zinc-100 align-top">
+                        <td className="px-3 py-2 font-mono">{r.code}</td>
+                        <td className="px-3 py-2">
+                          <span className={
+                            r.status === "match" ? "text-green-600 font-semibold"
+                              : r.status === "linked" ? "text-blue-600 font-semibold"
+                              : r.status === "format-diff" ? "text-amber-600 font-semibold"
+                              : "text-red-600 font-semibold"}>
+                            {r.status === "match" ? "✓ match" : r.status === "linked" ? "🔗 linked" : r.status === "format-diff" ? "~ format diff" : "✗ no match"}
                           </span>
                         </td>
-                        <td className="px-3 py-1.5 font-mono">{r.dispoCode || ""}</td>
-                        <td className="px-3 py-1.5 text-[var(--color-text-muted)]">{r.reason || ""}</td>
+                        <td className="px-3 py-2 font-mono">{r.dispoCode || ""}</td>
+                        <td className="px-3 py-2 text-[var(--color-text-muted)]">
+                          {r.status === "linked" ? (
+                            <button onClick={() => unlink(r.code)} disabled={codeBusy} className="text-red-600 hover:underline disabled:opacity-50">Unlink</button>
+                          ) : (r.status === "no-match" || r.status === "format-diff") ? (
+                            linkFor === r.code ? (
+                              <span className="flex flex-wrap items-center gap-1">
+                                <input list="dispoCodes" value={linkTo} onChange={(e) => setLinkTo(e.target.value)}
+                                  placeholder="DISPO code" className="w-32 rounded border border-[var(--color-border)] px-2 py-1 font-mono" />
+                                <button onClick={() => saveLink(r.code, linkTo)} disabled={codeBusy || !linkTo.trim()} className="rounded bg-[var(--color-primary)] px-2 py-1 font-semibold text-white disabled:opacity-40">Save</button>
+                                <button onClick={() => { setLinkFor(null); setLinkTo(""); }} className="px-1 text-[var(--color-text-muted)]">✕</button>
+                              </span>
+                            ) : (
+                              <button onClick={() => { setLinkFor(r.code); setLinkTo(r.dispoCode || ""); }} className="rounded border border-[var(--color-border)] px-2 py-1 font-medium text-[var(--color-text)] hover:border-zinc-400">
+                                🔗 Link{r.reason ? <span className="ml-1 font-normal text-[var(--color-text-muted)]">— {r.reason}</span> : ""}
+                              </button>
+                            )
+                          ) : (r.reason || "")}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
+              <datalist id="dispoCodes">{codeRes.dispoOnly.map((c) => <option key={c} value={c} />)}</datalist>
+
               {codeRes.dispoOnly.length > 0 && (
                 <details className="mt-3 text-xs text-[var(--color-text-muted)]">
                   <summary className="cursor-pointer">DISPO codes not in your list ({codeRes.dispoOnlyCount})</summary>
