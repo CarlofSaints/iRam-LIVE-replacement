@@ -85,6 +85,10 @@ export async function GET(req: NextRequest) {
         const maxStamp = vendorMax.get(vend) ?? "";
         const isCurrent = !maxStamp ? true : stamp === maxStamp;
         const soh = num(row["SOH"]);
+        const sohVal = isNaN(soh) ? 0 : soh;
+        const mac = num(row["MAC"]);
+        const nett = num(row["Nett Cost"]);
+        const marginEligible = sohVal > 0 && mac > 0 && nett > 0;
         let sales = 0;
         for (const c of cols) { const v = num(row[c]); if (!isNaN(v)) sales += v; }
         out.push({
@@ -98,9 +102,12 @@ export async function GET(req: NextRequest) {
           article: art,
           dispoDesc: row["Article Desc"] ?? "",
           pmfDesc: row["_productDescription"] ?? "",
+          SOH_raw: row["SOH"] ?? "",
           SOH: isNaN(soh) ? null : soh,
           salesYTD: sales,
           isOOS: !isNaN(soh) && soh <= 0,
+          marginRisk: marginEligible && mac > nett,
+          marginOpp: marginEligible && nett > mac,
           prst: row["Status"] ?? row["PR ST"] ?? "",
           classification: classifyRowStatus(row, statusDefs, scenarios),
           MAC: row["MAC"] ?? "",
