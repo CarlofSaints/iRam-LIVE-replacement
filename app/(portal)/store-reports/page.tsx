@@ -30,6 +30,8 @@ interface RunResult { ok: boolean; armedPeriod: string | null; visitsSeen: numbe
 interface EngSummary { channel: string; sent: number; opened: number; used: number }
 interface EngDetail { store: string; siteCode: string; channel: string; repName: string; repEmail: string; sentAt: string; opened: boolean; used: boolean; cardClicks: number; distinctCards: string[]; test: boolean }
 interface EngResult { day: string; summary: EngSummary[]; totalSent: number; detail: EngDetail[] }
+interface CodeRow { code: string; status: "match" | "format-diff" | "no-match"; dispoCode?: string; reason?: string }
+interface CodeCheck { checked: number; matched: number; formatDiff: number; noMatch: number; dispoCodeCount: number; dispoOnlyCount: number; results: CodeRow[]; dispoOnly: string[] }
 
 export default function StoreReportsTestPage() {
   const { can } = usePermissions();
@@ -189,6 +191,27 @@ export default function StoreReportsTestPage() {
     setTimeout(() => setEngMsg(""), 4000);
   }
 
+  // ── Site code check ──
+  const [codeText, setCodeText] = useState("");
+  const [codeRes, setCodeRes] = useState<CodeCheck | null>(null);
+  const [codeBusy, setCodeBusy] = useState(false);
+  const [codeErr, setCodeErr] = useState("");
+
+  async function checkCodes() {
+    const codes = codeText.split(/[\n,;\t]/).map((s) => s.trim()).filter(Boolean);
+    if (!codes.length) { setCodeErr("Paste some site codes first"); return; }
+    setCodeBusy(true); setCodeErr(""); setCodeRes(null);
+    try {
+      const res = await authFetch("/api/store-reports/code-check", {
+        method: "POST", body: JSON.stringify({ codes }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok) setCodeRes(d as CodeCheck);
+      else setCodeErr(d.error || "Check failed");
+    } catch { setCodeErr("Network error"); }
+    setCodeBusy(false);
+  }
+
   if (!canManage) {
     return <div className="p-8 text-sm text-[var(--color-text-muted)]">You don&apos;t have access to store reports.</div>;
   }
@@ -280,6 +303,68 @@ export default function StoreReportsTestPage() {
           </a>
         </div>
       )}
+
+      {/* ── Site code check ── */}
+      <div className="mt-10">
+        <h2 className="mb-1 text-lg font-bold text-[var(--color-text)]">Site Code Check</h2>
+        <p className="mb-3 max-w-2xl text-sm text-[var(--color-text-muted)]">
+          Paste the site-code column from your store list (one per line, or comma-separated) to check they match the
+          DISPO codes — so the check-in trigger&apos;s store code will line up before any live visits.
+        </p>
+        {codeErr && <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">{codeErr}</div>}
+        <div className="rounded-xl border border-[var(--color-border)] bg-white p-5">
+          <textarea
+            value={codeText}
+            onChange={(e) => setCodeText(e.target.value)}
+            rows={5}
+            placeholder={"S117\nMW35\n..."}
+            className="w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm font-mono" />
+          <div className="mt-3">
+            <button onClick={checkCodes} disabled={codeBusy}
+              className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)] disabled:opacity-40">
+              {codeBusy ? "Checking…" : "Check codes"}
+            </button>
+          </div>
+
+          {codeRes && (
+            <div className="mt-5">
+              <div className="mb-3 flex flex-wrap gap-2 text-xs">
+                <span className="rounded-md bg-green-50 px-2.5 py-1 font-medium text-green-700 border border-green-200">✓ Match: {codeRes.matched}</span>
+                <span className="rounded-md bg-amber-50 px-2.5 py-1 font-medium text-amber-700 border border-amber-200">~ Format diff: {codeRes.formatDiff}</span>
+                <span className="rounded-md bg-red-50 px-2.5 py-1 font-medium text-red-700 border border-red-200">✗ No match: {codeRes.noMatch}</span>
+                <span className="rounded-md bg-zinc-50 px-2.5 py-1 font-medium text-[var(--color-text-muted)] border border-[var(--color-border)]">{codeRes.dispoCodeCount} DISPO codes · {codeRes.dispoOnlyCount} not in your list</span>
+              </div>
+              <div className="max-h-72 overflow-y-auto rounded-lg border border-[var(--color-border)]">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-zinc-50 text-[var(--color-text-muted)]">
+                    <tr><th className="px-3 py-2 text-left">Your code</th><th className="px-3 py-2 text-left">Status</th><th className="px-3 py-2 text-left">DISPO code</th><th className="px-3 py-2 text-left">Note</th></tr>
+                  </thead>
+                  <tbody>
+                    {codeRes.results.map((r, i) => (
+                      <tr key={i} className="border-t border-zinc-100">
+                        <td className="px-3 py-1.5 font-mono">{r.code}</td>
+                        <td className="px-3 py-1.5">
+                          <span className={r.status === "match" ? "text-green-600 font-semibold" : r.status === "format-diff" ? "text-amber-600 font-semibold" : "text-red-600 font-semibold"}>
+                            {r.status === "match" ? "✓ match" : r.status === "format-diff" ? "~ format diff" : "✗ no match"}
+                          </span>
+                        </td>
+                        <td className="px-3 py-1.5 font-mono">{r.dispoCode || ""}</td>
+                        <td className="px-3 py-1.5 text-[var(--color-text-muted)]">{r.reason || ""}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {codeRes.dispoOnly.length > 0 && (
+                <details className="mt-3 text-xs text-[var(--color-text-muted)]">
+                  <summary className="cursor-pointer">DISPO codes not in your list ({codeRes.dispoOnlyCount})</summary>
+                  <div className="mt-2 font-mono break-words">{codeRes.dispoOnly.join(", ")}</div>
+                </details>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* ── Sync (auto-trigger) — super admin only ── */}
       {isSuperAdmin && (

@@ -172,7 +172,7 @@ let ticks = {};
 try { ticks = JSON.parse(localStorage.getItem(TKEY) || "{}"); } catch(e){}
 
 function lineId(l){ return l.clientId + "|" + l.article; }
-function rands(n){ return "R " + Math.round(n).toLocaleString("en-ZA"); }
+function rands(n){ return "R " + Number(n).toLocaleString("en-ZA", {minimumFractionDigits:2, maximumFractionDigits:2}); }
 function fmt(n){ return (Math.round(n*100)/100).toLocaleString("en-ZA"); }
 
 function flaggedCats(l){ return CATS.filter(c => l.flags[c.key]); }
