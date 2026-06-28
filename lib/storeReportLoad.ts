@@ -33,8 +33,18 @@ function norm(v: unknown): string {
 // Rows with no stamp (legacy, pre-stamping) are kept until that vendor is
 // re-uploaded (then the stamped rows win and the legacy ones drop).
 export function latestLoadPerVendor<T extends Record<string, unknown>>(rows: T[]): T[] {
+  // Fully legacy (nothing stamped yet — pre-stamping ledger, no re-upload): we
+  // can't tell current from stale, so keep everything until a re-upload stamps.
+  const anyStamped = rows.some((r) => String(r["_lastLoadedAt"] ?? "") !== "");
+  if (!anyStamped) return rows;
+
+  // Stamping is in effect. Group the STAMPED rows by vendor and keep each
+  // vendor's latest load. Any UNSTAMPED row is a stale leftover from before the
+  // re-upload (a current SKU would have been re-stamped) → drop it.
   const groups = new Map<string, T[]>();
   for (const r of rows) {
+    const stamp = String(r["_lastLoadedAt"] ?? "");
+    if (!stamp) continue; // drop stale unstamped leftover
     const v = String(r["_vendor"] ?? "");
     (groups.get(v) ?? groups.set(v, []).get(v)!).push(r);
   }
@@ -42,7 +52,6 @@ export function latestLoadPerVendor<T extends Record<string, unknown>>(rows: T[]
   for (const g of groups.values()) {
     let max = "";
     for (const r of g) { const s = String(r["_lastLoadedAt"] ?? ""); if (s > max) max = s; }
-    if (!max) { out.push(...g); continue; }          // no stamps → legacy, keep all
     for (const r of g) if (String(r["_lastLoadedAt"] ?? "") === max) out.push(r);
   }
   return out;

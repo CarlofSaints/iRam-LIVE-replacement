@@ -242,7 +242,9 @@ function itemHtml(l){
   const id = lineId(l), ticked = !!ticks[id];
   const age = (d)=> d==null? "" : " &middot; "+d+"d";
   const alert = oosAlert(l);
-  var statusVal = esc((l.prst||"")+(l.statusLabel?" "+l.statusLabel:""));
+  // Channel Status = the DISPO PR ST code; Vendor Status = the PMF product status.
+  var statusVal = esc(l.prst||"—");
+  if(l.statusLabel) statusVal += ' <span style="color:var(--grey)">('+esc(l.statusLabel)+')</span>';
   if(l.statusClass==="NEGATIVE") statusVal += ' <span style="color:#df332c;font-weight:600">&middot; Negative</span>';
   else if(l.statusClass==="POSITIVE") statusVal += ' <span style="color:#2e9e5b;font-weight:600">&middot; Positive</span>';
   return '<div class="item'+(ticked?" tick":"")+'" data-id="'+esc(id)+'">'
@@ -260,7 +262,7 @@ function itemHtml(l){
       + '<div class="grid">'
         + g("SOH", fmt(l.soh)) + g("DROS", fmt(l.dros)+" /day") + g("Days cover", l.daysCover==null?"—":fmt(l.daysCover))
         + g("Last sold", (l.lastSold||"—")+age(l.lastSoldDays)) + g("Last received", (l.lastReceived||"—")+age(l.lastReceivedDays))
-        + g("Status", statusVal) + g("Vendor status", esc(l.vendorStatus||"—")) + g("Ranging", l.ranging||"—")
+        + g("Channel Status", statusVal) + g("Vendor Status", esc(l.vendorStatus||"—")) + g("Ranging", l.ranging||"—")
         + g("RP type", esc(l.rpType||"—"))
       + '</div>'
     + '</div>'
