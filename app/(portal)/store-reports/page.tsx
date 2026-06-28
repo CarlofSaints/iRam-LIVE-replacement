@@ -202,9 +202,21 @@ export default function StoreReportsTestPage() {
   const [linkFor, setLinkFor] = useState<string | null>(null);   // perigee code being linked
   const [linkTo, setLinkTo] = useState("");                       // chosen dispo code
 
-  async function checkCodes() {
-    const codes = codeText.split(/[\n,;\t]/).map((s) => s.trim()).filter(Boolean);
+  // Persist the pasted list so a refresh doesn't lose it (the links themselves
+  // are saved server-side regardless). Restore + auto-check on mount.
+  const CODE_LS = "storeReportCodeText";
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(CODE_LS);
+      if (saved && saved.trim()) { setCodeText(saved); checkCodes(saved); }
+    } catch { /* ignore */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function checkCodes(text: string = codeText) {
+    const codes = text.split(/[\n,;\t]/).map((s) => s.trim()).filter(Boolean);
     if (!codes.length) { setCodeErr("Paste some site codes first"); return; }
+    try { localStorage.setItem(CODE_LS, text); } catch { /* ignore */ }
     setCodeBusy(true); setCodeErr(""); setCodeRes(null); setLinkFor(null);
     try {
       const res = await authFetch("/api/store-reports/code-check", {
@@ -345,12 +357,12 @@ export default function StoreReportsTestPage() {
         <div className="rounded-xl border border-[var(--color-border)] bg-white p-5">
           <textarea
             value={codeText}
-            onChange={(e) => setCodeText(e.target.value)}
+            onChange={(e) => { setCodeText(e.target.value); try { localStorage.setItem(CODE_LS, e.target.value); } catch { /* ignore */ } }}
             rows={5}
             placeholder={"S117\nMW35\n..."}
             className="w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm font-mono" />
           <div className="mt-3">
-            <button onClick={checkCodes} disabled={codeBusy}
+            <button onClick={() => checkCodes()} disabled={codeBusy}
               className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)] disabled:opacity-40">
               {codeBusy ? "Checking…" : "Check codes"}
             </button>
