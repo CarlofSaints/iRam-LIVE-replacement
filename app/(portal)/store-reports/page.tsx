@@ -30,9 +30,10 @@ interface RunResult { ok: boolean; armedPeriod: string | null; visitsSeen: numbe
 interface EngSummary { channel: string; sent: number; opened: number; used: number }
 interface EngDetail { store: string; siteCode: string; channel: string; repName: string; repEmail: string; sentAt: string; opened: boolean; used: boolean; cardClicks: number; distinctCards: string[]; test: boolean }
 interface EngResult { day: string; summary: EngSummary[]; totalSent: number; detail: EngDetail[] }
-interface CodeRow { code: string; status: "match" | "linked" | "format-diff" | "no-match"; dispoCode?: string; reason?: string }
+interface CodeRow { code: string; name?: string; status: "match" | "linked" | "format-diff" | "no-match"; dispoCode?: string; dispoName?: string; reason?: string }
 interface CodeMapping { perigeeCode: string; dispoCode: string }
-interface CodeCheck { checked: number; matched: number; linked: number; formatDiff: number; noMatch: number; dispoCodeCount: number; dispoOnlyCount: number; results: CodeRow[]; dispoOnly: string[]; mappings: CodeMapping[] }
+interface DispoOnly { code: string; name?: string }
+interface CodeCheck { checked: number; matched: number; linked: number; formatDiff: number; noMatch: number; dispoCodeCount: number; dispoOnlyCount: number; results: CodeRow[]; dispoOnly: DispoOnly[]; mappings: CodeMapping[] }
 type CodeFilter = "all" | "match" | "linked" | "format-diff" | "no-match";
 
 export default function StoreReportsTestPage() {
@@ -213,14 +214,24 @@ export default function StoreReportsTestPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Parse each line into { code, name } — Excel two-column paste is tab-separated;
+  // also accept comma/semicolon. First column = code, the rest = store name.
+  function parseEntries(text: string): { code: string; name: string }[] {
+    return text.split(/\r?\n/).map((line) => {
+      const m = line.match(/^([^\t,;]+)[\t,;]+(.*)$/);
+      if (m) return { code: m[1].trim(), name: m[2].trim() };
+      return { code: line.trim(), name: "" };
+    }).filter((e) => e.code);
+  }
+
   async function checkCodes(text: string = codeText) {
-    const codes = text.split(/[\n,;\t]/).map((s) => s.trim()).filter(Boolean);
-    if (!codes.length) { setCodeErr("Paste some site codes first"); return; }
+    const entries = parseEntries(text);
+    if (!entries.length) { setCodeErr("Paste some site codes first"); return; }
     try { localStorage.setItem(CODE_LS, text); } catch { /* ignore */ }
     setCodeBusy(true); setCodeErr(""); setCodeRes(null); setLinkFor(null);
     try {
       const res = await authFetch("/api/store-reports/code-check", {
-        method: "POST", body: JSON.stringify({ codes }),
+        method: "POST", body: JSON.stringify({ entries }),
       });
       const d = await res.json().catch(() => ({}));
       if (res.ok) setCodeRes(d as CodeCheck);
@@ -350,8 +361,9 @@ export default function StoreReportsTestPage() {
       <div className="mt-10">
         <h2 className="mb-1 text-lg font-bold text-[var(--color-text)]">Site Code Check</h2>
         <p className="mb-3 max-w-2xl text-sm text-[var(--color-text-muted)]">
-          Paste the site-code column from your store list (one per line, or comma-separated) to check they match the
-          DISPO codes — so the check-in trigger&apos;s store code will line up before any live visits.
+          Paste from your Perigee store list — <b>code and name</b> (copy both columns straight from Excel; one store
+          per line). Each is matched against the DISPO codes, with the DISPO store name shown so you can confirm
+          ambiguous ones by name before any live visits.
         </p>
         {codeErr && <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">{codeErr}</div>}
         <div className="rounded-xl border border-[var(--color-border)] bg-white p-5">
@@ -359,7 +371,7 @@ export default function StoreReportsTestPage() {
             value={codeText}
             onChange={(e) => { setCodeText(e.target.value); try { localStorage.setItem(CODE_LS, e.target.value); } catch { /* ignore */ } }}
             rows={5}
-            placeholder={"S117\nMW35\n..."}
+            placeholder={"S117\tGreenstone\nMW35\tWoodmead\n..."}
             className="w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm font-mono" />
           <div className="mt-3">
             <button onClick={() => checkCodes()} disabled={codeBusy}
@@ -390,12 +402,20 @@ export default function StoreReportsTestPage() {
               <div className="max-h-80 overflow-y-auto rounded-lg border border-[var(--color-border)]">
                 <table className="w-full text-xs">
                   <thead className="sticky top-0 bg-zinc-50 text-[var(--color-text-muted)]">
-                    <tr><th className="px-3 py-2 text-left">Perigee code</th><th className="px-3 py-2 text-left">Status</th><th className="px-3 py-2 text-left">DISPO code</th><th className="px-3 py-2 text-left">Action / note</th></tr>
+                    <tr>
+                      <th className="px-3 py-2 text-left">Perigee code</th>
+                      <th className="px-3 py-2 text-left">Perigee name</th>
+                      <th className="px-3 py-2 text-left">Status</th>
+                      <th className="px-3 py-2 text-left">DISPO code</th>
+                      <th className="px-3 py-2 text-left">DISPO name</th>
+                      <th className="px-3 py-2 text-left">Action / note</th>
+                    </tr>
                   </thead>
                   <tbody>
                     {codeRes.results.filter((r) => codeFilter === "all" || r.status === codeFilter).map((r, i) => (
                       <tr key={i} className="border-t border-zinc-100 align-top">
                         <td className="px-3 py-2 font-mono">{r.code}</td>
+                        <td className="px-3 py-2">{r.name || ""}</td>
                         <td className="px-3 py-2">
                           <span className={
                             r.status === "match" ? "text-green-600 font-semibold"
@@ -406,6 +426,7 @@ export default function StoreReportsTestPage() {
                           </span>
                         </td>
                         <td className="px-3 py-2 font-mono">{r.dispoCode || ""}</td>
+                        <td className="px-3 py-2">{r.dispoName || ""}</td>
                         <td className="px-3 py-2 text-[var(--color-text-muted)]">
                           {r.status === "linked" ? (
                             <button onClick={() => unlink(r.code)} disabled={codeBusy} className="text-red-600 hover:underline disabled:opacity-50">Unlink</button>
@@ -429,12 +450,12 @@ export default function StoreReportsTestPage() {
                   </tbody>
                 </table>
               </div>
-              <datalist id="dispoCodes">{codeRes.dispoOnly.map((c) => <option key={c} value={c} />)}</datalist>
+              <datalist id="dispoCodes">{codeRes.dispoOnly.map((c) => <option key={c.code} value={c.code}>{c.name ? `${c.code} — ${c.name}` : c.code}</option>)}</datalist>
 
               {codeRes.dispoOnly.length > 0 && (
                 <details className="mt-3 text-xs text-[var(--color-text-muted)]">
                   <summary className="cursor-pointer">DISPO codes not in your list ({codeRes.dispoOnlyCount})</summary>
-                  <div className="mt-2 font-mono break-words">{codeRes.dispoOnly.join(", ")}</div>
+                  <div className="mt-2 font-mono break-words">{codeRes.dispoOnly.map((c) => c.name ? `${c.code} (${c.name})` : c.code).join(", ")}</div>
                 </details>
               )}
             </div>
