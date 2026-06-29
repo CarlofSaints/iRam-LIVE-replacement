@@ -11,8 +11,12 @@ function localPath(key: string): string {
 }
 
 /* ── In-memory write-through cache ──
-   Prevents stale CDN reads after a write within the same warm instance.
-   Entries expire after 30 seconds so we don't serve permanently stale data. */
+   Bridges the brief window between a put() and the new content being readable,
+   so the container that JUST wrote sees its own write immediately.
+   IMPORTANT: only WRITES populate this cache — never reads. Warming it on reads
+   made a container serve a stale copy that masked another container's write
+   (e.g. a new client created on container A looked missing on container B, so
+   admins created it twice). Entries expire after 30s as a safety net. */
 const writeCache = new Map<string, { json: string; ts: number }>();
 const CACHE_TTL_MS = 30_000;
 
@@ -49,8 +53,8 @@ export async function readJson<T>(key: string, fallback: T): Promise<T> {
     if (!res.ok) return fallback;
     const text = await res.text();
     const parsed = JSON.parse(text) as T;
-    // Warm the cache with what we just read
-    writeCache.set(fullKey, { json: text, ts: Date.now() });
+    // Do NOT warm the cache on reads — a read-warmed entry can mask another
+    // container's newer write for up to CACHE_TTL_MS. Only writes warm it.
     return parsed;
   } catch {
     return fallback;
@@ -73,7 +77,11 @@ export async function writeJson<T>(key: string, data: T): Promise<void> {
     addRandomSuffix: false,
     allowOverwrite: true,
     contentType: "application/json",
-    cacheControlMaxAge: 60,
+    // Mutable data store: never let the Blob CDN cache it. With a 60s TTL, a
+    // read landing on a cold container after a write (e.g. creating a client)
+    // served the stale cached blob — the new record looked like it "didn't
+    // stick", so admins created it twice (risking a lost write/duplicate).
+    cacheControlMaxAge: 0,
   });
 
   // Cache the written data so subsequent reads in the same instance get fresh data

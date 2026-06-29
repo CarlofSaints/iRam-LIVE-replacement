@@ -217,16 +217,28 @@ export default function StoreReportsTestPage() {
   const [linkSearch, setLinkSearch] = useState("");              // candidate search text
   const [selectedCodes, setSelectedCodes] = useState<Set<string>>(new Set()); // looseCode keys ticked for bulk remove
 
-  // Persist the pasted list so a refresh doesn't lose it (the links themselves
-  // are saved server-side regardless). Restore + auto-check on mount.
+  // The pasted list is stored SERVER-SIDE so every admin works off the same list
+  // (localStorage is only a fast local fallback). Load the shared list on mount,
+  // fall back to localStorage if the server has nothing yet, then auto-check.
   const CODE_LS = "storeReportCodeText";
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem(CODE_LS);
-      if (saved && saved.trim()) { setCodeText(saved); checkCodes(saved); }
-    } catch { /* ignore */ }
+    (async () => {
+      let text = "";
+      try {
+        const res = await authFetch("/api/store-reports/code-input");
+        if (res.ok) { const d = await res.json().catch(() => ({})); text = String(d?.text ?? ""); }
+      } catch { /* ignore */ }
+      if (!text.trim()) { try { text = localStorage.getItem(CODE_LS) || ""; } catch { /* ignore */ } }
+      if (text.trim()) { setCodeText(text); checkCodes(text, false); }
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Save the shared list to the server so other admins see the same thing.
+  async function saveCodeInput(text: string) {
+    try { await authFetch("/api/store-reports/code-input", { method: "POST", body: JSON.stringify({ text }) }); }
+    catch { /* ignore — localStorage still holds a local copy */ }
+  }
 
   // Parse each line into { code, name } — Excel two-column paste is tab-separated;
   // also accept comma/semicolon. First column = code, the rest = store name.
@@ -238,10 +250,11 @@ export default function StoreReportsTestPage() {
     }).filter((e) => e.code);
   }
 
-  async function checkCodes(text: string = codeText) {
+  async function checkCodes(text: string = codeText, persist: boolean = true) {
     const entries = parseEntries(text);
     if (!entries.length) { setCodeErr("Paste some site codes first"); return; }
     try { localStorage.setItem(CODE_LS, text); } catch { /* ignore */ }
+    if (persist) saveCodeInput(text);  // share with other admins (skip on mount load)
     setCodeBusy(true); setCodeErr(""); setCodeRes(null); setLinkFor(null);
     try {
       const res = await authFetch("/api/store-reports/code-check", {
