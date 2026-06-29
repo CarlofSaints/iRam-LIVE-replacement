@@ -215,6 +215,7 @@ export default function StoreReportsTestPage() {
   const [codeFilter, setCodeFilter] = useState<CodeFilter>("all");
   const [linkFor, setLinkFor] = useState<string | null>(null);   // perigee code being linked
   const [linkSearch, setLinkSearch] = useState("");              // candidate search text
+  const [selectedCodes, setSelectedCodes] = useState<Set<string>>(new Set()); // looseCode keys ticked for bulk remove
 
   // Persist the pasted list so a refresh doesn't lose it (the links themselves
   // are saved server-side regardless). Restore + auto-check on mount.
@@ -267,17 +268,44 @@ export default function StoreReportsTestPage() {
     setCodeBusy(false);
   }
 
-  // Remove a Perigee store from the pasted list entirely (e.g. DC / online /
-  // closed that you don't need). Edits the textarea + re-checks.
-  function removeFromList(code: string) {
+  // Remove one or more Perigee stores from the pasted list entirely (e.g. DC /
+  // online / closed that you don't need). Edits the textarea + re-checks.
+  function removeFromList(codes: string | string[]) {
+    const drop = new Set((Array.isArray(codes) ? codes : [codes]).map(looseCode));
     const text = codeText.split(/\r?\n/).filter((line) => {
       const m = line.match(/^([^\t,;]+)[\t,;]+/);
       const c = (m ? m[1] : line).trim();
-      return c && looseCode(c) !== looseCode(code);
+      return c && !drop.has(looseCode(c));
     }).join("\n");
     setCodeText(text);
+    setSelectedCodes(new Set());
     try { localStorage.setItem(CODE_LS, text); } catch { /* ignore */ }
     checkCodes(text);
+  }
+
+  // Toggle a single row's tickbox (keyed by loose code).
+  function toggleSelect(code: string) {
+    setSelectedCodes((prev) => {
+      const next = new Set(prev);
+      const k = looseCode(code);
+      if (next.has(k)) next.delete(k); else next.add(k);
+      return next;
+    });
+  }
+
+  // Rows currently shown given the active card filter (drives select-all + map).
+  const visibleRows = useMemo(
+    () => (codeRes?.results || []).filter((r) => codeFilter === "all" || r.status === codeFilter),
+    [codeRes, codeFilter]
+  );
+  const allVisibleSelected = visibleRows.length > 0 && visibleRows.every((r) => selectedCodes.has(looseCode(r.code)));
+  function toggleSelectAllVisible() {
+    setSelectedCodes((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) visibleRows.forEach((r) => next.delete(looseCode(r.code)));
+      else visibleRows.forEach((r) => next.add(looseCode(r.code)));
+      return next;
+    });
   }
 
   async function unlink(perigeeCode: string) {
@@ -425,10 +453,25 @@ export default function StoreReportsTestPage() {
                 <span className="rounded-md bg-zinc-50 px-2.5 py-1 font-medium text-[var(--color-text-muted)] border border-[var(--color-border)]">{codeRes.dispoCodeCount} DISPO codes</span>
               </div>
 
+              {selectedCodes.size > 0 && (
+                <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs">
+                  <span className="font-semibold text-red-700">{selectedCodes.size} selected</span>
+                  <button onClick={() => removeFromList(Array.from(selectedCodes))} disabled={codeBusy}
+                    className="rounded-md bg-red-600 px-3 py-1 font-semibold text-white hover:bg-red-700 disabled:opacity-50">
+                    Remove selected
+                  </button>
+                  <button onClick={() => setSelectedCodes(new Set())} className="font-medium text-[var(--color-text-muted)] hover:underline">Clear selection</button>
+                </div>
+              )}
+
               <div className="max-h-80 overflow-y-auto rounded-lg border border-[var(--color-border)]">
                 <table className="w-full text-xs">
                   <thead className="sticky top-0 bg-zinc-50 text-[var(--color-text-muted)]">
                     <tr>
+                      <th className="px-3 py-2 text-left">
+                        <input type="checkbox" checked={allVisibleSelected} onChange={toggleSelectAllVisible}
+                          title="Select all shown" className="h-3.5 w-3.5 align-middle accent-[var(--color-primary)]" />
+                      </th>
                       <th className="px-3 py-2 text-left">Perigee code</th>
                       <th className="px-3 py-2 text-left">Perigee name</th>
                       <th className="px-3 py-2 text-left">Status</th>
@@ -438,7 +481,7 @@ export default function StoreReportsTestPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {codeRes.results.filter((r) => codeFilter === "all" || r.status === codeFilter).map((r, i) => {
+                    {visibleRows.map((r, i) => {
                       const candidates = (codeRes.dispoOnly || [])
                         .filter((c) => { const q = linkSearch.trim().toLowerCase(); return !q || (c.code + " " + (c.name || "")).toLowerCase().includes(q); })
                         .map((c) => ({ ...c, _s: nameScore(r.name || "", c.name || "") }))
@@ -447,6 +490,10 @@ export default function StoreReportsTestPage() {
                       return (
                       <Fragment key={i}>
                         <tr className="border-t border-zinc-100 align-top">
+                          <td className="px-3 py-2">
+                            <input type="checkbox" checked={selectedCodes.has(looseCode(r.code))} onChange={() => toggleSelect(r.code)}
+                              className="h-3.5 w-3.5 align-middle accent-[var(--color-primary)]" />
+                          </td>
                           <td className="px-3 py-2 font-mono">{r.code}</td>
                           <td className="px-3 py-2">{r.name || ""}</td>
                           <td className="px-3 py-2">
@@ -476,7 +523,7 @@ export default function StoreReportsTestPage() {
                         </tr>
                         {linkFor === r.code && (
                           <tr className="bg-blue-50/60">
-                            <td colSpan={6} className="px-3 py-3">
+                            <td colSpan={7} className="px-3 py-3">
                               <div className="mb-2 flex flex-wrap items-center gap-2">
                                 <span className="text-xs font-semibold text-[var(--color-text)]">Link <span className="font-mono">{r.code}</span>{r.name ? ` — ${r.name}` : ""} to a DISPO store:</span>
                                 <input autoFocus value={linkSearch} onChange={(e) => setLinkSearch(e.target.value)} placeholder="Search store name or code…"
