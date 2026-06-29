@@ -254,6 +254,46 @@ export default function StoreReportsTestPage() {
     setCodeBusy(false);
   }
 
+  // Export the full mapping (every status, not just the filtered view) to Excel
+  // so duplicate Perigee stores can be spotted (sort by DISPO match → two Perigee
+  // codes resolving to the same DISPO store are flagged "DUPLICATE").
+  async function exportMapping() {
+    if (!codeRes) return;
+    const XLSX = await import("xlsx");
+    const statusLabel: Record<CodeRow["status"], string> = {
+      match: "Match", linked: "Linked", "format-diff": "Format diff", "no-match": "No match",
+    };
+    // Count how many Perigee rows resolve to each DISPO store (code or, failing
+    // that, name) so we can flag duplicates.
+    const dispoCounts = new Map<string, number>();
+    for (const r of codeRes.results) {
+      const key = looseCode(r.dispoCode || "") || normName(r.dispoName || "");
+      if (key) dispoCounts.set(key, (dispoCounts.get(key) || 0) + 1);
+    }
+    const rows = codeRes.results.map((r) => {
+      const key = looseCode(r.dispoCode || "") || normName(r.dispoName || "");
+      return {
+        "Perigee Code": r.code,
+        "Perigee Name": r.name || "",
+        "Status": statusLabel[r.status],
+        "DISPO Code": r.dispoCode || "",
+        "DISPO Name": r.dispoName || "",
+        "Duplicate DISPO match": key && (dispoCounts.get(key) || 0) > 1 ? "DUPLICATE" : "",
+        "Note": r.reason || "",
+      };
+    });
+    const wb = XLSX.utils.book_new();
+    const wsResults = XLSX.utils.json_to_sheet(rows);
+    wsResults["!cols"] = [{ wch: 14 }, { wch: 32 }, { wch: 12 }, { wch: 14 }, { wch: 32 }, { wch: 20 }, { wch: 40 }];
+    XLSX.utils.book_append_sheet(wb, wsResults, "Mapping");
+    if (codeRes.dispoOnly?.length) {
+      const wsCand = XLSX.utils.json_to_sheet(codeRes.dispoOnly.map((c) => ({ "DISPO Code": c.code, "DISPO Name": c.name || "" })));
+      wsCand["!cols"] = [{ wch: 14 }, { wch: 32 }];
+      XLSX.utils.book_append_sheet(wb, wsCand, "Unmatched DISPO stores");
+    }
+    XLSX.writeFile(wb, "site-code-mapping.xlsx");
+  }
+
   async function saveLink(perigeeCode: string, dispoCode: string) {
     if (!dispoCode.trim()) return;
     setCodeBusy(true); setCodeErr("");
@@ -427,11 +467,17 @@ export default function StoreReportsTestPage() {
             rows={5}
             placeholder={"S117\tGreenstone\nMW35\tWoodmead\n..."}
             className="w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm font-mono" />
-          <div className="mt-3">
+          <div className="mt-3 flex flex-wrap gap-2">
             <button onClick={() => checkCodes()} disabled={codeBusy}
               className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)] disabled:opacity-40">
               {codeBusy ? "Checking…" : "Check codes"}
             </button>
+            {codeRes && (
+              <button onClick={exportMapping}
+                className="rounded-lg border border-[var(--color-border)] bg-white px-4 py-2 text-sm font-semibold text-[var(--color-text)] hover:border-zinc-400">
+                ⬇ Export to Excel
+              </button>
+            )}
           </div>
 
           {codeRes && (

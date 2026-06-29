@@ -7,15 +7,18 @@ import { getCodeMap, buildResolver, looseCode } from "@/lib/storeReportCodeMap";
 import type { StoreRecord } from "@/lib/types";
 
 // Reps don't call on DCs, online stores or closed stores — so they never need
-// linking and shouldn't clutter the candidate list.
-function isCallableStore(rec: StoreRecord | undefined): boolean {
-  if (!rec) return true; // unknown to the store master → keep (can't tell)
-  const status = String(rec.status ?? "").toLowerCase();
+// linking and shouldn't clutter the candidate list. We check both the store
+// master record (status/sub-channel) AND the store name we captured (which may
+// be the only signal for a DISPO-ledger code with no store-master record — e.g.
+// a "… DC" / "Distribution Centre" name). NOTE: never filter on "warehouse" —
+// Builders Warehouse (BWH) stores are real callable retail stores.
+function isCallableStore(rec: StoreRecord | undefined, name?: string): boolean {
+  const status = String(rec?.status ?? "").toLowerCase();
   if (/clos|shut|inactiv|ceas|delist|not\s*trad/.test(status)) return false;
-  const sub = String(rec.subChannel ?? "").toLowerCase().replace(/[\s_-]+/g, "");
-  if (sub === "dc" || sub.includes("dconline") || sub.includes("online")) return false;
-  const hay = `${rec.storeName ?? ""} ${rec.type ?? ""} ${rec.channel ?? ""}`.toLowerCase();
-  if (/\bonline\b|e-?commerce|distribution\s*cent|\bdc\b/.test(hay)) return false;
+  const sub = String(rec?.subChannel ?? "").toLowerCase().replace(/[\s_-]+/g, "");
+  if (sub === "dc" || sub.startsWith("distributioncent") || sub.includes("online") || sub.includes("ecommerce")) return false;
+  const hay = `${name ?? ""} ${rec?.storeName ?? ""} ${rec?.type ?? ""} ${rec?.channel ?? ""} ${rec?.subChannel ?? ""}`.toLowerCase();
+  if (/\bonline\b|e-?commerce|distribution\s*cent|\bdc\b|\bd\.?c\.?\b/.test(hay)) return false;
   return true;
 }
 
@@ -103,7 +106,7 @@ export async function POST(req: NextRequest) {
       .filter((d) => {
         const lc = looseCode(d);
         if (inputLoose.has(lc) || linkedTargets.has(lc)) return false;
-        return isCallableStore(recByLoose.get(lc));
+        return isCallableStore(recByLoose.get(lc), nameByLoose.get(lc));
       })
       .sort()
       .map((code) => ({ code, name: dispoName(code) }));
