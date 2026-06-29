@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { authFetch, useAuth, usePermissions } from "@/lib/useAuth";
 
 // Loose code compare (mirrors the server) + light name-similarity ranking
@@ -216,6 +216,14 @@ export default function StoreReportsTestPage() {
   const [linkFor, setLinkFor] = useState<string | null>(null);   // perigee code being linked
   const [linkSearch, setLinkSearch] = useState("");              // candidate search text
   const [selectedCodes, setSelectedCodes] = useState<Set<string>>(new Set()); // looseCode keys ticked for bulk remove
+  const [codeSyncMsg, setCodeSyncMsg] = useState("");            // "list updated by …" notice from the live poll
+  // The shared list text we last agreed with the server. The poll compares the
+  // server's text against this to detect ANOTHER admin's change (vs our own
+  // saves). codeTextRef holds the latest editor value for the poll's closure.
+  const syncedTextRef = useRef("");
+  const codeTextRef = useRef("");
+  codeTextRef.current = codeText;
+  const checkCodesRef = useRef<((text?: string, persist?: boolean) => Promise<void>) | null>(null);
 
   // The pasted list is stored SERVER-SIDE so every admin works off the same list
   // (localStorage is only a fast local fallback). Load the shared list on mount,
@@ -229,13 +237,41 @@ export default function StoreReportsTestPage() {
         if (res.ok) { const d = await res.json().catch(() => ({})); text = String(d?.text ?? ""); }
       } catch { /* ignore */ }
       if (!text.trim()) { try { text = localStorage.getItem(CODE_LS) || ""; } catch { /* ignore */ } }
+      syncedTextRef.current = text;  // baseline for the live poll
       if (text.trim()) { setCodeText(text); checkCodes(text, false); }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Live poll — pick up another admin's changes to the shared list while we work.
+  // Only ADOPT a server change when we have no unsaved local edits (codeText ===
+  // syncedTextRef); otherwise just flag it so we never clobber the editor.
+  useEffect(() => {
+    const id = setInterval(async () => {
+      try {
+        const res = await authFetch("/api/store-reports/code-input");
+        if (!res.ok) return;
+        const d = await res.json().catch(() => ({}));
+        const serverText = String(d?.text ?? "");
+        if (serverText === syncedTextRef.current) return;            // unchanged / our own save
+        if (codeTextRef.current !== syncedTextRef.current) {         // we have unsaved local edits
+          setCodeSyncMsg((prev) => prev.startsWith("Another admin") ? prev : "Another admin updated the list — your local edits aren't synced yet.");
+          return;
+        }
+        syncedTextRef.current = serverText;
+        setCodeText(serverText);
+        if (serverText.trim()) checkCodesRef.current?.(serverText, false); else setCodeRes(null);
+        setCodeSyncMsg(d?.updatedBy ? `List updated by ${d.updatedBy}` : "List updated by another admin");
+        setTimeout(() => setCodeSyncMsg(""), 5000);
+      } catch { /* ignore */ }
+    }, 15000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Save the shared list to the server so other admins see the same thing.
   async function saveCodeInput(text: string) {
+    syncedTextRef.current = text;  // our own save — don't let the poll treat it as external
     try { await authFetch("/api/store-reports/code-input", { method: "POST", body: JSON.stringify({ text }) }); }
     catch { /* ignore — localStorage still holds a local copy */ }
   }
@@ -255,7 +291,7 @@ export default function StoreReportsTestPage() {
     if (!entries.length) { setCodeErr("Paste some site codes first"); return; }
     try { localStorage.setItem(CODE_LS, text); } catch { /* ignore */ }
     if (persist) saveCodeInput(text);  // share with other admins (skip on mount load)
-    setCodeBusy(true); setCodeErr(""); setCodeRes(null); setLinkFor(null);
+    setCodeBusy(true); setCodeErr(""); setCodeRes(null); setLinkFor(null); setCodeSyncMsg("");
     try {
       const res = await authFetch("/api/store-reports/code-check", {
         method: "POST", body: JSON.stringify({ entries }),
@@ -266,6 +302,7 @@ export default function StoreReportsTestPage() {
     } catch { setCodeErr("Network error"); }
     setCodeBusy(false);
   }
+  checkCodesRef.current = checkCodes;  // keep the live poll calling the latest checkCodes
 
   // Export the full mapping (every status, not just the filtered view) to Excel
   // so duplicate Perigee stores can be spotted (sort by DISPO match → two Perigee
@@ -473,6 +510,7 @@ export default function StoreReportsTestPage() {
           ambiguous ones by name before any live visits.
         </p>
         {codeErr && <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">{codeErr}</div>}
+        {codeSyncMsg && <div className="mb-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm text-blue-700">🔄 {codeSyncMsg}</div>}
         <div className="rounded-xl border border-[var(--color-border)] bg-white p-5">
           <textarea
             value={codeText}
