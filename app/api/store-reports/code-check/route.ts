@@ -56,16 +56,28 @@ export async function POST(req: NextRequest) {
     const clients = (await getClients()).filter((c) => c.sendConsolidatedStoreReports);
     const dispoExact = new Set<string>();
     const dispoLoose = new Map<string, string>();   // loose → exact example
-    const dispoDigits = new Map<string, string>();
+    const dispoDigits = new Map<string, string>();  // digit-core → callable example (fuzzy match)
     const nameByLoose = new Map<string, string>();  // loose code → store name
     const recByLoose = new Map<string, StoreRecord>(); // loose code → store master record
+
+    // Build the store-master record index FIRST so callability is known while we
+    // populate the pools (the fuzzy digit pool must skip non-callable stores).
+    const merged = await getMergedStores();
+    for (const s of merged) recByLoose.set(looseCode(String(s.siteNum ?? "")), s);
+
     const add = (raw: string, name?: string) => {
       const e = raw.trim(); if (!e) return;
-      dispoExact.add(e);
       const lc = looseCode(e);
-      if (!dispoLoose.has(lc)) dispoLoose.set(lc, e);
-      const d = digits(e); if (d && !dispoDigits.has(d)) dispoDigits.set(d, e);
       if (name && name.trim() && !nameByLoose.has(lc)) nameByLoose.set(lc, name.trim());
+      dispoExact.add(e);
+      if (!dispoLoose.has(lc)) dispoLoose.set(lc, e);
+      // Fuzzy digit-match strips letters, so S103 and D103 both reduce to "103".
+      // Never let a non-callable store (closed / DC / online) be a fuzzy match
+      // target — that produced false "format diff" matches like S103 → D103
+      // (a closed DC). Exact/loose matches still resolve against every code.
+      if (isCallableStore(recByLoose.get(lc), name ?? nameByLoose.get(lc))) {
+        const d = digits(e); if (d && !dispoDigits.has(d)) dispoDigits.set(d, e);
+      }
     };
     for (const client of clients) {
       for (const meta of await getAllSalesLedgers(client.id)) {
@@ -73,10 +85,7 @@ export async function POST(req: NextRequest) {
         for (const r of ledger) add(String(r["Site"] ?? ""), String(r["_storeName"] ?? r["Site Name"] ?? ""));
       }
     }
-    for (const s of await getMergedStores()) {
-      add(String(s.siteNum ?? ""), String(s.storeName ?? ""));
-      recByLoose.set(looseCode(String(s.siteNum ?? "")), s);
-    }
+    for (const s of merged) add(String(s.siteNum ?? ""), String(s.storeName ?? ""));
 
     const map = await getCodeMap();
     const resolve = buildResolver(map);
