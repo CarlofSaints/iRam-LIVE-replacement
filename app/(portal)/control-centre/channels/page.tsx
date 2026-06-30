@@ -15,6 +15,7 @@ export default function ChannelsPage() {
   const [logos, setLogos] = useState<Record<string, string>>({});
   const [compEditId, setCompEditId] = useState<string | null>(null);
   const [compSel, setCompSel] = useState<string[]>([]);
+  const [editName, setEditName] = useState("");
 
   async function load() {
     const res = await authFetch("/api/channels");
@@ -67,34 +68,17 @@ export default function ChannelsPage() {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError("");
-
-    if (editId) {
-      // Edit — only rename (no re-parenting)
-      const res = await authFetch(`/api/channels/${editId}`, {
-        method: "PUT",
-        body: JSON.stringify({ id: editId, name: form.name }),
-      });
-      if (!res.ok) {
-        const d = await res.json();
-        setError(d.error || "Failed");
-        return;
-      }
-    } else {
-      // Create — main channel only (no parentId)
-      const res = await authFetch("/api/channels", {
-        method: "POST",
-        body: JSON.stringify({ name: form.name }),
-      });
-      if (!res.ok) {
-        const d = await res.json();
-        setError(d.error || "Failed");
-        return;
-      }
+    // Create — main channel only (no parentId). Renames happen inline per row.
+    const res = await authFetch("/api/channels", {
+      method: "POST",
+      body: JSON.stringify({ name: form.name }),
+    });
+    if (!res.ok) {
+      const d = await res.json();
+      setError(d.error || "Failed");
+      return;
     }
-
     setShowForm(false);
-    setEditId(null);
-    setEditIsSub(false);
     setForm({ name: "" });
     load();
   }
@@ -126,9 +110,23 @@ export default function ChannelsPage() {
   function startEdit(c: Channel) {
     setEditId(c.id);
     setEditIsSub(!!c.parentId);
-    setForm({ name: c.name });
-    setShowForm(true);
+    setEditName(c.name);
+    setCompEditId(null);
     setError("");
+  }
+  function cancelEdit() {
+    setEditId(null);
+    setEditName("");
+  }
+  async function saveEdit() {
+    if (!editId || !editName.trim()) return;
+    const res = await authFetch(`/api/channels/${editId}`, {
+      method: "PUT",
+      body: JSON.stringify({ id: editId, name: editName.trim() }),
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); alert(d.error || "Rename failed"); return; }
+    cancelEdit();
+    load();
   }
 
   function startCompanions(c: Channel) {
@@ -210,7 +208,17 @@ export default function ChannelsPage() {
                     <span className="rounded bg-[var(--color-secondary)]/10 px-2 py-0.5 text-xs font-bold text-[var(--color-secondary)]">
                       MAIN
                     </span>
-                    <span className="font-medium text-[var(--color-text)]">{main.name}</span>
+                    {editId === main.id ? (
+                      <span className="flex items-center gap-2">
+                        <input autoFocus value={editName} onChange={(e) => setEditName(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter") saveEdit(); if (e.key === "Escape") cancelEdit(); }}
+                          className="rounded-lg border border-[var(--color-border)] px-2 py-1 text-sm" />
+                        <button onClick={saveEdit} className="rounded bg-[var(--color-primary)] px-3 py-1 text-xs font-semibold text-white hover:bg-[var(--color-primary-dark)]">Save</button>
+                        <button onClick={cancelEdit} className="text-xs text-[var(--color-text-muted)] hover:underline">Cancel</button>
+                      </span>
+                    ) : (
+                      <span className="font-medium text-[var(--color-text)]">{main.name}</span>
+                    )}
                     {logos[main.id] && (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={logos[main.id]} alt="" className="h-7 rounded border border-[var(--color-border)] bg-white px-1" />
@@ -266,10 +274,22 @@ export default function ChannelsPage() {
                       <span className="rounded bg-[var(--color-primary)]/10 px-2 py-0.5 text-xs font-bold text-[var(--color-primary)]">
                         SUB
                       </span>
-                      <span className="text-sm text-[var(--color-text)]">{sub.name}</span>
-                      <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500">
-                        Auto-created from store files
-                      </span>
+                      {editId === sub.id ? (
+                        <span className="flex items-center gap-2">
+                          <input autoFocus value={editName} onChange={(e) => setEditName(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === "Enter") saveEdit(); if (e.key === "Escape") cancelEdit(); }}
+                            className="rounded-lg border border-[var(--color-border)] px-2 py-1 text-sm" />
+                          <button onClick={saveEdit} className="rounded bg-[var(--color-primary)] px-3 py-1 text-xs font-semibold text-white hover:bg-[var(--color-primary-dark)]">Save</button>
+                          <button onClick={cancelEdit} className="text-xs text-[var(--color-text-muted)] hover:underline">Cancel</button>
+                        </span>
+                      ) : (
+                        <>
+                          <span className="text-sm text-[var(--color-text)]">{sub.name}</span>
+                          <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500">
+                            Auto-created from store files
+                          </span>
+                        </>
+                      )}
                     </div>
                     <div className="flex gap-2">
                       <button onClick={() => startEdit(sub)} className="text-xs text-[var(--color-primary)] hover:underline">Rename</button>
