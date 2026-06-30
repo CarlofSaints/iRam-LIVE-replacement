@@ -123,15 +123,27 @@ export async function sendMissingProductsEmail(params: {
   to: string[];
   clientName: string;
   channelName: string;
-  missingArticles: string[];
+  missingArticles: { article: string; articleDesc: string; vendProd: string }[];
   uploaderName: string;
 }): Promise<void> {
   if (params.to.length === 0 || params.missingArticles.length === 0) return;
   const resend = getResend();
+  const esc = (s: string) =>
+    String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const max = 50;
   const shown = params.missingArticles.slice(0, max);
   const remaining = params.missingArticles.length - max;
-  const list = shown.map((a) => `<li style="padding:2px 0;font-size:13px;color:#2D3748;">${a}</li>`).join("");
+  const list = shown
+    .map((a) => {
+      const desc = a.articleDesc
+        ? `<span style="color:#4A5568;"> &mdash; ${esc(a.articleDesc)}</span>`
+        : "";
+      const vend = a.vendProd
+        ? `<div style="font-size:11px;color:#718096;margin-top:1px;">Vendor product code: ${esc(a.vendProd)}</div>`
+        : "";
+      return `<li style="padding:5px 0;font-size:13px;color:#2D3748;"><strong>${esc(a.article)}</strong>${desc}${vend}</li>`;
+    })
+    .join("");
   const moreNote = remaining > 0 ? `<p style="font-size:13px;color:#718096;margin:8px 0 0;">+ ${remaining} more</p>` : "";
 
   await resend.emails.send({

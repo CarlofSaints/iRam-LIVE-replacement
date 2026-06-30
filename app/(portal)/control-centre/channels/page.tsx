@@ -13,6 +13,8 @@ export default function ChannelsPage() {
   const [editId, setEditId] = useState<string | null>(null);
   const [editIsSub, setEditIsSub] = useState(false);
   const [logos, setLogos] = useState<Record<string, string>>({});
+  const [compEditId, setCompEditId] = useState<string | null>(null);
+  const [compSel, setCompSel] = useState<string[]>([]);
 
   async function load() {
     const res = await authFetch("/api/channels");
@@ -129,6 +131,24 @@ export default function ChannelsPage() {
     setError("");
   }
 
+  function startCompanions(c: Channel) {
+    setCompEditId(compEditId === c.id ? null : c.id);
+    setCompSel(c.companionChannelIds ?? []);
+  }
+  const toggleComp = (id: string) =>
+    setCompSel((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+  async function saveCompanions() {
+    if (!compEditId) return;
+    const res = await authFetch(`/api/channels/${compEditId}`, {
+      method: "PUT",
+      body: JSON.stringify({ id: compEditId, companionChannelIds: compSel }),
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); alert(d.error || "Failed"); return; }
+    setCompEditId(null);
+    load();
+  }
+  const channelName = (id: string) => mainChannels.find((c) => c.id === id)?.name ?? id;
+
   return (
     <div className="p-8">
       <div className="mb-6 flex items-center justify-between">
@@ -195,6 +215,11 @@ export default function ChannelsPage() {
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={logos[main.id]} alt="" className="h-7 rounded border border-[var(--color-border)] bg-white px-1" />
                     )}
+                    {!!main.companionChannelIds?.length && (
+                      <span className="rounded bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
+                        + {main.companionChannelIds.map(channelName).join(", ")}
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-2">
                     <label className="cursor-pointer text-xs text-[var(--color-primary)] hover:underline">
@@ -205,10 +230,36 @@ export default function ChannelsPage() {
                     {logos[main.id] && (
                       <button onClick={() => deleteChannelLogo(main.id)} className="text-xs text-red-500 hover:underline">Remove logo</button>
                     )}
+                    <button onClick={() => startCompanions(main)} className="text-xs text-[var(--color-primary)] hover:underline">Companions</button>
                     <button onClick={() => startEdit(main)} className="text-xs text-[var(--color-primary)] hover:underline">Edit</button>
                     <button onClick={() => handleDelete(main.id)} className="text-xs text-red-500 hover:underline">Delete</button>
                   </div>
                 </div>
+                {compEditId === main.id && (
+                  <div className="border-t border-[var(--color-border)] bg-blue-50/40 px-6 py-4">
+                    <p className="mb-1 text-xs font-semibold text-[var(--color-text)]">Companion channels for {main.name}</p>
+                    <p className="mb-3 text-[11px] text-[var(--color-text-muted)]">
+                      Pick other main channels whose sites arrive inside {main.name}&apos;s DISPO export. When a {main.name} DISPO
+                      is loaded, sites are validated against all selected channels&apos; store files and rows are split into each
+                      channel&apos;s own ledger.
+                    </p>
+                    <div className="mb-3 flex flex-wrap gap-2">
+                      {mainChannels.filter((c) => c.id !== main.id).map((c) => (
+                        <button key={c.id} type="button" onClick={() => toggleComp(c.id)}
+                          className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${compSel.includes(c.id) ? "border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-zinc-400"}`}>
+                          {c.name}
+                        </button>
+                      ))}
+                      {mainChannels.filter((c) => c.id !== main.id).length === 0 && (
+                        <span className="text-xs text-[var(--color-text-muted)]">No other main channels to link.</span>
+                      )}
+                    </div>
+                    <div className="flex gap-2">
+                      <button onClick={saveCompanions} className="rounded-lg bg-[var(--color-primary)] px-4 py-1.5 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)]">Save</button>
+                      <button onClick={() => setCompEditId(null)} className="rounded-lg border border-[var(--color-border)] px-4 py-1.5 text-sm text-[var(--color-text-muted)] hover:bg-zinc-50">Cancel</button>
+                    </div>
+                  </div>
+                )}
                 {getSubChannels(main.id).map((sub) => (
                   <div key={sub.id} className="flex items-center justify-between border-t border-zinc-100 bg-zinc-50/50 px-6 py-2.5 pl-14">
                     <div className="flex items-center gap-3">

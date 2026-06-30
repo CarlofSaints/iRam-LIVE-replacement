@@ -133,6 +133,15 @@ export async function updateChannel(
       channels[idx].parentId = updates.parentId as string;
     }
   }
+  // companionChannelIds: array of other main-channel IDs whose stores share this
+  // channel's DISPO export. Empty array / non-array clears it.
+  if ("companionChannelIds" in updates) {
+    const ids = Array.isArray(updates.companionChannelIds)
+      ? (updates.companionChannelIds as unknown[]).map(String).filter((x) => x && x !== id)
+      : [];
+    if (ids.length) channels[idx].companionChannelIds = Array.from(new Set(ids));
+    else delete channels[idx].companionChannelIds;
+  }
   await writeJson(KEY, channels);
   return channels[idx];
 }

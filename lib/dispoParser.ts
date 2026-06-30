@@ -28,11 +28,20 @@ export function parseDispo(buffer: Buffer): DispoParseResult {
   const sheet = workbook.Sheets[sheetName];
   if (!sheet) throw new Error("No data sheet found");
 
-  // Convert to array of arrays for header scanning
+  // Convert to array of arrays for header scanning. `raw:false` gives Excel's
+  // formatted text (so dates/numbers read as they display). A parallel `raw:true`
+  // pass keeps the underlying values — used only for ID columns (Article, Vendor
+  // Prod Code) where a large barcode would otherwise come through in scientific
+  // notation (e.g. "8.50016E+11") and lose its digits.
   const aoa: unknown[][] = XLSX.utils.sheet_to_json(sheet, {
     header: 1,
     defval: "",
     raw: false,
+  });
+  const aoaRaw: unknown[][] = XLSX.utils.sheet_to_json(sheet, {
+    header: 1,
+    defval: "",
+    raw: true,
   });
 
   // Find header row — scan first 10 rows for one containing "Vendor" or "Article"
@@ -97,11 +106,24 @@ export function parseDispo(buffer: Buffer): DispoParseResult {
     if (nameMatch) vendorNumber = nameMatch[1];
   }
 
+  // ID columns whose raw numeric value we keep verbatim (as a plain integer
+  // string) instead of Excel's scientific-notation display text.
+  const ID_COLUMNS = new Set(["Article", "Vendor Prod Code"]);
+  const plainInt = (v: unknown): string | null => {
+    if (typeof v === "number" && Number.isFinite(v)) {
+      // EAN/article codes are integers well within Number.MAX_SAFE_INTEGER, so
+      // toString() is exact and never uses exponent notation at this magnitude.
+      return Number.isInteger(v) ? v.toString() : String(v);
+    }
+    return null;
+  };
+
   // Parse data rows
   const rows: Record<string, unknown>[] = [];
   for (let i = headerRowIdx + 1; i < aoa.length; i++) {
     const row = aoa[i];
     if (!Array.isArray(row)) continue;
+    const rawRow = Array.isArray(aoaRaw[i]) ? (aoaRaw[i] as unknown[]) : [];
 
     // Skip blank rows
     const hasData = row.some(
@@ -113,7 +135,11 @@ export function parseDispo(buffer: Buffer): DispoParseResult {
     for (let j = 0; j < resolvedHeaders.length; j++) {
       const header = resolvedHeaders[j];
       if (!header) continue;
-      obj[header] = row[j] ?? "";
+      if (ID_COLUMNS.has(header)) {
+        obj[header] = plainInt(rawRow[j]) ?? (row[j] ?? "");
+      } else {
+        obj[header] = row[j] ?? "";
+      }
     }
     rows.push(obj);
   }

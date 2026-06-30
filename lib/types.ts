@@ -138,6 +138,12 @@ export interface Channel {
   parentId?: string;
   active: boolean;
   createdAt: string; // ISO
+  // For a MAIN channel: other main channels whose stores arrive inside THIS
+  // channel's DISPO export (e.g. Makro's export also carries Walmart sites).
+  // When a DISPO is loaded for this channel, sites are validated against this
+  // channel + its companions' store masters, and rows are split per site's own
+  // channel into the matching ledger.
+  companionChannelIds?: string[];
 }
 
 // ── CAMs ──

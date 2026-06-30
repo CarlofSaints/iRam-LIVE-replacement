@@ -64,17 +64,26 @@ export default function DataLoadPage() {
 
   const selectedClient = clients.find((c) => c.id === clientId);
 
-  // Show main channels that have at least one sub-channel assigned to the client
+  // Show main channels that have at least one sub-channel assigned to the client,
+  // plus any companion channels (e.g. Walmart rides inside Makro's DISPO export),
+  // so the rep can load the shared file from either side.
   const mainChannels = channels.filter((c) => !c.parentId);
   const subChannels = channels.filter((c) => !!c.parentId);
-  const availableChannels = selectedClient
-    ? mainChannels.filter((main) =>
-        selectedClient.channelIds.includes(main.id) ||
-        subChannels.some(
-          (sub) => sub.parentId === main.id && selectedClient.channelIds.includes(sub.id)
-        )
+  const availableChannels = (() => {
+    if (!selectedClient) return [];
+    const directMains = mainChannels.filter((main) =>
+      selectedClient.channelIds.includes(main.id) ||
+      subChannels.some(
+        (sub) => sub.parentId === main.id && selectedClient.channelIds.includes(sub.id)
       )
-    : [];
+    );
+    const ids = new Set(directMains.map((m) => m.id));
+    // companions OF the assigned mains
+    for (const m of directMains) for (const cid of m.companionChannelIds ?? []) ids.add(cid);
+    // mains that list an assigned main as a companion (link is bidirectional)
+    for (const m of mainChannels) if (m.companionChannelIds?.some((cid) => ids.has(cid))) ids.add(m.id);
+    return mainChannels.filter((m) => ids.has(m.id));
+  })();
 
   async function submitUpload(file: File, force: boolean) {
     setUploading(true);

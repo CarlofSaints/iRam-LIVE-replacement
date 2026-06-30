@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { getUploadIndex, getUploadsByClient, addUpload } from "@/lib/uploadData";
 import { getClientById } from "@/lib/clientData";
-import { getChannelById } from "@/lib/channelData";
+import { getChannelById, getChannels } from "@/lib/channelData";
 import { parseDispo } from "@/lib/dispoParser";
 import { mergeDispo } from "@/lib/salesData";
 import { getLinksLookup, normalizeArticle } from "@/lib/linksLookup";
@@ -79,9 +79,28 @@ export async function POST(req: NextRequest) {
 
       // Resolve main channel (channelId should already be a main channel)
       const mainChannelId = channel.parentId ?? channel.id;
-      const mainChannelName = channel.parentId
-        ? (await getChannelById(channel.parentId))?.name ?? channel.name
-        : channel.name;
+      const allChannels = await getChannels();
+      const channelById = new Map(allChannels.map((c) => [c.id, c]));
+      const mainRecord = channelById.get(mainChannelId) ?? channel;
+      const mainChannelName = mainRecord.name;
+
+      // ── Companion-channel group ──
+      // A main channel's DISPO export can carry sites belonging to companion
+      // channels (e.g. the Makro export also contains Walmart sites). Build the
+      // group of channels whose store masters we validate against and route rows
+      // into. The link is treated bidirectionally so loading from either side
+      // (Makro or Walmart) splits the file correctly.
+      const groupIds = new Set<string>([mainChannelId]);
+      for (const cid of mainRecord.companionChannelIds ?? []) groupIds.add(cid);
+      for (const c of allChannels) {
+        if (!c.parentId && c.companionChannelIds?.includes(mainChannelId)) groupIds.add(c.id);
+      }
+      const acceptChannels = [...groupIds]
+        .map((gid) => channelById.get(gid))
+        .filter((c): c is NonNullable<typeof c> => !!c)
+        .map((c) => ({ id: c.id, name: c.name }));
+      const acceptByName = new Map<string, { id: string; name: string }>();
+      for (const c of acceptChannels) acceptByName.set(c.name.trim().toUpperCase(), c);
 
       // ── Validate articles against LINKS ──
       const linksLookup = await getLinksLookup(clientId);
@@ -105,14 +124,17 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // ── Validate sites against store master ──
+      // ── Validate sites against the group's store master(s) ──
+      // Map each known site to the channel that owns it (so rows can later be
+      // split per site's own channel). A site is "known" if it appears in any
+      // accept channel's store master.
       const mergedStores = await getMergedStores();
-      const channelStores = mergedStores.filter(
-        (s) => s.channel.trim().toUpperCase() === mainChannelName.toUpperCase()
-      );
-      const knownSites = new Set(
-        channelStores.map((s) => s.siteNum.trim().toLowerCase())
-      );
+      const siteChannel = new Map<string, { id: string; name: string }>();
+      for (const s of mergedStores) {
+        const owner = acceptByName.get(s.channel.trim().toUpperCase());
+        if (owner && s.siteNum) siteChannel.set(s.siteNum.trim().toLowerCase(), owner);
+      }
+      const knownSites = new Set(siteChannel.keys());
 
       const missingSites: string[] = [];
       const seenSites = new Set<string>();
@@ -146,7 +168,7 @@ export async function POST(req: NextRequest) {
               to: recipients,
               clientName: client.name,
               channelName: mainChannelName,
-              missingArticles: missingArticleDetails.map((d) => d.article),
+              missingArticles: missingArticleDetails,
               uploaderName: session.name,
             })
           );
@@ -188,72 +210,102 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // ── Proceed with upload (main channel only) ──
-      const upload = await addUpload(
-        {
+      // ── Proceed: split rows by each site's owning channel, then upload +
+      //    merge each group into its own channel ledger. With no companions
+      //    (or all sites in the primary channel) this collapses to a single
+      //    group = the main channel, exactly as before. Sites not found in any
+      //    store master fall to the primary main channel.
+      const primary = { id: mainChannelId, name: mainChannelName };
+      const groups = new Map<string, { channel: { id: string; name: string }; rows: Record<string, unknown>[] }>();
+      for (const row of result.rows) {
+        const site = String(row["Site"] ?? "").trim().toLowerCase();
+        const owner = (site && siteChannel.get(site)) || primary;
+        let g = groups.get(owner.id);
+        if (!g) { g = { channel: owner, rows: [] }; groups.set(owner.id, g); }
+        g.rows.push(row);
+      }
+      const groupList = [...groups.values()].filter((g) => g.rows.length > 0);
+
+      const mergeTotals = { inserted: 0, updated: 0, unchanged: 0 };
+      const perChannel: { channel: string; rows: number; inserted: number; updated: number; unchanged: number }[] = [];
+      let firstUploadId = "";
+      for (const g of groupList) {
+        const upload = await addUpload(
+          {
+            clientId,
+            clientName: client.name,
+            channelId: g.channel.id,
+            channelName: g.channel.name,
+            fileType: "dispo",
+            fileName: file.name,
+            uploadDate: new Date().toISOString(),
+            uploadedBy: session.userId,
+            uploadedByName: session.name,
+            vendorNumber: result.vendorNumber,
+            period: result.dateColumns.join(", "),
+            rowCount: g.rows.length,
+            dateColumns: result.dateColumns,
+            reportYear,
+            reportMonth,
+            reportWeek,
+            status: "processed",
+          },
+          g.rows
+        );
+        if (!firstUploadId) firstUploadId = upload.id;
+
+        const merge = await mergeDispo({
           clientId,
           clientName: client.name,
-          channelId: mainChannelId,
-          channelName: mainChannelName,
-          fileType: "dispo",
-          fileName: file.name,
-          uploadDate: new Date().toISOString(),
-          uploadedBy: session.userId,
-          uploadedByName: session.name,
+          channelId: g.channel.id,
+          channelName: g.channel.name,
           vendorNumber: result.vendorNumber,
-          period: result.dateColumns.join(", "),
-          rowCount: result.totalRows,
+          rows: g.rows,
           dateColumns: result.dateColumns,
+          uploadId: upload.id,
           reportYear,
           reportMonth,
           reportWeek,
-          status: "processed",
-        },
-        result.rows
-      );
-
-      // Merge into sales ledger using main channel ID
-      const merge = await mergeDispo({
-        clientId,
-        clientName: client.name,
-        channelId: mainChannelId,
-        channelName: mainChannelName,
-        vendorNumber: result.vendorNumber,
-        rows: result.rows,
-        dateColumns: result.dateColumns,
-        uploadId: upload.id,
-        reportYear,
-        reportMonth,
-        reportWeek,
-      });
+        });
+        mergeTotals.inserted += merge.inserted;
+        mergeTotals.updated += merge.updated;
+        mergeTotals.unchanged += merge.unchanged;
+        perChannel.push({ channel: g.channel.name, rows: g.rows.length, ...merge });
+      }
 
       const logSuffix = hasWarnings
         ? ` (forced with ${missingArticleDetails.length} missing articles, ${missingSites.length} missing sites)`
+        : "";
+      const splitSuffix = perChannel.length > 1
+        ? ` Split by channel: ${perChannel.map((p) => `${p.channel} ${p.rows}`).join(", ")}.`
         : "";
 
       await addLog({
         userId: session.userId,
         userName: session.name,
         action: "upload_dispo",
-        details: `Uploaded DISPO for ${client.name} / ${mainChannelName} (${result.totalRows} rows, vendor ${result.vendorNumber}). Ledger merge: ${merge.inserted} new, ${merge.updated} updated, ${merge.unchanged} unchanged.${logSuffix}`,
+        details: `Uploaded DISPO for ${client.name} / ${mainChannelName} (${result.totalRows} rows, vendor ${result.vendorNumber}). Ledger merge: ${mergeTotals.inserted} new, ${mergeTotals.updated} updated, ${mergeTotals.unchanged} unchanged.${splitSuffix}${logSuffix}`,
         status: "success",
         clientId: client.id,
         clientName: client.name,
       });
 
-      // Fire-and-forget: detect new status codes
+      // Fire-and-forget: detect new status codes, attributed to each split
+      // group's own channel so Walmart codes attach to Walmart, etc.
       (async () => {
         try {
           const { upsertStatus, normalizeStatusCode } = await import("@/lib/statusData");
-          const seen = new Set<string>();
-          for (const row of result.rows) {
-            const raw = String(row["Status"] ?? row["PR ST"] ?? "").trim();
-            if (raw) seen.add(normalizeStatusCode(raw));
-          }
           let newCount = 0;
-          for (const code of seen) {
-            const { isNew } = await upsertStatus({ code, channelId: mainChannelId, autoDetected: true });
-            if (isNew) newCount++;
+          for (const g of groupList) {
+            const seen = new Set<string>();
+            for (const row of g.rows) {
+              const raw = String(row["Status"] ?? row["PR ST"] ?? "").trim();
+              if (raw) seen.add(normalizeStatusCode(raw));
+            }
+            for (const code of seen) {
+              const { isNew } = await upsertStatus({ code, channelId: g.channel.id, autoDetected: true });
+              if (isNew) newCount++;
+            }
           }
           if (newCount > 0) {
             await addLog({
@@ -270,9 +322,10 @@ export async function POST(req: NextRequest) {
       return Response.json(
         {
           success: true,
-          id: upload.id,
+          id: firstUploadId,
           rowCount: result.totalRows,
-          merge,
+          merge: mergeTotals,
+          ...(perChannel.length > 1 ? { perChannel } : {}),
           ...(hasWarnings ? {
             warnings: {
               missingArticles: missingArticleDetails,
