@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { authFetch } from "@/lib/useAuth";
 import type { LogEntry } from "@/lib/types";
+import SearchSelect from "@/components/SearchSelect";
 
 // Friendly labels for the machine-style action codes. Anything not listed is
 // already human-readable (e.g. "Downloaded Month-End report") and passes through.
@@ -49,9 +50,6 @@ const ACTION_LABELS: Record<string, string> = {
 function actionLabel(action: string): string {
   return ACTION_LABELS[action] ?? action;
 }
-
-const selectCls =
-  "rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary,#1f5fa8)]";
 
 export default function ActivityLogPage() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -136,42 +134,39 @@ export default function ActivityLogPage() {
           <span className="text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
             Action
           </span>
-          <select className={selectCls} value={actionFilter} onChange={(e) => setActionFilter(e.target.value)}>
-            <option value="">All actions</option>
-            {actionOptions.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
+          <SearchSelect
+            value={actionFilter}
+            onChange={setActionFilter}
+            options={actionOptions}
+            allLabel="All actions"
+            searchLabel="actions"
+          />
         </label>
 
         <label className="flex flex-col gap-1">
           <span className="text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
             Client
           </span>
-          <select className={selectCls} value={clientFilter} onChange={(e) => setClientFilter(e.target.value)}>
-            <option value="">All clients</option>
-            {clients.map((c) => (
-              <option key={c.id} value={c.name}>
-                {c.name}
-              </option>
-            ))}
-          </select>
+          <SearchSelect
+            value={clientFilter}
+            onChange={setClientFilter}
+            options={clients.map((c) => ({ value: c.name, label: c.name }))}
+            allLabel="All clients"
+            searchLabel="clients"
+          />
         </label>
 
         <label className="flex flex-col gap-1">
           <span className="text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
             User
           </span>
-          <select className={selectCls} value={userFilter} onChange={(e) => setUserFilter(e.target.value)}>
-            <option value="">All users</option>
-            {userOptions.map((u) => (
-              <option key={u} value={u}>
-                {u}
-              </option>
-            ))}
-          </select>
+          <SearchSelect
+            value={userFilter}
+            onChange={setUserFilter}
+            options={userOptions.map((u) => ({ value: u, label: u }))}
+            allLabel="All users"
+            searchLabel="users"
+          />
         </label>
 
         {hasFilters && (
