@@ -220,7 +220,10 @@ export default function ClientDetailPage() {
         const data = await res.json();
         setPmfHeaders(data.headers ?? []);
         setAutoMatched(data.autoMatched ?? {});
-        setMapping(data.mapping ?? data.autoMatched ?? {});
+        // Merge auto-matched suggestions into any UNSET fields of the saved
+        // mapping, so fields like Status that predate the saved mapping show up
+        // pre-filled (the master also auto-resolves these on rebuild).
+        setMapping({ ...(data.autoMatched ?? {}), ...(data.mapping ?? {}) });
       } else {
         console.error("product-mapping GET failed:", res.status, await res.text().catch(() => ""));
       }

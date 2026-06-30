@@ -47,8 +47,8 @@ export async function getProductMaster(
 export async function buildProductMaster(
   clientId: string
 ): Promise<{ count: number }> {
-  const mapping = await getProductMapping(clientId);
-  if (!mapping || !mapping.clientProductId) {
+  const saved = await getProductMapping(clientId);
+  if (!saved || !saved.clientProductId) {
     return { count: 0 };
   }
 
@@ -56,6 +56,21 @@ export async function buildProductMaster(
   if (rawRows.length === 0) {
     return { count: 0 };
   }
+
+  // Auto-resolve any UNMAPPED optional dimension from the PMF headers, so a
+  // saved mapping that predates a field (e.g. Status) still pulls it from the
+  // PMF instead of coming back blank. Explicit saved values always win.
+  const headers = Object.keys(rawRows[0] ?? {});
+  const auto = autoMatchHeaders(headers);
+  const mapping: ProductFieldMapping = {
+    clientProductId: saved.clientProductId,
+    brand: saved.brand || auto.brand,
+    category: saved.category || auto.category,
+    subCategory: saved.subCategory || auto.subCategory,
+    status: saved.status || auto.status,
+    description: saved.description || auto.description,
+    barcode: saved.barcode || auto.barcode,
+  };
 
   // Build master, dedup by clientProductId (last row wins)
   const dedup = new Map<string, ProductMaster>();
