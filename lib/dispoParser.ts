@@ -144,11 +144,65 @@ export function parseDispo(buffer: Buffer): DispoParseResult {
     rows.push(obj);
   }
 
+  // Makro-style DISPOs list the same Article×Site once per UOM (EA, CS, PAL,
+  // LAY, SW…). Stock and sales are reported only on the selling-unit row; the
+  // pack rows carry SOH=0. Because the sales ledger dedups by Article|Site, the
+  // zero-stock pack rows would otherwise overwrite the real stock and make every
+  // SKU look out of stock. Collapse each Article|Site to its most meaningful row
+  // here. Files with one row per Article|Site (e.g. Massbuild) are unchanged.
+  const collapsed = collapseUomRows(rows, dateColumns);
+
   return {
     vendorNumber,
-    rows,
+    rows: collapsed,
     dateColumns,
     headerRow: headerRowIdx,
-    totalRows: rows.length,
+    totalRows: collapsed.length,
   };
+}
+
+// Reduce duplicate Article|Site rows (one per UOM) to a single representative:
+// the row with the highest SOH, tie-broken by highest total sales, then first
+// seen — i.e. the selling-unit row that actually carries the stock and sales.
+function collapseUomRows(
+  rows: Record<string, unknown>[],
+  dateColumns: string[],
+): Record<string, unknown>[] {
+  const numOf = (v: unknown): number => {
+    const n = Number(String(v ?? "").replace(/,/g, "").trim());
+    return isNaN(n) ? -Infinity : n;
+  };
+  const salesTotal = (r: Record<string, unknown>): number => {
+    let t = 0;
+    for (const c of dateColumns) {
+      const n = Number(String(r[c] ?? "").replace(/,/g, "").trim());
+      if (!isNaN(n)) t += n;
+    }
+    return t;
+  };
+
+  const groups = new Map<string, Record<string, unknown>[]>();
+  const order: (string | Record<string, unknown>)[] = [];
+  for (const r of rows) {
+    const a = String(r["Article"] ?? "").trim().toLowerCase();
+    const s = String(r["Site"] ?? "").trim().toLowerCase();
+    if (!a || !s) { order.push(r); continue; } // unkeyed rows pass through as-is
+    const k = `${a}|${s}`;
+    if (!groups.has(k)) { groups.set(k, []); order.push(k); }
+    groups.get(k)!.push(r);
+  }
+
+  const out: Record<string, unknown>[] = [];
+  for (const item of order) {
+    if (typeof item !== "string") { out.push(item); continue; }
+    const g = groups.get(item)!;
+    if (g.length === 1) { out.push(g[0]); continue; }
+    let best = g[0];
+    for (const r of g) {
+      if (numOf(r["SOH"]) - numOf(best["SOH"]) > 0) best = r;
+      else if (numOf(r["SOH"]) === numOf(best["SOH"]) && salesTotal(r) > salesTotal(best)) best = r;
+    }
+    out.push(best);
+  }
+  return out;
 }

@@ -95,10 +95,13 @@ export default function DispoChecklistPage() {
 
   const rowsWithGroup = useMemo(() => {
     if (!data) return [];
-    return data.rows.map((r, i) => ({
-      row: r,
-      firstOfClient: i === 0 || data.rows[i - 1].clientId !== r.clientId,
-    }));
+    let clientIndex = -1;
+    return data.rows.map((r, i) => {
+      const firstOfClient = i === 0 || data.rows[i - 1].clientId !== r.clientId;
+      if (firstOfClient) clientIndex++;
+      const lastOfClient = i === data.rows.length - 1 || data.rows[i + 1].clientId !== r.clientId;
+      return { row: r, firstOfClient, lastOfClient, clientIndex };
+    });
   }, [data]);
 
   // How many declared vendors per client have never been loaded (for a header alert).
@@ -168,12 +171,19 @@ export default function DispoChecklistPage() {
               </tr>
             </thead>
             <tbody>
-              {rowsWithGroup.map(({ row, firstOfClient }) => (
+              {rowsWithGroup.map(({ row, firstOfClient, lastOfClient, clientIndex }) => {
+                const zebra = clientIndex % 2 === 1;
+                const rowBg = row.neverLoaded ? "bg-red-50/40" : zebra ? "bg-zinc-50" : "bg-white";
+                const stickyBg = row.neverLoaded ? "#fef4f4" : zebra ? "#fafafa" : "white";
+                return (
                 <tr key={`${row.clientId}|${row.channelId}|${row.vendorNumber}`}
-                  className={`${firstOfClient ? "border-t-2 border-[var(--color-border)]" : "border-t border-zinc-100"} ${row.neverLoaded ? "bg-red-50/40" : ""}`}>
-                  <td className="sticky left-0 z-10 px-4 py-2.5" style={{ background: row.neverLoaded ? "#fef4f4" : "white" }}>
+                  className={`${firstOfClient ? "border-t-2 border-zinc-300" : "border-t border-zinc-100"} ${lastOfClient ? "border-b border-zinc-200" : ""} ${rowBg}`}>
+                  <td className="sticky left-0 z-10 border-l-4 px-4 py-2.5"
+                    style={{ background: stickyBg, borderLeftColor: zebra ? "#cbd5e1" : "#e2e8f0" }}>
                     <div className={`font-medium ${row.active ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
-                      {firstOfClient ? row.clientName : <span className="text-[var(--color-text-muted)]">↳</span>}
+                      {firstOfClient
+                        ? <span className="font-bold">{row.clientName}</span>
+                        : <span className="text-xs font-normal text-[var(--color-text-muted)]">↳ {row.clientName}</span>}
                       {!row.active && firstOfClient && <span className="ml-2 text-xs text-[var(--color-text-muted)]">(inactive)</span>}
                       {firstOfClient && missingByClient[row.clientId] > 0 && (
                         <span className="ml-2 rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-700">
@@ -225,7 +235,8 @@ export default function DispoChecklistPage() {
                     );
                   })}
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
             {/* Arm controls per period */}
             <tfoot>
