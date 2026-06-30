@@ -108,7 +108,7 @@ export function parseDispo(buffer: Buffer): DispoParseResult {
 
   // ID columns whose raw numeric value we keep verbatim (as a plain integer
   // string) instead of Excel's scientific-notation display text.
-  const ID_COLUMNS = new Set(["Article", "Vendor Prod Code"]);
+  const ID_COLUMNS = new Set(["Article", "Vendor Prod Code", "Barcode"]);
   const plainInt = (v: unknown): string | null => {
     if (typeof v === "number" && Number.isFinite(v)) {
       // EAN/article codes are integers well within Number.MAX_SAFE_INTEGER, so

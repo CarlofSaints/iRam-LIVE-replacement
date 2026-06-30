@@ -12,6 +12,7 @@ interface MissingArticleDetail {
   article: string;
   articleDesc: string;
   vendProd: string;
+  barcode?: string;
 }
 
 export default function DataLoadPage() {
@@ -322,6 +323,7 @@ export default function DataLoadPage() {
                         <th className="px-3 py-1.5 text-left font-semibold text-amber-800">Article</th>
                         <th className="px-3 py-1.5 text-left font-semibold text-amber-800">Article Description</th>
                         <th className="px-3 py-1.5 text-left font-semibold text-amber-800">Vend Prod Code</th>
+                        <th className="px-3 py-1.5 text-left font-semibold text-amber-800">Barcode</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-amber-100">
@@ -330,10 +332,11 @@ export default function DataLoadPage() {
                           <td className="px-3 py-1 text-zinc-700">{a.article}</td>
                           <td className="px-3 py-1 text-zinc-600">{a.articleDesc || "—"}</td>
                           <td className="px-3 py-1 text-zinc-600">{a.vendProd || "—"}</td>
+                          <td className="px-3 py-1 text-zinc-600">{a.barcode || "—"}</td>
                         </tr>
                       ))}
                       {confirmData.missingArticles.length > 100 && (
-                        <tr><td colSpan={3} className="px-3 py-1 text-amber-600">+ {confirmData.missingArticles.length - 100} more</td></tr>
+                        <tr><td colSpan={4} className="px-3 py-1 text-amber-600">+ {confirmData.missingArticles.length - 100} more</td></tr>
                       )}
                     </tbody>
                   </table>
@@ -426,6 +429,7 @@ export default function DataLoadPage() {
                           <th className="px-3 py-1.5 text-left font-semibold text-amber-800">Article</th>
                           <th className="px-3 py-1.5 text-left font-semibold text-amber-800">Description</th>
                           <th className="px-3 py-1.5 text-left font-semibold text-amber-800">Vend Prod</th>
+                          <th className="px-3 py-1.5 text-left font-semibold text-amber-800">Barcode</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-amber-100">
@@ -434,10 +438,11 @@ export default function DataLoadPage() {
                             <td className="px-3 py-1 text-zinc-700">{a.article}</td>
                             <td className="px-3 py-1 text-zinc-600">{a.articleDesc || "—"}</td>
                             <td className="px-3 py-1 text-zinc-600">{a.vendProd || "—"}</td>
+                            <td className="px-3 py-1 text-zinc-600">{a.barcode || "—"}</td>
                           </tr>
                         ))}
                         {result.warnings.missingArticles.length > 30 && (
-                          <tr><td colSpan={3} className="px-3 py-1 text-amber-600">+ {result.warnings.missingArticles.length - 30} more</td></tr>
+                          <tr><td colSpan={4} className="px-3 py-1 text-amber-600">+ {result.warnings.missingArticles.length - 30} more</td></tr>
                         )}
                       </tbody>
                     </table>

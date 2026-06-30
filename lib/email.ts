@@ -123,7 +123,7 @@ export async function sendMissingProductsEmail(params: {
   to: string[];
   clientName: string;
   channelName: string;
-  missingArticles: { article: string; articleDesc: string; vendProd: string }[];
+  missingArticles: { article: string; articleDesc: string; vendProd: string; barcode?: string }[];
   uploaderName: string;
 }): Promise<void> {
   if (params.to.length === 0 || params.missingArticles.length === 0) return;
@@ -138,10 +138,12 @@ export async function sendMissingProductsEmail(params: {
       const desc = a.articleDesc
         ? `<span style="color:#4A5568;"> &mdash; ${esc(a.articleDesc)}</span>`
         : "";
-      const vend = a.vendProd
-        ? `<div style="font-size:11px;color:#718096;margin-top:1px;">Vendor product code: ${esc(a.vendProd)}</div>`
-        : "";
-      return `<li style="padding:5px 0;font-size:13px;color:#2D3748;"><strong>${esc(a.article)}</strong>${desc}${vend}</li>`;
+      const meta = [
+        a.vendProd ? `Vendor product code: ${esc(a.vendProd)}` : "",
+        a.barcode ? `Barcode: ${esc(a.barcode)}` : "",
+      ].filter(Boolean).join(" &nbsp;·&nbsp; ");
+      const metaLine = meta ? `<div style="font-size:11px;color:#718096;margin-top:1px;">${meta}</div>` : "";
+      return `<li style="padding:5px 0;font-size:13px;color:#2D3748;"><strong>${esc(a.article)}</strong>${desc}${metaLine}</li>`;
     })
     .join("");
   const moreNote = remaining > 0 ? `<p style="font-size:13px;color:#718096;margin:8px 0 0;">+ ${remaining} more</p>` : "";

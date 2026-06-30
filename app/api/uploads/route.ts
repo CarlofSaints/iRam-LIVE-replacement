@@ -17,6 +17,7 @@ export interface MissingArticleDetail {
   article: string;
   articleDesc: string;
   vendProd: string;
+  barcode: string;
 }
 
 export async function GET(req: NextRequest) {
@@ -118,6 +119,7 @@ export async function POST(req: NextRequest) {
                 article: raw,
                 articleDesc: String(row["Article Desc"] ?? "").trim(),
                 vendProd: String(row["Vendor Prod Code"] ?? "").trim(),
+                barcode: String(row["Barcode"] ?? "").trim(),
               });
             }
           }
