@@ -28,6 +28,7 @@ export interface ChecklistRow {
   vendorNumber: string;
   streamId: string;
   placeholder: boolean;
+  neverLoaded?: boolean; // declared vendor with zero load history (no channel known yet)
   cells: Record<string, Cell>;
 }
 export interface PeriodSummary {
@@ -105,15 +106,33 @@ export function buildChecklist(
   const isExcluded = (pk: string, sid: string) =>
     state.periods[pk]?.excludedStreams?.includes(sid) ?? false;
 
-  // One row per (client, stream); clients with no streams get a placeholder row.
+  // One row per (client, stream). Every client lists ALL of its declared vendor
+  // numbers: vendors with load history use their real (channel, vendor) stream;
+  // a declared vendor that has NEVER been loaded gets a "never loaded" row so a
+  // missing DISPO can't hide behind a client-level rollup. A client with neither
+  // history nor declared vendors gets a single placeholder row.
   const rows: ChecklistRow[] = [];
   const sortedClients = [...clients].sort((a, b) => a.name.localeCompare(b.name));
   for (const c of sortedClients) {
     const clientStreams = [...streams.values()]
       .filter((s) => s.clientId === c.id)
-      .sort((a, b) => a.channelName.localeCompare(b.channelName) || a.vendor.localeCompare(b.vendor));
+      .map((s) => ({ ...s, neverLoaded: false }));
 
-    if (clientStreams.length === 0) {
+    // Declared vendors with no load history at all → surface them explicitly.
+    const covered = new Set(clientStreams.map((s) => (s.vendor || "").trim()).filter(Boolean));
+    const declared = (c.vendorNumbers ?? []).map((v) => String(v).trim()).filter(Boolean);
+    const missing = declared
+      .filter((v) => !covered.has(v))
+      .map((v) => ({ clientId: c.id, channelId: "", channelName: "", vendor: v, neverLoaded: true }));
+
+    const allStreams = [...clientStreams, ...missing].sort(
+      (a, b) =>
+        Number(a.neverLoaded) - Number(b.neverLoaded) ||
+        a.channelName.localeCompare(b.channelName) ||
+        a.vendor.localeCompare(b.vendor),
+    );
+
+    if (allStreams.length === 0) {
       rows.push({
         clientId: c.id, clientName: c.name, active: c.active,
         channelId: "", channelName: "", vendorNumber: "", streamId: "",
@@ -123,7 +142,7 @@ export function buildChecklist(
       continue;
     }
 
-    for (const s of clientStreams) {
+    for (const s of allStreams) {
       const sid = streamId(c.id, s.channelId, s.vendor);
       const cells: Record<string, Cell> = {};
       for (const p of periods) {
@@ -135,7 +154,7 @@ export function buildChecklist(
       rows.push({
         clientId: c.id, clientName: c.name, active: c.active,
         channelId: s.channelId, channelName: s.channelName, vendorNumber: s.vendor,
-        streamId: sid, placeholder: false, cells,
+        streamId: sid, placeholder: false, neverLoaded: s.neverLoaded, cells,
       });
     }
   }

@@ -15,6 +15,7 @@ interface ChecklistRow {
   vendorNumber: string;
   streamId: string;
   placeholder: boolean;
+  neverLoaded?: boolean;
   cells: Record<string, Cell>;
 }
 interface PeriodSummary { loaded: number; excluded: number; outstanding: number; armed: boolean; armable: boolean }
@@ -100,6 +101,13 @@ export default function DispoChecklistPage() {
     }));
   }, [data]);
 
+  // How many declared vendors per client have never been loaded (for a header alert).
+  const missingByClient = useMemo(() => {
+    const m: Record<string, number> = {};
+    if (data) for (const r of data.rows) if (r.neverLoaded) m[r.clientId] = (m[r.clientId] ?? 0) + 1;
+    return m;
+  }, [data]);
+
   const activeLabel = useMemo(() => {
     if (!data?.activePeriodKey) return null;
     return data.periods.find((p) => p.key === data.activePeriodKey)?.label ?? data.activePeriodKey;
@@ -115,8 +123,9 @@ export default function DispoChecklistPage() {
         </button>
       </div>
       <p className="mb-4 max-w-3xl text-sm text-[var(--color-text-muted)]">
-        Which DISPOs are loaded for each client, by vendor, across the most recent 8 weeks. Ticks fill in automatically
-        as loads come in. {canManage && "Click an outstanding cell to mark “send without this vendor” for that week, then Arm the week to open store-report sending."}
+        Which DISPOs are loaded for each client, by vendor, across the most recent 8 weeks. <strong>Every vendor number on a
+        client is listed</strong> — a vendor that has never had a DISPO loaded is flagged in red, so a missing one can&apos;t
+        slip by. Ticks fill in automatically as loads come in. {canManage && "Click an outstanding cell to mark “send without this vendor” for that week, then Arm the week to open store-report sending."}
       </p>
 
       {/* Armed banner */}
@@ -161,16 +170,23 @@ export default function DispoChecklistPage() {
             <tbody>
               {rowsWithGroup.map(({ row, firstOfClient }) => (
                 <tr key={`${row.clientId}|${row.channelId}|${row.vendorNumber}`}
-                  className={firstOfClient ? "border-t-2 border-[var(--color-border)]" : "border-t border-zinc-100"}>
-                  <td className="sticky left-0 z-10 px-4 py-2.5" style={{ background: "white" }}>
+                  className={`${firstOfClient ? "border-t-2 border-[var(--color-border)]" : "border-t border-zinc-100"} ${row.neverLoaded ? "bg-red-50/40" : ""}`}>
+                  <td className="sticky left-0 z-10 px-4 py-2.5" style={{ background: row.neverLoaded ? "#fef4f4" : "white" }}>
                     <div className={`font-medium ${row.active ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
                       {firstOfClient ? row.clientName : <span className="text-[var(--color-text-muted)]">↳</span>}
                       {!row.active && firstOfClient && <span className="ml-2 text-xs text-[var(--color-text-muted)]">(inactive)</span>}
+                      {firstOfClient && missingByClient[row.clientId] > 0 && (
+                        <span className="ml-2 rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-700">
+                          {missingByClient[row.clientId]} not loaded
+                        </span>
+                      )}
                     </div>
                     <div className="text-xs text-[var(--color-text-muted)]">
                       {row.placeholder
-                        ? "No DISPO loads yet"
-                        : <><span className="text-[var(--color-text)]">{row.channelName || "—"}</span>{" · "}{row.vendorNumber ? `Vendor ${row.vendorNumber}` : "No vendor #"}</>}
+                        ? "No vendors configured"
+                        : row.neverLoaded
+                          ? <><span className="font-semibold text-red-600">Vendor {row.vendorNumber}</span>{" · "}<span className="text-red-500">never loaded — no DISPO yet</span></>
+                          : <><span className="text-[var(--color-text)]">{row.channelName || "—"}</span>{" · "}{row.vendorNumber ? `Vendor ${row.vendorNumber}` : "No vendor #"}</>}
                     </div>
                   </td>
                   {data.periods.map((p) => {
@@ -267,6 +283,10 @@ export default function DispoChecklistPage() {
           <span className="flex items-center gap-1.5">
             <span className="inline-block h-5 w-5 rounded-full border border-dashed border-zinc-300" />
             Outstanding
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="rounded bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700">N not loaded</span>
+            Vendor(s) never loaded — listed in red
           </span>
         </div>
       )}
