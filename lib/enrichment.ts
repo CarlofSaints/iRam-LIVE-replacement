@@ -9,7 +9,7 @@
    ────────────────────────────────────────────────────────────── */
 
 import { getProductLookup } from "./productMasterData";
-import { getLinksLookup } from "./linksLookup";
+import { getLinksLookup, normalizeArticle } from "./linksLookup";
 import { getStoreLookup } from "./storeLookup";
 import { getControlFileData } from "./controlFileData";
 import type { ProductMaster, StoreRecord } from "./types";
@@ -55,7 +55,10 @@ export function enrichLedgerRow(
   // ── Product join (two-hop: Article → LINKS → Client Product ID → PMF) ──
   const articleRaw = row["Article"] ?? row["article"] ?? row["ARTICLE"];
   if (articleRaw != null) {
-    const articleKey = String(articleRaw).toLowerCase().trim();
+    // Normalize the SAME way the LINKS map is indexed (normalizeArticle strips
+    // leading zeros / trailing .0) — otherwise the join silently misses and all
+    // PMF fields (incl. Vendor Status) come back blank.
+    const articleKey = normalizeArticle(articleRaw);
 
     // Step 1: Article → Client Product ID (via LINKS)
     const cpid = linksLookup.get(articleKey);

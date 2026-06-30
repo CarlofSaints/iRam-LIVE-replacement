@@ -76,6 +76,8 @@ export interface StoreLine {
   ranging: "TRUE" | "FALSE" | "";  // "" when no ranging file loaded for the client
   rpType: string;               // RP replenishment code
 
+  mac: number | null;             // Moving Average Cost (store's cost)
+  nett: number | null;            // our Nett Cost
   marginRiskRand: number | null;  // SOH × (MAC − Nett) when MAC > Nett
   marginOppRand: number | null;   // SOH × (Nett − MAC) when Nett > MAC
 
@@ -312,6 +314,8 @@ export function buildStoreReport(
         vendorStatus: pmfStatusDisplay(row),
         ranging: client.hasRanging ? (row["_rangingStatus"] === true ? "TRUE" : "FALSE") : "",
         rpType: String(row["RP"] ?? ""),
+        mac: isNaN(mac) ? null : round2(mac),
+        nett: isNaN(nett) ? null : round2(nett),
         marginRiskRand: marginRiskRand === null ? null : round2(marginRiskRand),
         marginOppRand: marginOppRand === null ? null : round2(marginOppRand),
         flags,

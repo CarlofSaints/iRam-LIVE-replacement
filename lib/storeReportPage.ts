@@ -247,6 +247,19 @@ function itemHtml(l){
   if(l.statusLabel) statusVal += ' <span style="color:var(--grey)">('+esc(l.statusLabel)+')</span>';
   if(l.statusClass==="NEGATIVE") statusVal += ' <span style="color:#df332c;font-weight:600">&middot; Negative</span>';
   else if(l.statusClass==="POSITIVE") statusVal += ' <span style="color:#2e9e5b;font-weight:600">&middot; Positive</span>';
+  // Margin breakdown (only when a margin flag fires) — shows how the at-risk /
+  // upside amount is derived: SOH × |MAC − Nett|.
+  var marginCells = "";
+  if(l.flags.marginRisk || l.flags.marginOpp){
+    var isRisk = l.flags.marginRisk;
+    var deltaUnit = (l.mac!=null && l.nett!=null) ? (isRisk ? l.mac - l.nett : l.nett - l.mac) : null;
+    var totalRand = isRisk ? l.marginRiskRand : l.marginOppRand;
+    marginCells =
+      g("MAC (store cost)", l.mac==null?"—":rands(l.mac)) +
+      g("Nett cost (ours)", l.nett==null?"—":rands(l.nett)) +
+      g(isRisk?"Delta (MAC − Nett)":"Delta (Nett − MAC)", deltaUnit==null?"—":rands(deltaUnit)+" /unit") +
+      g(isRisk?"At risk (Δ × "+fmt(l.soh)+" SOH)":"Upside (Δ × "+fmt(l.soh)+" SOH)", totalRand==null?"—":rands(totalRand));
+  }
   return '<div class="item'+(ticked?" tick":"")+'" data-id="'+esc(id)+'">'
     + '<div class="row" onclick="toggleOpen(this)">'
       + '<input type="checkbox" class="ck" '+(ticked?"checked":"")+' onclick="event.stopPropagation();tick(\\''+esc(id)+'\\',this.checked,this)">'
@@ -264,6 +277,7 @@ function itemHtml(l){
         + g("Last sold", (l.lastSold||"—")+age(l.lastSoldDays)) + g("Last received", (l.lastReceived||"—")+age(l.lastReceivedDays))
         + g("Channel Status", statusVal) + g("Vendor Status", esc(l.vendorStatus||"—")) + g("Ranging", l.ranging||"—")
         + g("RP type", esc(l.rpType||"—"))
+        + marginCells
       + '</div>'
     + '</div>'
   + '</div>';
