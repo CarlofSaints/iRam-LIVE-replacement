@@ -6,7 +6,7 @@
     },
     {
       "path": "/api/cron/store-report-digest",
-      "schedule": "0 16 * * *"
+      "schedule": "0 5 * * *"
     }
   ]
 }

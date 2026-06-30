@@ -352,4 +352,6 @@ export interface LogEntry {
   action: string;
   details?: string;
   status?: "success" | "error";
+  clientId?: string;   // set on client-scoped actions (DISPO / control-file loads, etc.)
+  clientName?: string; // denormalised for filtering/display without a client lookup
 }

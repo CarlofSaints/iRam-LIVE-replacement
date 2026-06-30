@@ -76,6 +76,8 @@ export async function POST(
       action: "upload_control_file",
       details: `Uploaded ${type} for ${client.name} (${parsed.length} rows)`,
       status: "success",
+      clientId: id,
+      clientName: client.name,
     });
 
     // Auto-rebuild product master when PMF is re-uploaded (if a mapping exists)

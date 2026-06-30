@@ -237,6 +237,8 @@ export async function POST(req: NextRequest) {
         action: "upload_dispo",
         details: `Uploaded DISPO for ${client.name} / ${mainChannelName} (${result.totalRows} rows, vendor ${result.vendorNumber}). Ledger merge: ${merge.inserted} new, ${merge.updated} updated, ${merge.unchanged} unchanged.${logSuffix}`,
         status: "success",
+        clientId: client.id,
+        clientName: client.name,
       });
 
       // Fire-and-forget: detect new status codes
