@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { authFetch } from "@/lib/useAuth";
 import type { Client, Channel } from "@/lib/types";
+import SearchSelect from "@/components/SearchSelect";
 import {
   ResponsiveContainer, BarChart, Bar, LineChart, Line, XAxis, YAxis,
   Tooltip, Legend, CartesianGrid, LabelList,
@@ -131,16 +132,25 @@ export default function ChartsPage() {
       {/* Selectors */}
       <div className="mb-8 flex flex-wrap items-end gap-4">
         <Field label="Client">
-          <select value={clientId} onChange={(e) => setClientId(e.target.value)} className="select">
-            <option value="">Select a client…</option>
-            {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+          <SearchSelect
+            value={clientId}
+            onChange={setClientId}
+            options={clients.map((c) => ({ value: c.id, label: c.name }))}
+            allLabel="Select a client…"
+            searchLabel="clients"
+            widthClass="w-56"
+          />
         </Field>
         <Field label="Channel">
-          <select value={mainChannelId} onChange={(e) => setMainChannelId(e.target.value)} className="select" disabled={!clientId}>
-            <option value="">Select a channel…</option>
-            {clientMainChannels.map((ch) => <option key={ch.id} value={ch.id}>{ch.name}</option>)}
-          </select>
+          <SearchSelect
+            value={mainChannelId}
+            onChange={setMainChannelId}
+            disabled={!clientId}
+            options={clientMainChannels.map((ch) => ({ value: ch.id, label: ch.name }))}
+            allLabel="Select a channel…"
+            searchLabel="channels"
+            widthClass="w-56"
+          />
         </Field>
         {data?.meta && (
           <div className="pb-2 text-sm text-[var(--color-text-muted)]">
@@ -255,7 +265,8 @@ function MultiSelect({ label, options, selected, onChange }: {
 }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
-  const filtered = q ? options.filter((o) => o.label.toLowerCase().includes(q.toLowerCase())) : options;
+  const sorted = useMemo(() => [...options].sort((a, b) => a.label.localeCompare(b.label)), [options]);
+  const filtered = q ? sorted.filter((o) => o.label.toLowerCase().includes(q.toLowerCase())) : sorted;
   const toggle = (v: string) => onChange(selected.includes(v) ? selected.filter((x) => x !== v) : [...selected, v]);
   return (
     <div className="relative">

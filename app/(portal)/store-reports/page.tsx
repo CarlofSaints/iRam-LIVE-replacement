@@ -2,6 +2,7 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { authFetch, useAuth, usePermissions } from "@/lib/useAuth";
+import SearchSelect from "@/components/SearchSelect";
 
 // Loose code compare (mirrors the server) + light name-similarity ranking
 // (Bravo-style: normalise, then shared-token + substring score).
@@ -427,33 +428,32 @@ export default function StoreReportsTestPage() {
         <div className="grid gap-5 sm:grid-cols-2">
           <label className="block">
             <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">Client</span>
-            <select
+            <SearchSelect
               value={clientId}
-              onChange={(e) => setClientId(e.target.value)}
-              className="w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm">
-              <option value="">All flagged clients</option>
-              {clients.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}{c.flagged ? "  ✓" : ""}</option>
-              ))}
-            </select>
+              onChange={setClientId}
+              options={clients.map((c) => ({ value: c.id, label: `${c.name}${c.flagged ? "  ✓" : ""}` }))}
+              allLabel="All flagged clients"
+              searchLabel="clients"
+              widthClass="w-full"
+            />
           </label>
 
           <label className="block">
             <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
               Store {loadingStores && <span className="font-normal normal-case">(loading…)</span>}
             </span>
-            <select
+            <SearchSelect
               value={siteCode}
-              onChange={(e) => setSiteCode(e.target.value)}
+              onChange={setSiteCode}
               disabled={loadingStores || stores.length === 0}
-              className="w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm disabled:opacity-50">
-              {stores.length === 0 && <option value="">No stores with data</option>}
-              {stores.map((s) => (
-                <option key={s.siteCode} value={s.siteCode}>
-                  {s.siteName ? `${s.siteName} — ${s.siteCode}` : s.siteCode}{s.subChannel ? ` (${s.subChannel})` : ""}
-                </option>
-              ))}
-            </select>
+              options={stores.map((s) => ({
+                value: s.siteCode,
+                label: `${s.siteName ? `${s.siteName} — ${s.siteCode}` : s.siteCode}${s.subChannel ? ` (${s.subChannel})` : ""}`,
+              }))}
+              allLabel={stores.length === 0 ? "No stores with data" : "Select a store…"}
+              searchLabel="stores"
+              widthClass="w-full"
+            />
           </label>
         </div>
 

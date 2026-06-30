@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { authFetch } from "@/lib/useAuth";
+import SearchSelect from "@/components/SearchSelect";
 import type { Client, Channel, SalesLedgerMeta } from "@/lib/types";
 
 interface ReportStats {
@@ -413,36 +414,28 @@ export default function ReportsPage() {
             <label className="mb-1 block text-sm font-medium text-[var(--color-text)]">
               Client
             </label>
-            <select
+            <SearchSelect
               value={clientId}
-              onChange={(e) => setClientId(e.target.value)}
-              className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm"
-            >
-              <option value="">Select a client</option>
-              {clients.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
+              onChange={setClientId}
+              options={clients.map((c) => ({ value: c.id, label: c.name }))}
+              allLabel="Select a client"
+              searchLabel="clients"
+              widthClass="w-full"
+            />
           </div>
           <div>
             <label className="mb-1 block text-sm font-medium text-[var(--color-text)]">
               Main Channel
             </label>
-            <select
+            <SearchSelect
               value={mainChannelId}
-              onChange={(e) => setMainChannelId(e.target.value)}
+              onChange={setMainChannelId}
               disabled={!clientId}
-              className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm disabled:opacity-50"
-            >
-              <option value="">Select a main channel</option>
-              {clientMainChannels.map((ch) => (
-                <option key={ch.id} value={ch.id}>
-                  {ch.name}
-                </option>
-              ))}
-            </select>
+              options={clientMainChannels.map((ch) => ({ value: ch.id, label: ch.name }))}
+              allLabel="Select a main channel"
+              searchLabel="channels"
+              widthClass="w-full"
+            />
           </div>
         </div>
 

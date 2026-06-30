@@ -19,6 +19,7 @@ export default function SearchSelect({
   allLabel = "All",
   searchLabel = "options",
   widthClass = "w-64",
+  disabled = false,
 }: {
   value: string;
   options: SearchSelectOption[];
@@ -26,6 +27,7 @@ export default function SearchSelect({
   allLabel?: string;
   searchLabel?: string;
   widthClass?: string;
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
@@ -51,8 +53,9 @@ export default function SearchSelect({
     <div className="relative">
       <button
         type="button"
+        disabled={disabled}
         onClick={() => setOpen((o) => !o)}
-        className={`flex ${widthClass} items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm ${
+        className={`flex ${widthClass} items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm disabled:opacity-50 ${
           value
             ? "border-[var(--color-primary,#1f5fa8)] bg-[var(--color-primary,#1f5fa8)]/5 font-medium text-[var(--color-text)]"
             : "border-[var(--color-border)] bg-white text-[var(--color-text)]"
