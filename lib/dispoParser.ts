@@ -70,7 +70,23 @@ export function parseDispo(buffer: Buffer): DispoParseResult {
   );
 
   // Resolve headers
-  const resolvedHeaders = rawHeaders.map((h) => (h ? resolveHeader(h) : ""));
+  const resolvedHeadersRaw = rawHeaders.map((h) => (h ? resolveHeader(h) : ""));
+
+  // Guard against two source columns resolving to the SAME canonical header.
+  // e.g. Libra's payment-terms column "Descriptio" and the real "Article
+  // Description" both map to "Article Desc". Because rows are built left-to-right
+  // with obj[header] = value, the LATER column silently overwrote the earlier —
+  // so every SKU's name became the payment-terms text. Keep the FIRST occurrence
+  // (in a DISPO the genuine field always appears earlier, beside "Article") and
+  // unmap later duplicates so they can't clobber real data. Blank headers are
+  // already unmapped and skipped, so they never collide.
+  const seenHeaders = new Set<string>();
+  const resolvedHeaders = resolvedHeadersRaw.map((h) => {
+    if (!h) return "";
+    if (seenHeaders.has(h)) return "";
+    seenHeaders.add(h);
+    return h;
+  });
 
   // Detect date columns
   const dateColumns: string[] = [];
