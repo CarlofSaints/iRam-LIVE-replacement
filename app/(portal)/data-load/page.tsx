@@ -15,6 +15,12 @@ interface MissingArticleDetail {
   barcode?: string;
 }
 
+interface HeaderCollision {
+  field: string;
+  kept: { col: string; header: string };
+  dropped: { col: string; header: string }[];
+}
+
 export default function DataLoadPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
@@ -38,6 +44,7 @@ export default function DataLoadPage() {
     warning: string;
     missingArticles: MissingArticleDetail[];
     missingSites: string[];
+    collisions: HeaderCollision[];
   } | null>(null);
 
   const [result, setResult] = useState<{
@@ -48,6 +55,7 @@ export default function DataLoadPage() {
     warnings?: {
       missingArticles: MissingArticleDetail[];
       missingSites: string[];
+      collisions?: HeaderCollision[];
     };
   } | null>(null);
 
@@ -115,6 +123,7 @@ export default function DataLoadPage() {
           warning: data.warning,
           missingArticles: data.missingArticles ?? [],
           missingSites: data.missingSites ?? [],
+          collisions: data.collisions ?? [],
         });
         setStep("confirm");
         setUploading(false);
@@ -366,6 +375,37 @@ export default function DataLoadPage() {
               </div>
             )}
 
+            {/* Column-mapping conflicts */}
+            {confirmData.collisions.length > 0 && (
+              <div className="mb-4">
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-amber-700">
+                  Column Mapping Conflicts ({confirmData.collisions.length})
+                </div>
+                <p className="mb-2 text-xs text-amber-600">
+                  Two or more columns in this file map to the same field. The app kept the first
+                  and ignored the rest. Check the kept column is correct — if not, fix the file
+                  (rename or remove the stray column) before loading.
+                </p>
+                <div className="max-h-48 overflow-auto rounded-lg border border-amber-200 bg-white p-3">
+                  <ul className="space-y-2 text-xs text-zinc-700">
+                    {confirmData.collisions.map((c) => (
+                      <li key={c.field}>
+                        <span className="font-semibold">{c.field}</span> — kept{" "}
+                        <span className="rounded bg-green-100 px-1 text-green-800">{`col ${c.kept.col} "${c.kept.header}"`}</span>
+                        , ignored{" "}
+                        {c.dropped.map((d, i) => (
+                          <span key={i}>
+                            {i > 0 ? " " : ""}
+                            <span className="rounded bg-red-100 px-1 text-red-800">{`col ${d.col} "${d.header}"`}</span>
+                          </span>
+                        ))}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            )}
+
             {/* Action buttons */}
             <div className="flex gap-3">
               <button
@@ -460,6 +500,33 @@ export default function DataLoadPage() {
                       {result.warnings.missingSites.length > 30 && (
                         <li className="text-amber-600">+ {result.warnings.missingSites.length - 30} more</li>
                       )}
+                    </ul>
+                  </div>
+                </div>
+              )}
+              {result.warnings.collisions && result.warnings.collisions.length > 0 && (
+                <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                  <div className="mb-2 text-sm font-bold text-amber-700">
+                    Column Mapping Conflicts ({result.warnings.collisions.length}) — Kept First Column
+                  </div>
+                  <p className="mb-2 text-xs text-amber-600">
+                    Multiple columns mapped to the same field. Verify the kept column is the correct one.
+                  </p>
+                  <div className="max-h-40 overflow-auto rounded-lg border border-amber-200 bg-white p-3">
+                    <ul className="space-y-2 text-xs text-zinc-700">
+                      {result.warnings.collisions.map((c) => (
+                        <li key={c.field}>
+                          <span className="font-semibold">{c.field}</span> — kept{" "}
+                          <span className="rounded bg-green-100 px-1 text-green-800">{`col ${c.kept.col} "${c.kept.header}"`}</span>
+                          , ignored{" "}
+                          {c.dropped.map((d, i) => (
+                            <span key={i}>
+                              {i > 0 ? " " : ""}
+                              <span className="rounded bg-red-100 px-1 text-red-800">{`col ${d.col} "${d.header}"`}</span>
+                            </span>
+                          ))}
+                        </li>
+                      ))}
                     </ul>
                   </div>
                 </div>

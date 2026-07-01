@@ -1,5 +1,15 @@
 import * as XLSX from "xlsx";
-import { resolveHeader, DATE_COL_REGEX } from "./headers";
+import { resolveHeader, DATE_COL_REGEX, CANONICAL_HEADERS } from "./headers";
+
+// Two source columns resolving to the same field (e.g. Libra's payment-terms
+// "Descriptio" and the real "Article Description" both map to "Article Desc").
+// The parser keeps the first and unmaps the rest; this records what happened so
+// the upload can warn about it.
+export interface HeaderCollision {
+  field: string;                                // canonical field the columns fought over
+  kept: { col: string; header: string };        // column letter + raw header used
+  dropped: { col: string; header: string }[];   // later columns ignored
+}
 
 export interface DispoParseResult {
   vendorNumber: string;
@@ -7,6 +17,7 @@ export interface DispoParseResult {
   dateColumns: string[];
   headerRow: number;
   totalRows: number;
+  collisions: HeaderCollision[];
 }
 
 /**
@@ -79,14 +90,35 @@ export function parseDispo(buffer: Buffer): DispoParseResult {
   // so every SKU's name became the payment-terms text. Keep the FIRST occurrence
   // (in a DISPO the genuine field always appears earlier, beside "Article") and
   // unmap later duplicates so they can't clobber real data. Blank headers are
-  // already unmapped and skipped, so they never collide.
-  const seenHeaders = new Set<string>();
-  const resolvedHeaders = resolvedHeadersRaw.map((h) => {
+  // already unmapped and skipped, so they never collide. Conflicts on a real
+  // (canonical) field are recorded so the upload can warn the user.
+  const canonicalSet = new Set(CANONICAL_HEADERS);
+  const firstSeenAt = new Map<string, number>();
+  const collisionByField = new Map<string, HeaderCollision>();
+  const resolvedHeaders = resolvedHeadersRaw.map((h, j) => {
     if (!h) return "";
-    if (seenHeaders.has(h)) return "";
-    seenHeaders.add(h);
+    const firstJ = firstSeenAt.get(h);
+    if (firstJ !== undefined) {
+      // Only surface conflicts on fields the app actually uses; ignore
+      // unrecognised passthrough columns (e.g. two "Curr" columns) as noise.
+      if (canonicalSet.has(h)) {
+        let c = collisionByField.get(h);
+        if (!c) {
+          c = {
+            field: h,
+            kept: { col: XLSX.utils.encode_col(firstJ), header: rawHeaders[firstJ] },
+            dropped: [],
+          };
+          collisionByField.set(h, c);
+        }
+        c.dropped.push({ col: XLSX.utils.encode_col(j), header: rawHeaders[j] });
+      }
+      return ""; // drop the later duplicate so it can't overwrite the first
+    }
+    firstSeenAt.set(h, j);
     return h;
   });
+  const collisions = [...collisionByField.values()];
 
   // Detect date columns
   const dateColumns: string[] = [];
@@ -174,6 +206,7 @@ export function parseDispo(buffer: Buffer): DispoParseResult {
     dateColumns,
     headerRow: headerRowIdx,
     totalRows: collapsed.length,
+    collisions,
   };
 }
 

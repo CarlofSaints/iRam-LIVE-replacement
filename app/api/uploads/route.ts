@@ -150,7 +150,10 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      const hasWarnings = missingArticleDetails.length > 0 || missingSites.length > 0;
+      const hasWarnings =
+        missingArticleDetails.length > 0 ||
+        missingSites.length > 0 ||
+        result.collisions.length > 0;
 
       // ── If warnings exist and user hasn't confirmed, return for confirmation ──
       if (hasWarnings && !force) {
@@ -200,6 +203,7 @@ export async function POST(req: NextRequest) {
         const parts: string[] = [];
         if (missingArticleDetails.length > 0) parts.push(`${missingArticleDetails.length} unrecognized article(s)`);
         if (missingSites.length > 0) parts.push(`${missingSites.length} unknown store(s)`);
+        if (result.collisions.length > 0) parts.push(`${result.collisions.length} column-mapping conflict(s)`);
 
         return Response.json(
           {
@@ -207,6 +211,7 @@ export async function POST(req: NextRequest) {
             warning: `${parts.join(" and ")} found. You can continue anyway or fix the files first.`,
             missingArticles: missingArticleDetails,
             missingSites,
+            collisions: result.collisions,
           },
           { status: 200, headers: noCacheHeaders() },
         );
@@ -332,6 +337,7 @@ export async function POST(req: NextRequest) {
             warnings: {
               missingArticles: missingArticleDetails,
               missingSites,
+              collisions: result.collisions,
             },
           } : {}),
         },
