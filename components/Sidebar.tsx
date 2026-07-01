@@ -113,6 +113,13 @@ const controlCentreNav: NavItem[] = [
       <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="12" y1="18" x2="12" y2="12" /><polyline points="9 15 12 18 15 15" /></svg>
     ),
   },
+  {
+    label: "Storage Usage",
+    href: "/control-centre/storage",
+    icon: (
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><ellipse cx="12" cy="5" rx="9" ry="3" /><path d="M3 5v14a9 3 0 0018 0V5" /><path d="M3 12a9 3 0 0018 0" /></svg>
+    ),
+  },
 ];
 
 const bottomNav: NavItem[] = [
@@ -170,6 +177,7 @@ export default function Sidebar() {
   // Per-permission nav gating. Items not listed here are always shown.
   const navPermission: Record<string, string> = {
     "/control-centre/templates": "download_templates",
+    "/control-centre/storage": "manage_clients",
   };
   const visibleControlCentreNav = controlCentreNav.filter((item) => {
     const perm = navPermission[item.href];
