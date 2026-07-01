@@ -168,6 +168,14 @@ export async function POST(req: NextRequest) {
               recipients.push(cam.email);
             }
           }
+          // Plus anyone who maintains control files (LINKS/PMF) and opted in,
+          // even if they aren't this client's CAM (e.g. Nicolas).
+          const productAlertUsers = await getUsers();
+          for (const u of productAlertUsers) {
+            if (u.receiveProductAlerts && u.email && !recipients.includes(u.email)) {
+              recipients.push(u.email);
+            }
+          }
           emailPromises.push(
             sendMissingProductsEmail({
               to: recipients,

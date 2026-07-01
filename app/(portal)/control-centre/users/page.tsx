@@ -13,7 +13,7 @@ export default function UsersPage() {
   const [clients, setClients] = useState<{ id: string; name: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ name: "", email: "", password: "", role: "cam", forcePasswordChange: true, receiveStoreAlerts: false, receiveStoreReportDigest: false, clientIds: [] as string[] });
+  const [form, setForm] = useState({ name: "", email: "", password: "", role: "cam", forcePasswordChange: true, receiveStoreAlerts: false, receiveProductAlerts: false, receiveStoreReportDigest: false, clientIds: [] as string[] });
   const [error, setError] = useState("");
   const [editId, setEditId] = useState<string | null>(null);
 
@@ -147,7 +147,7 @@ export default function UsersPage() {
     })();
   }, []);
 
-  const blankForm = { name: "", email: "", password: "", role: "cam", forcePasswordChange: true, receiveStoreAlerts: false, receiveStoreReportDigest: false, clientIds: [] as string[] };
+  const blankForm = { name: "", email: "", password: "", role: "cam", forcePasswordChange: true, receiveStoreAlerts: false, receiveProductAlerts: false, receiveStoreReportDigest: false, clientIds: [] as string[] };
   const toggleFormClient = (id: string) =>
     setForm((f) => ({ ...f, clientIds: f.clientIds.includes(id) ? f.clientIds.filter((c) => c !== id) : [...f.clientIds, id] }));
 
@@ -171,7 +171,7 @@ export default function UsersPage() {
 
   function startEdit(u: UserSafe) {
     setEditId(u.id);
-    setForm({ name: u.name, email: u.email, password: "", role: u.role, forcePasswordChange: u.forcePasswordChange, receiveStoreAlerts: u.receiveStoreAlerts ?? false, receiveStoreReportDigest: u.receiveStoreReportDigest ?? false, clientIds: u.clientIds ?? [] });
+    setForm({ name: u.name, email: u.email, password: "", role: u.role, forcePasswordChange: u.forcePasswordChange, receiveStoreAlerts: u.receiveStoreAlerts ?? false, receiveProductAlerts: u.receiveProductAlerts ?? false, receiveStoreReportDigest: u.receiveStoreReportDigest ?? false, clientIds: u.clientIds ?? [] });
     setShowForm(true);
     setError("");
   }
@@ -218,6 +218,10 @@ export default function UsersPage() {
             <label className="col-span-2 flex items-center gap-2 text-sm">
               <input type="checkbox" checked={form.receiveStoreAlerts} onChange={(e) => setForm({ ...form, receiveStoreAlerts: e.target.checked })} />
               Receive missing store alerts
+            </label>
+            <label className="col-span-2 flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={form.receiveProductAlerts} onChange={(e) => setForm({ ...form, receiveProductAlerts: e.target.checked })} />
+              Receive missing product alerts (LINKS/PMF)
             </label>
             <label className="col-span-2 flex items-center gap-2 text-sm">
               <input type="checkbox" checked={form.receiveStoreReportDigest} onChange={(e) => setForm({ ...form, receiveStoreReportDigest: e.target.checked })} />
@@ -389,11 +393,18 @@ export default function UsersPage() {
                       </span>
                     </td>
                     <td className="px-6 py-3">
-                      {u.receiveStoreAlerts && (
-                        <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
-                          Store Alerts
-                        </span>
-                      )}
+                      <div className="flex flex-wrap gap-1">
+                        {u.receiveStoreAlerts && (
+                          <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
+                            Store Alerts
+                          </span>
+                        )}
+                        {u.receiveProductAlerts && (
+                          <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
+                            Product Alerts
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-6 py-3">
                       <div className="flex flex-wrap gap-x-3 gap-y-1">
