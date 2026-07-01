@@ -4,7 +4,16 @@
    env vars as the ARIA Scorecard portal: SQL_PROXY_URL + SQL_PROXY_API_KEY.
    ────────────────────────────────────────────────────────────── */
 
-const PROXY_URL = process.env.SQL_PROXY_URL || "";
+// Normalise the configured base URL: fetch() needs an absolute URL with a
+// scheme, so a value like "host.up.railway.app" (no https://) throws
+// "Failed to parse URL". Prepend https:// when missing and drop trailing slashes.
+function normalizeBase(raw: string): string {
+  const u = raw.trim().replace(/\/+$/, "");
+  if (!u) return "";
+  return /^https?:\/\//i.test(u) ? u : `https://${u}`;
+}
+
+const PROXY_URL = normalizeBase(process.env.SQL_PROXY_URL || "");
 const PROXY_KEY = process.env.SQL_PROXY_API_KEY || "";
 
 export interface ProxyResponse<T = Record<string, unknown>> {
