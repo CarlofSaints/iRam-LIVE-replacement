@@ -120,6 +120,13 @@ const controlCentreNav: NavItem[] = [
       <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><ellipse cx="12" cy="5" rx="9" ry="3" /><path d="M3 5v14a9 3 0 0018 0V5" /><path d="M3 12a9 3 0 0018 0" /></svg>
     ),
   },
+  {
+    label: "Data Health",
+    href: "/control-centre/data-health",
+    icon: (
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2" /></svg>
+    ),
+  },
 ];
 
 const bottomNav: NavItem[] = [
@@ -178,6 +185,7 @@ export default function Sidebar() {
   const navPermission: Record<string, string> = {
     "/control-centre/templates": "download_templates",
     "/control-centre/storage": "manage_clients",
+    "/control-centre/data-health": "manage_clients",
   };
   const visibleControlCentreNav = controlCentreNav.filter((item) => {
     const perm = navPermission[item.href];
