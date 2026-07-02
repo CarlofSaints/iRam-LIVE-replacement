@@ -22,6 +22,22 @@ function isCallableStore(rec: StoreRecord | undefined, name?: string): boolean {
   return true;
 }
 
+// Best-effort banner/channel from a store name — used to group the Site Code
+// Check by channel so mapping can be done one banner at a time. Consistent
+// labels regardless of which side the name came from.
+function channelFromName(name: string): string {
+  const n = (name || "").toLowerCase();
+  if (/\bgame\b/.test(n)) return "Game";
+  if (/makro/.test(n)) return "Makro";
+  if (/builders?\s*express|\bbex\b/.test(n)) return "BEX";
+  if (/builders?\s*warehouse|\bbwh\b/.test(n)) return "BWH";
+  if (/trade\s*depot|\bbtd\b/.test(n)) return "BTD";
+  if (/super\s*store|\bbss\b|\bss\b/.test(n)) return "SS";
+  if (/dion/.test(n)) return "DionWired";
+  if (/jumbo/.test(n)) return "Jumbo";
+  return "";
+}
+
 // Compare a pasted list of Perigee site codes (optionally with their store names)
 // against the DISPO ledgers + store master — accounting for the DISPO↔Perigee
 // map. Returns the DISPO store NAME alongside each match so an ambiguous code can
@@ -90,21 +106,30 @@ export async function POST(req: NextRequest) {
     const map = await getCodeMap();
     const resolve = buildResolver(map);
     const dispoName = (code?: string) => (code ? nameByLoose.get(looseCode(code)) || "" : "");
+    // Prefer a banner detected from the Perigee name (consistent labels), then the
+    // matched DISPO store's name, then the store-master sub-channel, else Unknown.
+    const channelOf = (dispoCode: string | undefined, perigeeName: string): string => {
+      const rec = dispoCode ? recByLoose.get(looseCode(dispoCode)) : undefined;
+      const fromName = channelFromName(perigeeName) || channelFromName(String(rec?.storeName ?? ""));
+      if (fromName) return fromName;
+      const ch = String(rec?.subChannel ?? rec?.channel ?? "").trim();
+      return ch || "Unknown";
+    };
 
     const results = entries.map((e) => {
       const code = e.code;
       const linked = resolve(code);
       if (linked) {
         const ok = dispoLoose.has(looseCode(linked));
-        return { code, name: e.name, status: "linked" as const, dispoCode: linked, dispoName: dispoName(linked), reason: ok ? "manually linked" : "linked, but DISPO code not found" };
+        return { code, name: e.name, status: "linked" as const, dispoCode: linked, dispoName: dispoName(linked), channel: channelOf(linked, e.name), reason: ok ? "manually linked" : "linked, but DISPO code not found" };
       }
       if (dispoLoose.has(looseCode(code))) {
         const dc = dispoLoose.get(looseCode(code));
-        return { code, name: e.name, status: "match" as const, dispoCode: dc, dispoName: dispoName(dc) };
+        return { code, name: e.name, status: "match" as const, dispoCode: dc, dispoName: dispoName(dc), channel: channelOf(dc, e.name) };
       }
       const d = dispoDigits.get(digits(code));
-      if (d && digits(code)) return { code, name: e.name, status: "format-diff" as const, dispoCode: d, dispoName: dispoName(d), reason: "leading zeros / prefix differs — link to confirm" };
-      return { code, name: e.name, status: "no-match" as const, dispoName: "" };
+      if (d && digits(code)) return { code, name: e.name, status: "format-diff" as const, dispoCode: d, dispoName: dispoName(d), channel: channelOf(d, e.name), reason: "leading zeros / prefix differs — link to confirm" };
+      return { code, name: e.name, status: "no-match" as const, dispoName: "", channel: channelOf(undefined, e.name) };
     });
 
     // Candidates for linking = DISPO codes NOT in the pasted list, NOT already a

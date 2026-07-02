@@ -57,7 +57,7 @@ interface RunResult { ok: boolean; armedPeriod: string | null; visitsSeen: numbe
 interface EngSummary { channel: string; sent: number; opened: number; used: number }
 interface EngDetail { store: string; siteCode: string; channel: string; repName: string; repEmail: string; sentAt: string; opened: boolean; used: boolean; cardClicks: number; distinctCards: string[]; test: boolean }
 interface EngResult { day: string; summary: EngSummary[]; totalSent: number; detail: EngDetail[] }
-interface CodeRow { code: string; name?: string; status: "match" | "linked" | "format-diff" | "no-match"; dispoCode?: string; dispoName?: string; reason?: string }
+interface CodeRow { code: string; name?: string; status: "match" | "linked" | "format-diff" | "no-match"; dispoCode?: string; dispoName?: string; channel?: string; reason?: string }
 interface CodeMapping { perigeeCode: string; dispoCode: string }
 interface DispoOnly { code: string; name?: string }
 interface DispoClaim { by: string; via: "match" | "format-diff" | "linked" }
@@ -229,6 +229,8 @@ export default function StoreReportsTestPage() {
   const [codeBusy, setCodeBusy] = useState(false);
   const [codeErr, setCodeErr] = useState("");
   const [codeFilter, setCodeFilter] = useState<CodeFilter>("all");
+  const [channelFilter, setChannelFilter] = useState<string>("all"); // map one banner at a time
+  const [ignored, setIgnored] = useState<Set<string>>(new Set());    // looseCode keys parked "ignore for now"
   const [linkFor, setLinkFor] = useState<string | null>(null);   // perigee code being linked
   const [linkSearch, setLinkSearch] = useState("");              // candidate search text
   const [selectedCodes, setSelectedCodes] = useState<Set<string>>(new Set()); // looseCode keys ticked for bulk remove
@@ -302,12 +304,17 @@ export default function StoreReportsTestPage() {
     }).filter((e) => e.code);
   }
 
-  async function checkCodes(text: string = codeText, persist: boolean = true) {
+  // silent = refresh in place (after a link/ignore action) without blanking the
+  // grid — blanking collapses the page height and jumps the scroll to the top.
+  // We keep the old results mounted and restore the scroll position afterwards.
+  async function checkCodes(text: string = codeText, persist: boolean = true, silent: boolean = false) {
     const entries = parseEntries(text);
     if (!entries.length) { setCodeErr("Paste some site codes first"); return; }
     try { localStorage.setItem(CODE_LS, text); } catch { /* ignore */ }
     if (persist) saveCodeInput(text);  // share with other admins (skip on mount load)
-    setCodeBusy(true); setCodeErr(""); setCodeRes(null); setLinkFor(null); setCodeSyncMsg("");
+    const scrollY = typeof window !== "undefined" ? window.scrollY : 0;
+    setCodeBusy(true); setCodeErr("");
+    if (!silent) { setCodeRes(null); setLinkFor(null); setCodeSyncMsg(""); }
     try {
       const res = await authFetch("/api/store-reports/code-check", {
         method: "POST", body: JSON.stringify({ entries }),
@@ -317,8 +324,36 @@ export default function StoreReportsTestPage() {
       else setCodeErr(d.error || "Check failed");
     } catch { setCodeErr("Network error"); }
     setCodeBusy(false);
+    if (silent && typeof window !== "undefined") requestAnimationFrame(() => window.scrollTo({ top: scrollY }));
   }
   checkCodesRef.current = checkCodes;  // keep the live poll calling the latest checkCodes
+
+  // ── "Ignore for now" list (shared, server-side) ──
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await authFetch("/api/store-reports/code-ignore");
+        if (res.ok) { const d = await res.json().catch(() => ({})); setIgnored(new Set((d.codes || []).map((c: string) => looseCode(c)))); }
+      } catch { /* ignore */ }
+    })();
+  }, []);
+
+  async function ignoreCodes(codes: string[]) {
+    const arr = codes.map((c) => c.trim()).filter(Boolean);
+    if (!arr.length) return;
+    setIgnored((prev) => { const n = new Set(prev); arr.forEach((c) => n.add(looseCode(c))); return n; });
+    setSelectedCodes(new Set());
+    try { await authFetch("/api/store-reports/code-ignore", { method: "POST", body: JSON.stringify({ codes: arr }) }); }
+    catch { /* optimistic; local set already updated */ }
+  }
+
+  async function unignoreCodes(codes: string[]) {
+    const arr = codes.map((c) => c.trim()).filter(Boolean);
+    if (!arr.length) return;
+    setIgnored((prev) => { const n = new Set(prev); arr.forEach((c) => n.delete(looseCode(c))); return n; });
+    try { await authFetch("/api/store-reports/code-ignore", { method: "DELETE", body: JSON.stringify({ codes: arr }) }); }
+    catch { /* optimistic */ }
+  }
 
   // Export the full mapping (every status, not just the filtered view) to Excel
   // so duplicate Perigee stores can be spotted (sort by DISPO match → two Perigee
@@ -369,7 +404,7 @@ export default function StoreReportsTestPage() {
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) { setCodeErr(d.error || "Link failed"); }
-      else { setLinkFor(null); setLinkSearch(""); await checkCodes(); }
+      else { setLinkFor(null); setLinkSearch(""); await checkCodes(codeText, false, true); }
     } catch { setCodeErr("Network error"); }
     setCodeBusy(false);
   }
@@ -384,7 +419,7 @@ export default function StoreReportsTestPage() {
       const res = await authFetch("/api/store-reports/code-map", { method: "POST", body: JSON.stringify({ perigeeCode: newPerigee, dispoCode }) });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) { setCodeErr(d.error || "Reassign failed"); }
-      else { setLinkFor(null); setLinkSearch(""); await checkCodes(); }
+      else { setLinkFor(null); setLinkSearch(""); await checkCodes(codeText, false, true); }
     } catch { setCodeErr("Network error"); }
     setCodeBusy(false);
   }
@@ -414,10 +449,37 @@ export default function StoreReportsTestPage() {
     });
   }
 
-  // Rows currently shown given the active card filter (drives select-all + map).
+  // Split results into the active mapping grid vs the parked "ignore for now"
+  // grid, then apply the channel filter so mapping can be done one banner at a time.
+  const rowChannel = (r: CodeRow) => r.channel || "Unknown";
+  const channelOptions = useMemo(() => {
+    const set = new Set<string>();
+    (codeRes?.results || []).forEach((r) => set.add(rowChannel(r)));
+    return Array.from(set).sort();
+  }, [codeRes]);
+  const inChannel = (r: CodeRow) => channelFilter === "all" || rowChannel(r) === channelFilter;
+
+  const activeRows = useMemo(
+    () => (codeRes?.results || []).filter((r) => !ignored.has(looseCode(r.code)) && inChannel(r)),
+    [codeRes, ignored, channelFilter]
+  );
+  const ignoredRows = useMemo(
+    () => (codeRes?.results || []).filter((r) => ignored.has(looseCode(r.code)) && inChannel(r)),
+    [codeRes, ignored, channelFilter]
+  );
+  // Card counts reflect the current channel + ignore state (what's actually in play).
+  const counts = useMemo(() => ({
+    all: activeRows.length,
+    match: activeRows.filter((r) => r.status === "match").length,
+    linked: activeRows.filter((r) => r.status === "linked").length,
+    "format-diff": activeRows.filter((r) => r.status === "format-diff").length,
+    "no-match": activeRows.filter((r) => r.status === "no-match").length,
+  }), [activeRows]);
+
+  // Rows currently shown in the MAIN grid (drives select-all + map).
   const visibleRows = useMemo(
-    () => (codeRes?.results || []).filter((r) => codeFilter === "all" || r.status === codeFilter),
-    [codeRes, codeFilter]
+    () => activeRows.filter((r) => codeFilter === "all" || r.status === codeFilter),
+    [activeRows, codeFilter]
   );
   const allVisibleSelected = visibleRows.length > 0 && visibleRows.every((r) => selectedCodes.has(looseCode(r.code)));
   function toggleSelectAllVisible() {
@@ -435,7 +497,7 @@ export default function StoreReportsTestPage() {
       const res = await authFetch("/api/store-reports/code-map", {
         method: "DELETE", body: JSON.stringify({ perigeeCode }),
       });
-      if (res.ok) await checkCodes();
+      if (res.ok) await checkCodes(codeText, false, true);
     } catch { setCodeErr("Network error"); }
     setCodeBusy(false);
   }
@@ -563,14 +625,27 @@ export default function StoreReportsTestPage() {
 
           {codeRes && (
             <div className="mt-5">
+              {/* Channel filter — map one banner at a time. */}
+              {channelOptions.length > 1 && (
+                <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+                  <span className="font-semibold text-[var(--color-text-muted)]">Channel:</span>
+                  <select value={channelFilter} onChange={(e) => { setChannelFilter(e.target.value); setSelectedCodes(new Set()); }}
+                    className="rounded-md border border-[var(--color-border)] bg-white px-2 py-1 text-xs">
+                    <option value="all">All channels</option>
+                    {channelOptions.map((ch) => <option key={ch} value={ch}>{ch}</option>)}
+                  </select>
+                  {channelFilter !== "all" && <span className="text-[var(--color-text-muted)]">showing {activeRows.length} active{ignoredRows.length ? ` · ${ignoredRows.length} ignored` : ""}</span>}
+                </div>
+              )}
+
               {/* Cards = filters */}
               <div className="mb-3 flex flex-wrap gap-2 text-xs">
                 {([
-                  ["all", `All ${codeRes.checked}`, "bg-zinc-50 text-[var(--color-text)] border-[var(--color-border)]"],
-                  ["match", `✓ Match ${codeRes.matched}`, "bg-green-50 text-green-700 border-green-200"],
-                  ["linked", `🔗 Linked ${codeRes.linked}`, "bg-blue-50 text-blue-700 border-blue-200"],
-                  ["format-diff", `~ Format diff ${codeRes.formatDiff}`, "bg-amber-50 text-amber-700 border-amber-200"],
-                  ["no-match", `✗ No match ${codeRes.noMatch}`, "bg-red-50 text-red-700 border-red-200"],
+                  ["all", `All ${counts.all}`, "bg-zinc-50 text-[var(--color-text)] border-[var(--color-border)]"],
+                  ["match", `✓ Match ${counts.match}`, "bg-green-50 text-green-700 border-green-200"],
+                  ["linked", `🔗 Linked ${counts.linked}`, "bg-blue-50 text-blue-700 border-blue-200"],
+                  ["format-diff", `~ Format diff ${counts["format-diff"]}`, "bg-amber-50 text-amber-700 border-amber-200"],
+                  ["no-match", `✗ No match ${counts["no-match"]}`, "bg-red-50 text-red-700 border-red-200"],
                 ] as [CodeFilter, string, string][]).map(([key, label, cls]) => (
                   <button key={key} onClick={() => setCodeFilter(key)}
                     className={`rounded-md px-2.5 py-1 font-medium border ${cls} ${codeFilter === key ? "ring-2 ring-[var(--color-primary)] ring-offset-1" : ""}`}>
@@ -581,11 +656,15 @@ export default function StoreReportsTestPage() {
               </div>
 
               {selectedCodes.size > 0 && (
-                <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs">
-                  <span className="font-semibold text-red-700">{selectedCodes.size} selected</span>
+                <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-[var(--color-border)] bg-zinc-50 px-3 py-2 text-xs">
+                  <span className="font-semibold text-[var(--color-text)]">{selectedCodes.size} selected</span>
                   <button onClick={() => removeFromList(Array.from(selectedCodes))} disabled={codeBusy}
                     className="rounded-md bg-red-600 px-3 py-1 font-semibold text-white hover:bg-red-700 disabled:opacity-50">
                     Remove selected
+                  </button>
+                  <button onClick={() => ignoreCodes(Array.from(selectedCodes).map((k) => (codeRes.results.find((r) => looseCode(r.code) === k)?.code) || k))} disabled={codeBusy}
+                    className="rounded-md bg-amber-500 px-3 py-1 font-semibold text-white hover:bg-amber-600 disabled:opacity-50">
+                    Ignore for now
                   </button>
                   <button onClick={() => setSelectedCodes(new Set())} className="font-medium text-[var(--color-text-muted)] hover:underline">Clear selection</button>
                 </div>
@@ -649,6 +728,7 @@ export default function StoreReportsTestPage() {
                                   {linkFor === r.code ? "Close" : "🔗 Link"}
                                 </button>
                               ) : null}
+                              <button onClick={() => ignoreCodes([r.code])} disabled={codeBusy} title="Move to the Ignored grid (park until its data is loaded)" className="font-medium text-amber-600 hover:underline disabled:opacity-50">Ignore</button>
                               <button onClick={() => removeFromList(r.code)} disabled={codeBusy} title="Remove from list" className="font-medium text-[var(--color-text-muted)] hover:text-red-600 hover:underline disabled:opacity-50">Remove</button>
                               {r.reason && r.status !== "linked" && <span className="text-[var(--color-text-muted)]">{r.reason}</span>}
                             </div>
@@ -710,6 +790,50 @@ export default function StoreReportsTestPage() {
                   </tbody>
                 </table>
               </div>
+
+              {/* Ignored grid — parked stores we can't map yet (e.g. channel not
+                  loaded). Kept separate so they don't clutter the main mapping grid. */}
+              {ignoredRows.length > 0 && (
+                <div className="mt-5">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="text-sm font-bold text-amber-700">Ignored for now ({ignoredRows.length}{channelFilter !== "all" ? ` in ${channelFilter}` : ""})</h3>
+                    <button onClick={() => unignoreCodes(ignoredRows.map((r) => r.code))} disabled={codeBusy}
+                      className="text-xs font-medium text-[var(--color-primary)] hover:underline disabled:opacity-50">
+                      Restore all shown
+                    </button>
+                  </div>
+                  <div className="max-h-64 overflow-y-auto rounded-lg border border-amber-200 bg-amber-50/40">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-amber-50 text-amber-800">
+                        <tr>
+                          <th className="px-3 py-2 text-left">Perigee code</th>
+                          <th className="px-3 py-2 text-left">Perigee name</th>
+                          <th className="px-3 py-2 text-left">Channel</th>
+                          <th className="px-3 py-2 text-left">Status</th>
+                          <th className="px-3 py-2 text-left">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ignoredRows.map((r, i) => (
+                          <tr key={i} className="border-t border-amber-100">
+                            <td className="px-3 py-1.5 font-mono">{r.code}</td>
+                            <td className="px-3 py-1.5">{r.name || ""}</td>
+                            <td className="px-3 py-1.5">{r.channel || "Unknown"}</td>
+                            <td className="px-3 py-1.5">
+                              {r.status === "match" ? "✓ match" : r.status === "linked" ? "🔗 linked" : r.status === "format-diff" ? "~ format diff" : "✗ no match"}
+                            </td>
+                            <td className="px-3 py-1.5">
+                              <button onClick={() => unignoreCodes([r.code])} disabled={codeBusy}
+                                className="font-medium text-[var(--color-primary)] hover:underline disabled:opacity-50">Restore</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
               {codeRes.dispoOnly.length > 0 && (
                 <details className="mt-3 text-xs text-[var(--color-text-muted)]">
                   <summary className="cursor-pointer">Unmatched, unlinked DISPO stores you could link to ({codeRes.dispoOnlyCount}) — excludes DC / online / closed</summary>
