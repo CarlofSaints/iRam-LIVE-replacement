@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { requirePermission, handleAuthError, noCacheHeaders } from "@/lib/auth";
-import { loadStoreReport, formatGeneratedAt, storeReportLogos } from "@/lib/storeReportLoad";
+import { loadStoreReport, formatGeneratedAt, storeReportLogos, reportBaseUrl } from "@/lib/storeReportLoad";
 import { renderStoreReportEmail } from "@/lib/storeReportEmail";
 import { sendStoreReportEmail } from "@/lib/email";
 import { addLog } from "@/lib/activityLog";
@@ -54,8 +54,9 @@ export async function POST(req: NextRequest) {
       d: day,
     });
     if (body.clientId) params.set("clientId", body.clientId);
-    const reportUrl = `${req.nextUrl.origin}/r?${params.toString()}`;
-    const trackingPixelUrl = `${req.nextUrl.origin}/api/store-reports/track?t=${token}&d=${day}&e=open`;
+    const base = reportBaseUrl(req.nextUrl.origin);  // clean prod domain if configured
+    const reportUrl = `${base}/r?${params.toString()}`;
+    const trackingPixelUrl = `${base}/api/store-reports/track?t=${token}&d=${day}&e=open`;
 
     const html = renderStoreReportEmail(loaded.report, {
       repName: session.name || "there",
@@ -64,7 +65,7 @@ export async function POST(req: NextRequest) {
       generatedAt: formatGeneratedAt(),
       version: "iRam LIVE",
       trackingPixelUrl,
-      ...storeReportLogos(req.nextUrl.origin, loaded.report.subChannel),
+      ...storeReportLogos(base, loaded.report.subChannel),
     });
 
     const store = loaded.report.storeName || siteCode;

@@ -17,7 +17,7 @@
 import { getSyncSettings, recordLastRun, normaliseVisit, type SyncLastRun } from "./storeReportSync";
 import { getTodayMassmartVisits } from "./sqlProxy";
 import { hasProcessedVisit, hasSent, addSend } from "./storeReportLog";
-import { loadStoreReport, formatGeneratedAt, storeReportLogos } from "./storeReportLoad";
+import { loadStoreReport, formatGeneratedAt, storeReportLogos, reportBaseUrl } from "./storeReportLoad";
 import { renderStoreReportEmail } from "./storeReportEmail";
 import { sendStoreReportEmail } from "./email";
 import { addTrackingSend, trackingDay } from "./storeReportTracking";
@@ -185,9 +185,10 @@ export async function runStoreReportSync(opts: RunOptions): Promise<RunResult> {
 
       const token = uuid();
       const day = trackingDay();
+      const base = reportBaseUrl(opts.origin);  // clean prod domain if configured
       const params = new URLSearchParams({ site: v.siteCode, year: String(loaded.year), month: String(loaded.month), week: String(loaded.week), t: token, d: day });
-      const reportUrl = `${opts.origin}/r?${params.toString()}`;
-      const trackingPixelUrl = `${opts.origin}/api/store-reports/track?t=${token}&d=${day}&e=open`;
+      const reportUrl = `${base}/r?${params.toString()}`;
+      const trackingPixelUrl = `${base}/api/store-reports/track?t=${token}&d=${day}&e=open`;
       const html = renderStoreReportEmail(report, {
         repName: v.repName || "there",
         periodLabel: loaded.periodLabel,
@@ -195,7 +196,7 @@ export async function runStoreReportSync(opts: RunOptions): Promise<RunResult> {
         generatedAt: formatGeneratedAt(),
         version: "iRam LIVE",
         trackingPixelUrl,
-        ...storeReportLogos(opts.origin, report.subChannel),
+        ...storeReportLogos(base, report.subChannel),
       });
 
       await sendStoreReportEmail({ to: v.repEmail, subject: `Store Report — ${store} — ${loaded.periodLabel}`, html });

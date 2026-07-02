@@ -277,6 +277,18 @@ export function storeReportLogos(origin: string, subChannel: string): {
   };
 }
 
+// Base URL for report links, tracking pixels and logos. Prefer an explicit
+// STORE_REPORT_BASE_URL (the CLEAN production domain, e.g.
+// https://i-ram-live-replacement.vercel.app) so links NEVER embed a generated
+// *.vercel.app deployment URL — those sit behind Vercel Deployment Protection
+// and would send reps to a Vercel login. Falls back to the request origin when
+// the env var isn't set. Accepts a bare host (adds https://) and trims slashes.
+export function reportBaseUrl(fallbackOrigin: string): string {
+  const raw = (process.env.STORE_REPORT_BASE_URL || "").trim().replace(/\/+$/, "");
+  if (!raw) return fallbackOrigin;
+  return /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+}
+
 // "26 Jun 2026 at 13:36" in SA local time.
 export function formatGeneratedAt(d: Date = new Date()): string {
   const date = d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "Africa/Johannesburg" });
