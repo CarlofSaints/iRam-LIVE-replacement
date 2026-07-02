@@ -12,8 +12,9 @@ export interface HeaderCollision {
 }
 
 export interface DispoParseResult {
-  vendorNumber: string;
-  rows: Record<string, unknown>[];
+  vendorNumber: string;         // primary (dominant) vendor — kept for back-compat
+  vendorNumbers: string[];      // ALL distinct real (numeric) vendors in the file
+  rows: Record<string, unknown>[];  // each row stamped with `_vendor` (its own resolved vendor)
   dateColumns: string[];
   headerRow: number;
   totalRows: number;
@@ -128,32 +129,6 @@ export function parseDispo(buffer: Buffer): DispoParseResult {
     }
   }
 
-  // Find vendor number from data rows
-  let vendorNumber = "";
-  const vendorColIdx = resolvedHeaders.findIndex(
-    (h) => h.toLowerCase() === "vendor"
-  );
-
-  if (vendorColIdx !== -1) {
-    // Scan first few data rows for a numeric vendor value
-    for (let i = headerRowIdx + 1; i < Math.min(aoa.length, headerRowIdx + 5); i++) {
-      const row = aoa[i];
-      if (!Array.isArray(row)) continue;
-      const val = String(row[vendorColIdx] ?? "").trim();
-      const numMatch = val.match(/^(\d+)/);
-      if (numMatch) {
-        vendorNumber = numMatch[1];
-        break;
-      }
-    }
-  }
-
-  // Fallback: extract from sheet name
-  if (!vendorNumber) {
-    const nameMatch = sheetName.match(/^(\d+)/);
-    if (nameMatch) vendorNumber = nameMatch[1];
-  }
-
   // ID columns whose raw numeric value we keep verbatim (as a plain integer
   // string) instead of Excel's scientific-notation display text.
   const ID_COLUMNS = new Set(["Article", "Vendor Prod Code", "Barcode"]);
@@ -192,6 +167,50 @@ export function parseDispo(buffer: Buffer): DispoParseResult {
     rows.push(obj);
   }
 
+  // ── Multi-vendor resolution ──
+  // A single DISPO often carries more than one real vendor. REAL vendor codes
+  // are NUMERIC; a non-numeric value in the Vendor column (e.g. "D102") is a DC
+  // code — the Africa / DC-supplied lines that get stock via the DC rather than
+  // the vendor directly — NOT a vendor. We therefore:
+  //   1. collect every distinct numeric vendor,
+  //   2. map each Article to its real vendor from the numeric rows,
+  //   3. stamp every row with its own resolved `_vendor` — a DC line inherits
+  //      the vendor of the SAME article found under a numeric vendor, so its
+  //      stock/sales are written to that vendor (never dropped).
+  const vendorCount = new Map<string, number>();
+  const articleVendor = new Map<string, string>();
+  for (const r of rows) {
+    const m = String(r["Vendor"] ?? "").trim().match(/^(\d+)/);
+    if (!m) continue;                       // skip DC / non-numeric here
+    const vn = m[1];
+    vendorCount.set(vn, (vendorCount.get(vn) ?? 0) + 1);
+    const a = String(r["Article"] ?? "").trim().toLowerCase();
+    if (a && !articleVendor.has(a)) articleVendor.set(a, vn);
+  }
+  let vendorNumbers = [...vendorCount.keys()].sort();
+
+  // No numeric vendor found in the data → fall back to the sheet-name prefix.
+  if (vendorNumbers.length === 0) {
+    const nameMatch = sheetName.match(/^(\d+)/);
+    if (nameMatch) vendorNumbers = [nameMatch[1]];
+  }
+
+  // Dominant (most rows) vendor is the fallback for a DC line whose article
+  // isn't found under any numeric vendor (rare) — keeps it with a real vendor.
+  let dominantVendor = vendorNumbers[0] ?? "";
+  let domCount = -1;
+  for (const [vn, c] of vendorCount) if (c > domCount) { domCount = c; dominantVendor = vn; }
+
+  const resolveRowVendor = (r: Record<string, unknown>): string => {
+    const m = String(r["Vendor"] ?? "").trim().match(/^(\d+)/);
+    if (m) return m[1];
+    const a = String(r["Article"] ?? "").trim().toLowerCase();
+    return articleVendor.get(a) || dominantVendor || "";
+  };
+  for (const r of rows) r["_vendor"] = resolveRowVendor(r);
+
+  const vendorNumber = dominantVendor;
+
   // Makro-style DISPOs list the same Article×Site once per UOM (EA, CS, PAL,
   // LAY, SW…). Stock and sales are reported only on the selling-unit row; the
   // pack rows carry SOH=0. Because the sales ledger dedups by Article|Site, the
@@ -202,6 +221,7 @@ export function parseDispo(buffer: Buffer): DispoParseResult {
 
   return {
     vendorNumber,
+    vendorNumbers,
     rows: collapsed,
     dateColumns,
     headerRow: headerRowIdx,

@@ -69,11 +69,14 @@ export async function POST(req: NextRequest) {
     if (fileType === "dispo") {
       const result = parseDispo(buffer);
 
-      // Validate vendor number (always hard-block — wrong vendor is never OK)
-      if (result.vendorNumber && client.vendorNumbers.length > 0) {
-        if (!client.vendorNumbers.includes(result.vendorNumber)) {
+      // Validate vendor numbers (always hard-block — wrong vendor is never OK).
+      // A DISPO can carry several real vendors; check EVERY distinct numeric
+      // vendor in the file (DC codes like "D102" are excluded by the parser).
+      if (client.vendorNumbers.length > 0 && result.vendorNumbers.length > 0) {
+        const bad = result.vendorNumbers.filter((v) => !client.vendorNumbers.includes(v));
+        if (bad.length > 0) {
           return Response.json({
-            error: `Vendor number ${result.vendorNumber} from file does not match client's vendor numbers (${client.vendorNumbers.join(", ")})`,
+            error: `Vendor number(s) ${bad.join(", ")} from file do not match client's vendor numbers (${client.vendorNumbers.join(", ")})`,
           }, { status: 400, headers: noCacheHeaders() });
         }
       }
@@ -230,19 +233,26 @@ export async function POST(req: NextRequest) {
       //    (or all sites in the primary channel) this collapses to a single
       //    group = the main channel, exactly as before. Sites not found in any
       //    store master fall to the primary main channel.
+      // Group by (owning channel × vendor). Splitting per vendor gives each real
+      // vendor its own upload record + ledger stamp, so the DISPO checklist shows
+      // BOTH vendor streams loaded and stale-row tracking stays per-vendor. Each
+      // row's vendor was resolved by the parser (DC lines already carry their
+      // article's real vendor). With a single vendor this collapses to one group.
       const primary = { id: mainChannelId, name: mainChannelName };
-      const groups = new Map<string, { channel: { id: string; name: string }; rows: Record<string, unknown>[] }>();
+      const groups = new Map<string, { channel: { id: string; name: string }; vendor: string; rows: Record<string, unknown>[] }>();
       for (const row of result.rows) {
         const site = String(row["Site"] ?? "").trim().toLowerCase();
         const owner = (site && siteChannel.get(site)) || primary;
-        let g = groups.get(owner.id);
-        if (!g) { g = { channel: owner, rows: [] }; groups.set(owner.id, g); }
+        const vendor = String(row["_vendor"] ?? "").trim() || result.vendorNumber;
+        const gk = `${owner.id}|${vendor}`;
+        let g = groups.get(gk);
+        if (!g) { g = { channel: owner, vendor, rows: [] }; groups.set(gk, g); }
         g.rows.push(row);
       }
       const groupList = [...groups.values()].filter((g) => g.rows.length > 0);
 
       const mergeTotals = { inserted: 0, updated: 0, unchanged: 0 };
-      const perChannel: { channel: string; rows: number; inserted: number; updated: number; unchanged: number }[] = [];
+      const perChannel: { channel: string; vendor: string; rows: number; inserted: number; updated: number; unchanged: number }[] = [];
       let firstUploadId = "";
       for (const g of groupList) {
         const upload = await addUpload(
@@ -256,7 +266,7 @@ export async function POST(req: NextRequest) {
             uploadDate: new Date().toISOString(),
             uploadedBy: session.userId,
             uploadedByName: session.name,
-            vendorNumber: result.vendorNumber,
+            vendorNumber: g.vendor,
             period: result.dateColumns.join(", "),
             rowCount: g.rows.length,
             dateColumns: result.dateColumns,
@@ -274,7 +284,7 @@ export async function POST(req: NextRequest) {
           clientName: client.name,
           channelId: g.channel.id,
           channelName: g.channel.name,
-          vendorNumber: result.vendorNumber,
+          vendorNumber: g.vendor,
           rows: g.rows,
           dateColumns: result.dateColumns,
           uploadId: upload.id,
@@ -285,21 +295,22 @@ export async function POST(req: NextRequest) {
         mergeTotals.inserted += merge.inserted;
         mergeTotals.updated += merge.updated;
         mergeTotals.unchanged += merge.unchanged;
-        perChannel.push({ channel: g.channel.name, rows: g.rows.length, ...merge });
+        perChannel.push({ channel: g.channel.name, vendor: g.vendor, rows: g.rows.length, ...merge });
       }
 
       const logSuffix = hasWarnings
         ? ` (forced with ${missingArticleDetails.length} missing articles, ${missingSites.length} missing sites)`
         : "";
       const splitSuffix = perChannel.length > 1
-        ? ` Split by channel: ${perChannel.map((p) => `${p.channel} ${p.rows}`).join(", ")}.`
+        ? ` Split by channel×vendor: ${perChannel.map((p) => `${p.channel}/${p.vendor} ${p.rows}`).join(", ")}.`
         : "";
+      const vendorLabel = result.vendorNumbers.length ? result.vendorNumbers.join("/") : result.vendorNumber;
 
       await addLog({
         userId: session.userId,
         userName: session.name,
         action: "upload_dispo",
-        details: `Uploaded DISPO for ${client.name} / ${mainChannelName} (${result.totalRows} rows, vendor ${result.vendorNumber}). Ledger merge: ${mergeTotals.inserted} new, ${mergeTotals.updated} updated, ${mergeTotals.unchanged} unchanged.${splitSuffix}${logSuffix}`,
+        details: `Uploaded DISPO for ${client.name} / ${mainChannelName} (${result.totalRows} rows, vendor(s) ${vendorLabel}). Ledger merge: ${mergeTotals.inserted} new, ${mergeTotals.updated} updated, ${mergeTotals.unchanged} unchanged.${splitSuffix}${logSuffix}`,
         status: "success",
         clientId: client.id,
         clientName: client.name,

@@ -241,9 +241,16 @@ export async function mergeDispo(params: MergeDispoParams): Promise<MergeResult>
 
     const existingRow = ledgerMap.get(key);
 
+    // Prefer the row's OWN resolved vendor (set by the parser — a DC line
+    // inherits the vendor of the same article under a numeric vendor). Fall back
+    // to the upload's vendor for legacy callers that don't stamp per row.
+    const rowVendor = (typeof normalizedRow["_vendor"] === "string" && normalizedRow["_vendor"])
+      ? (normalizedRow["_vendor"] as string)
+      : vendorNumber;
+
     if (!existingRow) {
       // INSERT — new combination
-      normalizedRow["_vendor"] = vendorNumber;
+      normalizedRow["_vendor"] = rowVendor;
       normalizedRow["_lastLoadedAt"] = loadStamp;
       ledgerMap.set(key, normalizedRow);
       inserted++;
@@ -278,7 +285,7 @@ export async function mergeDispo(params: MergeDispoParams): Promise<MergeResult>
 
       // Always re-stamp: this row WAS in the current upload, so it's part of the
       // latest load even if no field value changed.
-      existingRow["_vendor"] = vendorNumber;
+      existingRow["_vendor"] = rowVendor;
       existingRow["_lastLoadedAt"] = loadStamp;
 
       if (changed) {
