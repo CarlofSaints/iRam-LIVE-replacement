@@ -235,6 +235,7 @@ export default function StoreReportsTestPage() {
   const [linkSearch, setLinkSearch] = useState("");              // candidate search text
   const [selectedCodes, setSelectedCodes] = useState<Set<string>>(new Set()); // looseCode keys ticked for bulk remove
   const [codeSyncMsg, setCodeSyncMsg] = useState("");            // "list updated by …" notice from the live poll
+  const [codeInfoMsg, setCodeInfoMsg] = useState("");            // "added N · M skipped" merge feedback
   // The shared list text we last agreed with the server. The poll compares the
   // server's text against this to detect ANOTHER admin's change (vs our own
   // saves). codeTextRef holds the latest editor value for the poll's closure.
@@ -287,13 +288,6 @@ export default function StoreReportsTestPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Save the shared list to the server so other admins see the same thing.
-  async function saveCodeInput(text: string) {
-    syncedTextRef.current = text;  // our own save — don't let the poll treat it as external
-    try { await authFetch("/api/store-reports/code-input", { method: "POST", body: JSON.stringify({ text }) }); }
-    catch { /* ignore — localStorage still holds a local copy */ }
-  }
-
   // Parse each line into { code, name } — Excel two-column paste is tab-separated;
   // also accept comma/semicolon. First column = code, the rest = store name.
   function parseEntries(text: string): { code: string; name: string }[] {
@@ -308,13 +302,35 @@ export default function StoreReportsTestPage() {
   // grid — blanking collapses the page height and jumps the scroll to the top.
   // We keep the old results mounted and restore the scroll position afterwards.
   async function checkCodes(text: string = codeText, persist: boolean = true, silent: boolean = false, mappingsOverride?: CodeMapping[]) {
-    const entries = parseEntries(text);
+    let entries = parseEntries(text);
     if (!entries.length) { setCodeErr("Paste some site codes first"); return; }
     try { localStorage.setItem(CODE_LS, text); } catch { /* ignore */ }
-    if (persist) saveCodeInput(text);  // share with other admins (skip on mount load)
     const scrollY = typeof window !== "undefined" ? window.scrollY : 0;
     setCodeBusy(true); setCodeErr("");
     if (!silent) { setCodeRes(null); setLinkFor(null); setCodeSyncMsg(""); }
+
+    // Persist = a paste/check by the user → ADD-ONLY merge into the shared list.
+    // Never overwrites others' (or your own previous) stores; duplicates are
+    // skipped and reported. Then check against the merged (union) list.
+    if (persist) {
+      try {
+        const res = await authFetch("/api/store-reports/code-input", { method: "POST", body: JSON.stringify({ entries }) });
+        if (res.ok) {
+          const d = await res.json().catch(() => ({}));
+          const merged = String(d?.text ?? text);
+          syncedTextRef.current = merged;               // our own save — poll won't treat as external
+          setCodeText(merged);
+          try { localStorage.setItem(CODE_LS, merged); } catch { /* ignore */ }
+          entries = parseEntries(merged);
+          const added = Array.isArray(d?.added) ? d.added.length : 0;
+          const skipped = Array.isArray(d?.skipped) ? d.skipped.length : 0;
+          if (skipped > 0) setCodeInfoMsg(`Added ${added} new · ${skipped} already in the shared list (skipped — nothing was overwritten).`);
+          else if (added > 0) setCodeInfoMsg(`Added ${added} new store${added === 1 ? "" : "s"} to the shared list.`);
+          else setCodeInfoMsg("");
+        }
+      } catch { /* fall through — check with the local list */ }
+    }
+
     try {
       const res = await authFetch("/api/store-reports/code-check", {
         // Pass the just-saved map through so a link/unlink is reflected
@@ -428,17 +444,25 @@ export default function StoreReportsTestPage() {
 
   // Remove one or more Perigee stores from the pasted list entirely (e.g. DC /
   // online / closed that you don't need). Edits the textarea + re-checks.
-  function removeFromList(codes: string | string[]) {
-    const drop = new Set((Array.isArray(codes) ? codes : [codes]).map(looseCode));
-    const text = codeText.split(/\r?\n/).filter((line) => {
-      const m = line.match(/^([^\t,;]+)[\t,;]+/);
-      const c = (m ? m[1] : line).trim();
-      return c && !drop.has(looseCode(c));
-    }).join("\n");
-    setCodeText(text);
+  async function removeFromList(codes: string | string[]) {
+    const arr = (Array.isArray(codes) ? codes : [codes]).map((c) => c.trim()).filter(Boolean);
+    if (!arr.length) return;
     setSelectedCodes(new Set());
-    try { localStorage.setItem(CODE_LS, text); } catch { /* ignore */ }
-    checkCodes(text);
+    setCodeBusy(true); setCodeErr("");
+    try {
+      // Explicit removal from the shared list (NOT an overwrite — server drops
+      // just these codes and returns the remaining list).
+      const res = await authFetch("/api/store-reports/code-input", { method: "POST", body: JSON.stringify({ removeCodes: arr }) });
+      if (res.ok) {
+        const d = await res.json().catch(() => ({}));
+        const text = String(d?.text ?? "");
+        syncedTextRef.current = text;
+        setCodeText(text);
+        try { localStorage.setItem(CODE_LS, text); } catch { /* ignore */ }
+        await checkCodes(text, false, true);  // silent re-check, no re-merge
+      } else { setCodeErr("Remove failed"); }
+    } catch { setCodeErr("Network error"); }
+    setCodeBusy(false);
   }
 
   // Toggle a single row's tickbox (keyed by loose code).
@@ -606,6 +630,7 @@ export default function StoreReportsTestPage() {
         </p>
         {codeErr && <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">{codeErr}</div>}
         {codeSyncMsg && <div className="mb-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm text-blue-700">🔄 {codeSyncMsg}</div>}
+        {codeInfoMsg && <div className="mb-3 rounded-lg border border-green-200 bg-green-50 px-4 py-2 text-sm text-green-700">✓ {codeInfoMsg}</div>}
         <div className="rounded-xl border border-[var(--color-border)] bg-white p-5">
           <textarea
             value={codeText}
