@@ -60,7 +60,9 @@ interface EngResult { day: string; summary: EngSummary[]; totalSent: number; det
 interface CodeRow { code: string; name?: string; status: "match" | "linked" | "format-diff" | "no-match"; dispoCode?: string; dispoName?: string; reason?: string }
 interface CodeMapping { perigeeCode: string; dispoCode: string }
 interface DispoOnly { code: string; name?: string }
-interface CodeCheck { checked: number; matched: number; linked: number; formatDiff: number; noMatch: number; dispoCodeCount: number; dispoOnlyCount: number; results: CodeRow[]; dispoOnly: DispoOnly[]; mappings: CodeMapping[] }
+interface DispoClaim { by: string; via: "match" | "format-diff" | "linked" }
+interface DispoCandidate { code: string; name?: string; claim?: DispoClaim | null }
+interface CodeCheck { checked: number; matched: number; linked: number; formatDiff: number; noMatch: number; dispoCodeCount: number; dispoOnlyCount: number; results: CodeRow[]; dispoOnly: DispoOnly[]; dispoAll?: DispoCandidate[]; mappings: CodeMapping[] }
 type CodeFilter = "all" | "match" | "linked" | "format-diff" | "no-match";
 
 export default function StoreReportsTestPage() {
@@ -372,6 +374,21 @@ export default function StoreReportsTestPage() {
     setCodeBusy(false);
   }
 
+  // Reassign a DISPO store from one Perigee code to another: unlink the store's
+  // current manual link, then link it to the code we're editing.
+  async function reassignLink(oldPerigee: string, newPerigee: string, dispoCode: string) {
+    if (!dispoCode.trim()) return;
+    setCodeBusy(true); setCodeErr("");
+    try {
+      await authFetch("/api/store-reports/code-map", { method: "DELETE", body: JSON.stringify({ perigeeCode: oldPerigee }) });
+      const res = await authFetch("/api/store-reports/code-map", { method: "POST", body: JSON.stringify({ perigeeCode: newPerigee, dispoCode }) });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { setCodeErr(d.error || "Reassign failed"); }
+      else { setLinkFor(null); setLinkSearch(""); await checkCodes(); }
+    } catch { setCodeErr("Network error"); }
+    setCodeBusy(false);
+  }
+
   // Remove one or more Perigee stores from the pasted list entirely (e.g. DC /
   // online / closed that you don't need). Edits the textarea + re-checks.
   function removeFromList(codes: string | string[]) {
@@ -592,7 +609,13 @@ export default function StoreReportsTestPage() {
                   </thead>
                   <tbody>
                     {visibleRows.map((r, i) => {
-                      const candidates = (codeRes.dispoOnly || [])
+                      // Search ALL callable DISPO stores (dispoAll) so a store
+                      // already used by another code still shows up (annotated),
+                      // falling back to the unmatched-only list for old payloads.
+                      const candSource: DispoCandidate[] = codeRes.dispoAll?.length
+                        ? codeRes.dispoAll
+                        : (codeRes.dispoOnly || []).map((c) => ({ ...c, claim: null }));
+                      const candidates = candSource
                         .filter((c) => { const q = linkSearch.trim().toLowerCase(); return !q || (c.code + " " + (c.name || "")).toLowerCase().includes(q); })
                         .map((c) => ({ ...c, _s: nameScore(r.name || "", c.name || "") }))
                         .sort((a, b) => b._s - a._s || (a.name || a.code).localeCompare(b.name || b.code))
@@ -642,14 +665,37 @@ export default function StoreReportsTestPage() {
                               </div>
                               <div className="max-h-56 overflow-y-auto rounded-lg border border-[var(--color-border)] bg-white">
                                 {candidates.length === 0 ? (
-                                  <div className="px-3 py-3 text-xs text-[var(--color-text-muted)]">No unmatched stores{linkSearch.trim() ? " for that search" : ""}.</div>
-                                ) : candidates.map((c) => (
-                                  <button key={c.code} onClick={() => saveLink(r.code, c.code)} disabled={codeBusy}
-                                    className="flex w-full items-center justify-between gap-3 border-b border-zinc-100 px-3 py-1.5 text-left text-xs hover:bg-blue-50 disabled:opacity-50">
-                                    <span><span className="font-mono">{c.code}</span> — {c.name || <span className="text-[var(--color-text-muted)]">(no name)</span>}</span>
-                                    {c._s > 0 && <span className="rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700">name match</span>}
-                                  </button>
-                                ))}
+                                  <div className="px-3 py-3 text-xs text-[var(--color-text-muted)]">No stores{linkSearch.trim() ? " for that search" : ""}.</div>
+                                ) : candidates.map((c) => {
+                                  const claimedByOther = c.claim && looseCode(c.claim.by) !== looseCode(r.code);
+                                  const viaLabel = c.claim?.via === "linked" ? "linked" : c.claim?.via === "format-diff" ? "format diff" : "in list";
+                                  return (
+                                  <div key={c.code} className="border-b border-zinc-100 last:border-b-0">
+                                    <button
+                                      onClick={() => {
+                                        if (claimedByOther && !window.confirm(`${c.code} is already used by ${c.claim!.by}. Link ${r.code} to it as well? Both Perigee codes will then point at the same DISPO store.`)) return;
+                                        saveLink(r.code, c.code);
+                                      }}
+                                      disabled={codeBusy}
+                                      className="flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-xs hover:bg-blue-50 disabled:opacity-50">
+                                      <span>
+                                        <span className="font-mono">{c.code}</span> — {c.name || <span className="text-[var(--color-text-muted)]">(no name)</span>}
+                                        {claimedByOther && (
+                                          <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">already used by {c.claim!.by} ({viaLabel})</span>
+                                        )}
+                                      </span>
+                                      {c._s > 0 && <span className="rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700">name match</span>}
+                                    </button>
+                                    {claimedByOther && c.claim!.via === "linked" && (
+                                      <div className="px-3 pb-1.5">
+                                        <button onClick={() => reassignLink(c.claim!.by, r.code, c.code)} disabled={codeBusy}
+                                          className="text-[11px] font-medium text-red-600 hover:underline disabled:opacity-50">
+                                          ↳ Unlink {c.claim!.by} and link {r.code} here instead
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+                                ); })}
                               </div>
                               {linkSearch.trim() && !candidates.some((c) => looseCode(c.code) === looseCode(linkSearch)) && (
                                 <button onClick={() => saveLink(r.code, linkSearch.trim())} disabled={codeBusy} className="mt-2 text-xs font-semibold text-[var(--color-primary)] hover:underline disabled:opacity-50">

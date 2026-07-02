@@ -120,6 +120,24 @@ export async function POST(req: NextRequest) {
       .sort()
       .map((code) => ({ code, name: dispoName(code) }));
 
+    // Reverse index: which pasted Perigee code currently "claims" each DISPO
+    // store — an exact/fuzzy code match in the list, or a manual link. Lets the
+    // linker show "already used by X" instead of hiding a store that's spoken for
+    // (so you can still link a second code to it, or reassign a manual link).
+    const claimByDispo = new Map<string, { by: string; via: "match" | "format-diff" | "linked" }>();
+    for (const r of results) {
+      if (r.dispoCode && (r.status === "match" || r.status === "format-diff" || r.status === "linked")) {
+        const lc = looseCode(r.dispoCode);
+        if (!claimByDispo.has(lc)) claimByDispo.set(lc, { by: r.code, via: r.status });
+      }
+    }
+    // Every callable DISPO store (claimed or not) — the linker searches this so a
+    // store already used by another code is still findable and (re)assignable.
+    const dispoAll = [...dispoExact]
+      .filter((d) => isCallableStore(recByLoose.get(looseCode(d)), nameByLoose.get(looseCode(d))))
+      .sort()
+      .map((code) => ({ code, name: dispoName(code), claim: claimByDispo.get(looseCode(code)) ?? null }));
+
     return Response.json(
       {
         checked: entries.length,
@@ -131,6 +149,7 @@ export async function POST(req: NextRequest) {
         dispoOnlyCount: dispoOnly.length,
         results,
         dispoOnly,
+        dispoAll,
         mappings: map,
       },
       { headers: noCacheHeaders() },
