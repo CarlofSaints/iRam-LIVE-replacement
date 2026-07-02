@@ -29,6 +29,19 @@ interface SendResult {
   reportUrl: string;
 }
 
+// Human labels for run-outcome statuses (mirrors OUTCOME_LABELS in storeReportRunner).
+const STATUS_LABELS: Record<string, string> = {
+  "sent": "Sent",
+  "would-send": "Would send",
+  "skipped-duplicate": "Already sent today",
+  "skipped-no-data": "No actions to report",
+  "skipped-no-mapping": "Site not in loaded data / unmapped",
+  "skipped-no-sitecode": "Visit had no site code",
+  "skipped-no-email": "Rep has no email",
+  "skipped-channel": "Channel not in allow-list",
+  "failed": "Failed",
+};
+
 const CARD_LABELS: [string, string][] = [
   ["oos", "Out of Stock"],
   ["lowCover", "Low Stock Cover"],
@@ -38,7 +51,7 @@ const CARD_LABELS: [string, string][] = [
   ["marginOpp", "Margin Opportunity"],
 ];
 
-interface SyncSettings { enabled: boolean; channels: string[]; minIntervalSeconds: number; lastRun?: { at: string; ok: boolean; visitsSeen: number; sent: number; skipped: number; failed: number; message?: string } }
+interface SyncSettings { enabled: boolean; channels: string[]; minIntervalSeconds: number; lastRun?: { at: string; ok: boolean; visitsSeen: number; sent: number; skipped: number; failed: number; reasons?: Record<string, number>; message?: string } }
 interface RunOutcome { siteCode: string; repEmail: string; store: string; status: string; actions?: number; detail?: string }
 interface RunResult { ok: boolean; armedPeriod: string | null; visitsSeen: number; sent: number; skipped: number; failed: number; dryRun: boolean; outcomes: RunOutcome[]; message?: string }
 interface EngSummary { channel: string; sent: number; opened: number; used: number }
@@ -732,9 +745,22 @@ export default function StoreReportsTestPage() {
 
               {sync.lastRun && (
                 <div className="mt-4 text-xs text-[var(--color-text-muted)]">
-                  Last run {new Date(sync.lastRun.at).toLocaleString("en-GB")} — {sync.lastRun.ok ? "OK" : "error"} ·
-                  {" "}{sync.lastRun.visitsSeen} visits · {sync.lastRun.sent} sent · {sync.lastRun.skipped} skipped · {sync.lastRun.failed} failed
-                  {sync.lastRun.message ? ` · ${sync.lastRun.message}` : ""}
+                  <div>
+                    Last run {new Date(sync.lastRun.at).toLocaleString("en-GB")} — {sync.lastRun.ok ? "OK" : "error"} ·
+                    {" "}{sync.lastRun.visitsSeen} visits · {sync.lastRun.sent} sent · {sync.lastRun.skipped} skipped · {sync.lastRun.failed} failed
+                    {sync.lastRun.message ? ` · ${sync.lastRun.message}` : ""}
+                  </div>
+                  {sync.lastRun.reasons && Object.keys(sync.lastRun.reasons).length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {Object.entries(sync.lastRun.reasons)
+                        .sort((a, b) => b[1] - a[1])
+                        .map(([label, count]) => (
+                          <span key={label} className="rounded-md border border-[var(--color-border)] bg-zinc-50 px-2 py-0.5">
+                            {label}: <b className="text-[var(--color-text)]">{count}</b>
+                          </span>
+                        ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -747,6 +773,24 @@ export default function StoreReportsTestPage() {
                 {" "}{runResult.sent} sent · {runResult.skipped} skipped · {runResult.failed} failed
                 {runResult.message ? ` · ${runResult.message}` : ""}
               </p>
+              {(() => {
+                const reasons = runResult.outcomes.reduce<Record<string, number>>((acc, o) => {
+                  if (o.status === "sent" || o.status === "would-send") return acc;
+                  acc[o.status] = (acc[o.status] ?? 0) + 1;
+                  return acc;
+                }, {});
+                const entries = Object.entries(reasons).sort((a, b) => b[1] - a[1]);
+                return entries.length > 0 ? (
+                  <div className="mt-2 flex flex-wrap gap-1.5 text-xs text-[var(--color-text-muted)]">
+                    <span className="font-semibold">Skipped/failed because:</span>
+                    {entries.map(([status, count]) => (
+                      <span key={status} className="rounded-md border border-[var(--color-border)] bg-zinc-50 px-2 py-0.5">
+                        {STATUS_LABELS[status] ?? status}: <b className="text-[var(--color-text)]">{count}</b>
+                      </span>
+                    ))}
+                  </div>
+                ) : null;
+              })()}
               {runResult.outcomes.length > 0 && (
                 <div className="mt-3 max-h-64 overflow-y-auto rounded-lg border border-[var(--color-border)]">
                   <table className="w-full text-xs">
@@ -758,7 +802,7 @@ export default function StoreReportsTestPage() {
                         <tr key={i} className="border-t border-zinc-100">
                           <td className="px-3 py-1.5">{o.store || o.siteCode}</td>
                           <td className="px-3 py-1.5">{o.repEmail || "—"}</td>
-                          <td className="px-3 py-1.5">{o.status}{o.detail ? ` (${o.detail})` : ""}</td>
+                          <td className="px-3 py-1.5">{STATUS_LABELS[o.status] ?? o.status}{o.detail ? ` — ${o.detail}` : ""}</td>
                           <td className="px-3 py-1.5 text-right">{o.actions ?? ""}</td>
                         </tr>
                       ))}

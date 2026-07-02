@@ -26,6 +26,9 @@ export interface SyncLastRun {
   sent: number;
   skipped: number;
   failed: number;
+  // Why visits were skipped/failed this run: human label → count. Persisted so
+  // the scheduled (cron) run's summary can explain itself, not just tally.
+  reasons?: Record<string, number>;
   message?: string;
 }
 

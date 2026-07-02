@@ -31,13 +31,49 @@ export interface RunOptions {
   origin: string;      // base URL for the report link + logos
 }
 
+export type RunVisitStatus =
+  | "sent"
+  | "skipped-duplicate"
+  | "skipped-no-data"
+  | "skipped-no-mapping"
+  | "skipped-no-sitecode"
+  | "skipped-no-email"
+  | "skipped-channel"
+  | "failed"
+  | "would-send";
+
 export interface RunVisitOutcome {
   siteCode: string;
   repEmail: string;
   store: string;
-  status: "sent" | "skipped-duplicate" | "skipped-no-data" | "skipped-no-email" | "skipped-channel" | "failed" | "would-send";
+  status: RunVisitStatus;
   actions?: number;
   detail?: string;
+}
+
+// Human-readable reason per outcome status — used for the run summary breakdown
+// so the scheduled job explains *why* visits were skipped, not just how many.
+export const OUTCOME_LABELS: Record<RunVisitStatus, string> = {
+  "sent": "Sent",
+  "would-send": "Would send",
+  "skipped-duplicate": "Already sent today",
+  "skipped-no-data": "No actions to report",
+  "skipped-no-mapping": "Site not in loaded data / unmapped",
+  "skipped-no-sitecode": "Visit had no site code",
+  "skipped-no-email": "Rep has no email",
+  "skipped-channel": "Channel not in allow-list",
+  "failed": "Failed",
+};
+
+// Tally outcomes by their human label (skipped + failed only), for the summary.
+export function summariseReasons(outcomes: RunVisitOutcome[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const o of outcomes) {
+    if (o.status === "sent" || o.status === "would-send") continue;
+    const label = OUTCOME_LABELS[o.status] ?? o.status;
+    out[label] = (out[label] ?? 0) + 1;
+  }
+  return out;
 }
 
 export interface RunResult {
@@ -96,7 +132,7 @@ export async function runStoreReportSync(opts: RunOptions): Promise<RunResult> {
   // 4. Per visit.
   for (const raw of visits) {
     const v = normaliseVisit(raw);
-    if (!v.siteCode) { skipped++; outcomes.push({ siteCode: "", repEmail: v.repEmail, store: "", status: "skipped-no-data", detail: "no site code on visit" }); continue; }
+    if (!v.siteCode) { skipped++; outcomes.push({ siteCode: "", repEmail: v.repEmail, store: "", status: "skipped-no-sitecode", detail: "no site code on visit" }); continue; }
 
     // Channel allow-list (separator-insensitive). Empty channel = let through.
     if (v.channel && allow.size && !allow.has(normCh(v.channel))) {
@@ -122,7 +158,16 @@ export async function runStoreReportSync(opts: RunOptions): Promise<RunResult> {
 
       if (report.totalActions === 0 || report.clients.length === 0) {
         skipped++;
-        outcomes.push({ siteCode: v.siteCode, repEmail: v.repEmail, store, status: "skipped-no-data", actions: 0 });
+        // No participating client had data for this site → the site code isn't in
+        // any loaded DISPO (unmapped / not loaded). If clients matched but there's
+        // nothing to action, it's genuinely a clean store this period.
+        const noMapping = report.clients.length === 0;
+        outcomes.push({
+          siteCode: v.siteCode, repEmail: v.repEmail, store,
+          status: noMapping ? "skipped-no-mapping" : "skipped-no-data",
+          actions: 0,
+          detail: noMapping ? "site not in any loaded DISPO (check code mapping / data load)" : "no actions to report this period",
+        });
         if (!opts.dryRun) {
           await addSend({
             periodKey: dedupKey, siteCode: v.siteCode, storeName: store, repEmail: v.repEmail,
@@ -177,6 +222,7 @@ export async function runStoreReportSync(opts: RunOptions): Promise<RunResult> {
   const run: SyncLastRun = {
     at: new Date().toISOString(), ok: failed === 0,
     visitsSeen: visits.length, sent, skipped: skippedCount, failed,
+    reasons: summariseReasons(outcomes),
     message: opts.dryRun ? "Dry run" : undefined,
   };
   if (!opts.dryRun) await recordLastRun(run);
