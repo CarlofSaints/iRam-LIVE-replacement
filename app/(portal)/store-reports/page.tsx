@@ -307,7 +307,7 @@ export default function StoreReportsTestPage() {
   // silent = refresh in place (after a link/ignore action) without blanking the
   // grid — blanking collapses the page height and jumps the scroll to the top.
   // We keep the old results mounted and restore the scroll position afterwards.
-  async function checkCodes(text: string = codeText, persist: boolean = true, silent: boolean = false) {
+  async function checkCodes(text: string = codeText, persist: boolean = true, silent: boolean = false, mappingsOverride?: CodeMapping[]) {
     const entries = parseEntries(text);
     if (!entries.length) { setCodeErr("Paste some site codes first"); return; }
     try { localStorage.setItem(CODE_LS, text); } catch { /* ignore */ }
@@ -317,7 +317,9 @@ export default function StoreReportsTestPage() {
     if (!silent) { setCodeRes(null); setLinkFor(null); setCodeSyncMsg(""); }
     try {
       const res = await authFetch("/api/store-reports/code-check", {
-        method: "POST", body: JSON.stringify({ entries }),
+        // Pass the just-saved map through so a link/unlink is reflected
+        // immediately, not after Blob eventual-consistency catches up.
+        method: "POST", body: JSON.stringify(mappingsOverride ? { entries, mappings: mappingsOverride } : { entries }),
       });
       const d = await res.json().catch(() => ({}));
       if (res.ok) setCodeRes(d as CodeCheck);
@@ -404,7 +406,7 @@ export default function StoreReportsTestPage() {
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) { setCodeErr(d.error || "Link failed"); }
-      else { setLinkFor(null); setLinkSearch(""); await checkCodes(codeText, false, true); }
+      else { setLinkFor(null); setLinkSearch(""); await checkCodes(codeText, false, true, d.mappings as CodeMapping[] | undefined); }
     } catch { setCodeErr("Network error"); }
     setCodeBusy(false);
   }
@@ -419,7 +421,7 @@ export default function StoreReportsTestPage() {
       const res = await authFetch("/api/store-reports/code-map", { method: "POST", body: JSON.stringify({ perigeeCode: newPerigee, dispoCode }) });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) { setCodeErr(d.error || "Reassign failed"); }
-      else { setLinkFor(null); setLinkSearch(""); await checkCodes(codeText, false, true); }
+      else { setLinkFor(null); setLinkSearch(""); await checkCodes(codeText, false, true, d.mappings as CodeMapping[] | undefined); }
     } catch { setCodeErr("Network error"); }
     setCodeBusy(false);
   }
@@ -497,7 +499,8 @@ export default function StoreReportsTestPage() {
       const res = await authFetch("/api/store-reports/code-map", {
         method: "DELETE", body: JSON.stringify({ perigeeCode }),
       });
-      if (res.ok) await checkCodes(codeText, false, true);
+      const d = await res.json().catch(() => ({}));
+      if (res.ok) await checkCodes(codeText, false, true, d.mappings as CodeMapping[] | undefined);
     } catch { setCodeErr("Network error"); }
     setCodeBusy(false);
   }

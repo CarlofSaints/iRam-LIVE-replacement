@@ -3,7 +3,7 @@ import { requirePermission, handleAuthError, noCacheHeaders } from "@/lib/auth";
 import { getClients } from "@/lib/clientData";
 import { getAllSalesLedgers, getSalesLedger } from "@/lib/salesData";
 import { getMergedStores } from "@/lib/storeFileData";
-import { getCodeMap, buildResolver, looseCode } from "@/lib/storeReportCodeMap";
+import { getCodeMap, buildResolver, looseCode, type CodeMapping } from "@/lib/storeReportCodeMap";
 import type { StoreRecord } from "@/lib/types";
 
 // Reps don't call on DCs, online stores or closed stores — so they never need
@@ -52,7 +52,7 @@ interface Entry { code: string; name: string }
 export async function POST(req: NextRequest) {
   try {
     await requirePermission(req, "manage_store_reports");
-    const body = (await req.json().catch(() => ({}))) as { entries?: { code?: unknown; name?: unknown }[]; codes?: unknown };
+    const body = (await req.json().catch(() => ({}))) as { entries?: { code?: unknown; name?: unknown }[]; codes?: unknown; mappings?: unknown };
 
     // Accept structured entries {code,name} or a plain codes[] (names blank).
     let entries: Entry[] = [];
@@ -103,7 +103,12 @@ export async function POST(req: NextRequest) {
     }
     for (const s of merged) add(String(s.siteNum ?? ""), String(s.storeName ?? ""));
 
-    const map = await getCodeMap();
+    // The caller may pass the authoritative map it just got back from a link /
+    // unlink (Blob is eventually consistent, so an immediate re-read here can
+    // still miss a just-saved link and make the row snap back to "no match").
+    const map = Array.isArray(body.mappings)
+      ? (body.mappings as CodeMapping[]).filter((m) => m && typeof m.perigeeCode === "string" && typeof m.dispoCode === "string")
+      : await getCodeMap();
     const resolve = buildResolver(map);
     const dispoName = (code?: string) => (code ? nameByLoose.get(looseCode(code)) || "" : "");
     // Prefer a banner detected from the Perigee name (consistent labels), then the
