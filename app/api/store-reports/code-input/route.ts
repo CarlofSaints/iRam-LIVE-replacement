@@ -1,6 +1,13 @@
 import { NextRequest } from "next/server";
 import { requirePermission, handleAuthError, noCacheHeaders } from "@/lib/auth";
 import { getCodeInput, mergeCodeInput, removeCodeInput, type CodeEntry } from "@/lib/storeReportCodeInput";
+import { addLog } from "@/lib/activityLog";
+
+// Keep a log detail readable — show the first few codes, then a "+N more" tail.
+function summariseCodes(codes: string[], max = 20): string {
+  if (codes.length <= max) return codes.join(", ");
+  return `${codes.slice(0, max).join(", ")} +${codes.length - max} more`;
+}
 
 // Shared Site Code Check input list — readable/writable by anyone who can manage
 // store reports, so multiple admins work off the same pasted list. The list is
@@ -28,8 +35,17 @@ export async function POST(req: NextRequest) {
 
     // Explicit removal of specific codes (Remove button).
     if (Array.isArray(body.removeCodes)) {
-      const input = await removeCodeInput(body.removeCodes.map((c) => String(c)), by);
-      return Response.json({ ...input, removed: body.removeCodes.length }, { headers: noCacheHeaders() });
+      const codes = body.removeCodes.map((c) => String(c));
+      const input = await removeCodeInput(codes, by);
+      if (codes.length) {
+        addLog({
+          userId: session.userId, userName: by,
+          action: "Removed store(s) from Site Code list",
+          details: `Removed ${codes.length}: ${summariseCodes(codes)}`,
+          status: "success",
+        }).catch(() => {});
+      }
+      return Response.json({ ...input, removed: codes.length }, { headers: noCacheHeaders() });
     }
 
     // Default = additive merge of a pasted list (never overwrites existing).
@@ -37,6 +53,14 @@ export async function POST(req: NextRequest) {
       ? body.entries.map((e) => ({ code: String(e?.code ?? "").trim(), name: String(e?.name ?? "").trim() })).filter((e) => e.code)
       : [];
     const { input, added, skipped } = await mergeCodeInput(entries, by);
+    if (entries.length) {
+      addLog({
+        userId: session.userId, userName: by,
+        action: "Pasted store list (Site Code Check)",
+        details: `${added.length} new added, ${skipped.length} already present (skipped)${added.length ? ` — added: ${summariseCodes(added)}` : ""}`,
+        status: "success",
+      }).catch(() => {});
+    }
     return Response.json({ ...input, added, skipped }, { headers: noCacheHeaders() });
   } catch (err) {
     return handleAuthError(err);
