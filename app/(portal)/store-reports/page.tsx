@@ -413,6 +413,60 @@ export default function StoreReportsTestPage() {
     XLSX.writeFile(wb, "site-code-mapping.xlsx");
   }
 
+  // Export the engagement view (per-channel summary + full detail log) to Excel.
+  async function exportEngagement() {
+    if (!eng) return;
+    const XLSX = await import("xlsx");
+    const wb = XLSX.utils.book_new();
+
+    // Sheet 1 — per-channel summary with an Opened %/Used % and a totals row.
+    const summaryRows = eng.summary.map((s) => ({
+      "Channel": s.channel,
+      "Sent": s.sent,
+      "Opened": s.opened,
+      "Opened %": s.sent ? Math.round((s.opened / s.sent) * 100) : 0,
+      "Used": s.used,
+      "Used %": s.sent ? Math.round((s.used / s.sent) * 100) : 0,
+    }));
+    const totalOpened = eng.summary.reduce((a, s) => a + s.opened, 0);
+    const totalUsed = eng.summary.reduce((a, s) => a + s.used, 0);
+    summaryRows.push({
+      "Channel": "Total",
+      "Sent": eng.totalSent,
+      "Opened": totalOpened,
+      "Opened %": eng.totalSent ? Math.round((totalOpened / eng.totalSent) * 100) : 0,
+      "Used": totalUsed,
+      "Used %": eng.totalSent ? Math.round((totalUsed / eng.totalSent) * 100) : 0,
+    });
+    const wsSummary = XLSX.utils.json_to_sheet(summaryRows);
+    wsSummary["!cols"] = [{ wch: 22 }, { wch: 8 }, { wch: 8 }, { wch: 10 }, { wch: 8 }, { wch: 10 }];
+    XLSX.utils.book_append_sheet(wb, wsSummary, "Summary");
+
+    // Sheet 2 — the full detail log.
+    const detailRows = eng.detail.map((d) => ({
+      "Store": d.store,
+      "Site Code": d.siteCode,
+      "Channel": d.channel,
+      "Rep": d.repName || d.repEmail,
+      "Rep Email": d.repEmail,
+      "Sent At": d.sentAt,
+      "Opened": d.opened ? "Yes" : "No",
+      "Used": d.used ? "Yes" : "No",
+      "Card Clicks": d.cardClicks,
+      "Distinct Cards": d.distinctCards.length,
+      "Cards": d.distinctCards.join(", "),
+      "Test": d.test ? "Yes" : "",
+    }));
+    const wsDetail = XLSX.utils.json_to_sheet(detailRows);
+    wsDetail["!cols"] = [
+      { wch: 32 }, { wch: 12 }, { wch: 16 }, { wch: 24 }, { wch: 28 }, { wch: 22 },
+      { wch: 8 }, { wch: 8 }, { wch: 11 }, { wch: 13 }, { wch: 40 }, { wch: 6 },
+    ];
+    XLSX.utils.book_append_sheet(wb, wsDetail, "Detail");
+
+    XLSX.writeFile(wb, `engagement-${eng.day}.xlsx`);
+  }
+
   async function saveLink(perigeeCode: string, dispoCode: string) {
     if (!dispoCode.trim()) return;
     setCodeBusy(true); setCodeErr("");
@@ -1024,6 +1078,12 @@ export default function StoreReportsTestPage() {
               className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-sm font-medium text-[var(--color-text-muted)] hover:border-zinc-400 disabled:opacity-50">
               {engBusy ? "…" : "Refresh"}
             </button>
+            {eng && (eng.summary.length > 0 || eng.detail.length > 0) && (
+              <button onClick={exportEngagement}
+                className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-sm font-medium text-[var(--color-text)] hover:border-zinc-400">
+                ⬇ Export to Excel
+              </button>
+            )}
             {isSuperAdmin && (
               <>
                 <button onClick={() => sendDigest(false)} disabled={engBusy}
