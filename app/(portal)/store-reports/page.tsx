@@ -55,7 +55,7 @@ interface SyncSettings { enabled: boolean; channels: string[]; minIntervalSecond
 interface RunOutcome { siteCode: string; repEmail: string; store: string; status: string; actions?: number; detail?: string }
 interface RunResult { ok: boolean; armedPeriod: string | null; visitsSeen: number; sent: number; skipped: number; failed: number; dryRun: boolean; outcomes: RunOutcome[]; message?: string }
 interface EngSummary { channel: string; sent: number; opened: number; used: number }
-interface EngDetail { store: string; siteCode: string; channel: string; repName: string; repEmail: string; sentAt: string; opened: boolean; used: boolean; cardClicks: number; distinctCards: string[]; test: boolean }
+interface EngDetail { store: string; siteCode: string; channel: string; repName: string; repEmail: string; sentAt: string; opened: boolean; used: boolean; cardClicks: number; distinctCards: string[]; reportUrl: string; test: boolean }
 interface EngResult { day: string; summary: EngSummary[]; totalSent: number; detail: EngDetail[] }
 interface CodeRow { code: string; name?: string; status: "match" | "linked" | "format-diff" | "no-match"; dispoCode?: string; dispoName?: string; channel?: string; reason?: string }
 interface CodeMapping { perigeeCode: string; dispoCode: string }
@@ -455,12 +455,13 @@ export default function StoreReportsTestPage() {
       "Card Clicks": d.cardClicks,
       "Distinct Cards": d.distinctCards.length,
       "Cards": d.distinctCards.join(", "),
+      "Report Link": d.reportUrl,
       "Test": d.test ? "Yes" : "",
     }));
     const wsDetail = XLSX.utils.json_to_sheet(detailRows);
     wsDetail["!cols"] = [
       { wch: 32 }, { wch: 12 }, { wch: 16 }, { wch: 24 }, { wch: 28 }, { wch: 22 },
-      { wch: 8 }, { wch: 8 }, { wch: 11 }, { wch: 13 }, { wch: 40 }, { wch: 6 },
+      { wch: 8 }, { wch: 8 }, { wch: 11 }, { wch: 13 }, { wch: 40 }, { wch: 60 }, { wch: 6 },
     ];
     XLSX.utils.book_append_sheet(wb, wsDetail, "Detail");
 
@@ -1153,6 +1154,7 @@ export default function StoreReportsTestPage() {
                       <th className="px-3 py-2 text-center font-semibold">Opened</th>
                       <th className="px-3 py-2 text-center font-semibold">Used</th>
                       <th className="px-3 py-2 text-center font-semibold">Cards</th>
+                      <th className="px-3 py-2 text-center font-semibold">Report</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1164,6 +1166,12 @@ export default function StoreReportsTestPage() {
                         <td className="px-3 py-1.5 text-center">{d.opened ? "✓" : "—"}</td>
                         <td className="px-3 py-1.5 text-center">{d.used ? <span className="font-semibold text-green-600">✓</span> : "—"}</td>
                         <td className="px-3 py-1.5 text-center">{d.distinctCards.length}</td>
+                        <td className="px-3 py-1.5 text-center">
+                          {d.reportUrl ? (
+                            <a href={d.reportUrl} target="_blank" rel="noreferrer"
+                              className="font-medium text-[var(--color-primary)] hover:underline">Open</a>
+                          ) : "—"}
+                        </td>
                       </tr>
                     ))}
                   </tbody>

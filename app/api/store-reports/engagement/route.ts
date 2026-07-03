@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { requirePermission, requireRole, handleAuthError, noCacheHeaders } from "@/lib/auth";
 import { getTrackingDay, summariseByChannel, isOpened, isUsed, trackingDay } from "@/lib/storeReportTracking";
 import { runStoreReportDigest } from "@/lib/storeReportDigest";
+import { reportBaseUrl } from "@/lib/storeReportLoad";
 import { addLog } from "@/lib/activityLog";
 
 // Engagement detail log + per-channel summary for a day. The separate logging
@@ -14,6 +15,19 @@ export async function GET(req: NextRequest) {
     await requirePermission(req, "manage_store_reports");
     const day = new URL(req.url).searchParams.get("day") || trackingDay();
     const records = await getTrackingDay(day);
+
+    // Link to the actual report each rep was sent. We deliberately OMIT the
+    // tracking token (t/d) so a manager opening it from the grid doesn't inflate
+    // that rep's open/used stats. Period params pin the exact report when known
+    // (older records without them fall back to the site's latest period).
+    const base = reportBaseUrl(req.nextUrl.origin);
+    const buildReportUrl = (r: (typeof records)[number]): string => {
+      const p = new URLSearchParams({ site: r.siteCode });
+      if (r.year != null) p.set("year", String(r.year));
+      if (r.month != null) p.set("month", String(r.month));
+      if (r.week != null) p.set("week", String(r.week));
+      return `${base}/r?${p.toString()}`;
+    };
 
     const detail = records.map((r) => ({
       store: r.store || r.siteCode,
@@ -29,6 +43,7 @@ export async function GET(req: NextRequest) {
       cardClicks: r.cardClicks,
       distinctCards: r.distinctCards,
       firstOpenAt: r.firstOpenAt,
+      reportUrl: buildReportUrl(r),
       test: !!r.test,
     }));
     // Most recently active first.

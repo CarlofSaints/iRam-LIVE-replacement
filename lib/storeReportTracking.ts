@@ -27,6 +27,9 @@ export interface TrackRecord {
   repEmail: string;
   repName: string;
   sentAt: string;
+  year?: number;            // report period the send was for — used to rebuild the /r link
+  month?: number;
+  week?: number;
   test?: boolean;           // test sends are excluded from the manager digest
   opens: number;
   pageViews: number;
@@ -52,7 +55,8 @@ export async function getTrackingDay(day: string): Promise<TrackRecord[]> {
 
 export async function addTrackingSend(rec: {
   token: string; day: string; periodKey: string; siteCode: string; store: string;
-  channel: string; repEmail: string; repName: string; sentAt: string; test?: boolean;
+  channel: string; repEmail: string; repName: string; sentAt: string;
+  year?: number; month?: number; week?: number; test?: boolean;
 }): Promise<void> {
   const records = await getTrackingDay(rec.day);
   if (records.some((r) => r.token === rec.token)) return; // idempotent

@@ -203,6 +203,7 @@ export async function runStoreReportSync(opts: RunOptions): Promise<RunResult> {
       await addTrackingSend({
         token, day, periodKey: dedupKey, siteCode: v.siteCode, store,
         channel: report.subChannel, repEmail: v.repEmail, repName: v.repName, sentAt: new Date().toISOString(),
+        year: loaded.year, month: loaded.month, week: loaded.week,
       });
       await addSend({
         periodKey: dedupKey, siteCode: v.siteCode, storeName: store, repEmail: v.repEmail,

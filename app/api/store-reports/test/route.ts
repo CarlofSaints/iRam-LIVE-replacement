@@ -77,7 +77,8 @@ export async function POST(req: NextRequest) {
     await addTrackingSend({
       token, day, periodKey: `${loaded.year}-${String(loaded.month).padStart(2, "0")}-${loaded.week}`,
       siteCode, store, channel: loaded.report.subChannel, repEmail: session.email,
-      repName: session.name || "", sentAt: new Date().toISOString(), test: true,
+      repName: session.name || "", sentAt: new Date().toISOString(),
+      year: loaded.year, month: loaded.month, week: loaded.week, test: true,
     });
 
     addLog({
