@@ -349,12 +349,34 @@ function beacon(ev, card){
     else { fetch(u, {method:"GET", keepalive:true, mode:"no-cors"}).catch(function(){}); }
   }catch(e){}
 }
+// Send a tick / un-tick to the server so we have a record of what the rep claims
+// they actioned (weekly sheet + DISPO verification). Uses the same token as the
+// engagement beacon; the server derives rep/store/period from it.
+function claimBeacon(l, on){
+  try{
+    if(!M.track || !M.track.url) return;
+    var url = M.track.url.replace(/\\/track$/, "/claim");
+    var body = JSON.stringify({
+      t: M.track.token, d: M.track.day, on: on?1:0,
+      line: {
+        clientId:l.clientId, clientName:l.clientName, article:l.article, barcode:l.barcode,
+        description:l.description, categories:flaggedCats(l).map(function(c){return c.key;}),
+        soh:l.soh, dros:l.dros, daysCover:l.daysCover, prst:l.prst, statusClass:l.statusClass,
+        marginRiskRand:l.marginRiskRand, marginOppRand:l.marginOppRand
+      }
+    });
+    if(navigator.sendBeacon){ navigator.sendBeacon(url, body); }
+    else { fetch(url,{method:"POST",body:body,keepalive:true,mode:"no-cors",headers:{"Content-Type":"text/plain"}}).catch(function(){}); }
+  }catch(e){}
+}
 function setCat(k){ active=k; beacon("card", k); render(); }
 function toggleOpen(el){ el.parentElement.classList.toggle("open"); }
 function toggleSort(){ sortMode = sortMode==="urgent"?"az":"urgent"; document.getElementById("sortBtn").textContent = sortMode==="urgent"?"⇅ Most urgent":"⇅ A–Z"; render(); }
 function tick(id,on,box){
   if(on) ticks[id]=1; else delete ticks[id];
   localStorage.setItem(TKEY,JSON.stringify(ticks));
+  var _l = R.lines.find(function(x){return lineId(x)===id;});
+  if(_l) claimBeacon(_l, on);
   // When ticking ON, briefly show the checked tick + strikethrough in place,
   // then re-render (which moves it down to Completed). Feels less jarring than
   // an instant jump. Unticking re-renders immediately.
