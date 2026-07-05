@@ -18,6 +18,7 @@ import { getSyncSettings, recordLastRun, normaliseVisit, type SyncLastRun } from
 import { getTodayMassmartVisits } from "./sqlProxy";
 import { hasProcessedVisit, hasSent, addSend } from "./storeReportLog";
 import { loadStoreReport, formatGeneratedAt, storeReportLogos, reportBaseUrl } from "./storeReportLoad";
+import { signReportLink } from "./reportLink";
 import { renderStoreReportEmail } from "./storeReportEmail";
 import { sendStoreReportEmail } from "./email";
 import { addTrackingSend, trackingDay } from "./storeReportTracking";
@@ -186,7 +187,9 @@ export async function runStoreReportSync(opts: RunOptions): Promise<RunResult> {
       const token = uuid();
       const day = trackingDay();
       const base = reportBaseUrl(opts.origin);  // clean prod domain if configured
-      const params = new URLSearchParams({ site: v.siteCode, year: String(loaded.year), month: String(loaded.month), week: String(loaded.week), t: token, d: day });
+      // Signed, self-expiring token replaces the guessable site/period params.
+      const r = signReportLink({ site: v.siteCode, year: loaded.year, month: loaded.month, week: loaded.week });
+      const params = new URLSearchParams({ r, t: token, d: day });
       const reportUrl = `${base}/r?${params.toString()}`;
       const trackingPixelUrl = `${base}/api/store-reports/track?t=${token}&d=${day}&e=open`;
       const html = renderStoreReportEmail(report, {

@@ -106,12 +106,27 @@ export default function StoreReportsTestPage() {
   useEffect(() => { loadStores(""); /* eslint-disable-next-line */ }, []);
   useEffect(() => { if (clients.length) loadStores(clientId); /* eslint-disable-next-line */ }, [clientId]);
 
-  const previewUrl = useMemo(() => {
-    if (!siteCode) return "";
-    const p = new URLSearchParams({ site: siteCode });
-    if (clientId) p.set("clientId", clientId);
-    return `/r?${p.toString()}`;
-  }, [siteCode, clientId]);
+  async function openPreview() {
+    if (!siteCode) return;
+    // Report links are signed server-side, so ask the API for a fresh one.
+    const w = window.open("", "_blank");
+    try {
+      const p = new URLSearchParams({ site: siteCode });
+      if (clientId) p.set("clientId", clientId);
+      const res = await authFetch(`/api/store-reports/link?${p.toString()}`);
+      const d = await res.json().catch(() => ({}));
+      if (res.ok && d.url) {
+        if (w) w.location.href = d.url;
+        else window.open(d.url, "_blank");
+      } else {
+        if (w) w.close();
+        setError(d.error || "Could not build preview link");
+      }
+    } catch {
+      if (w) w.close();
+      setError("Network error");
+    }
+  }
 
   async function sendTest() {
     if (!siteCode) return;
@@ -632,18 +647,16 @@ export default function StoreReportsTestPage() {
         </div>
 
         <div className="mt-6 flex flex-wrap gap-3">
-          <a
-            href={previewUrl || undefined}
-            target="_blank"
-            rel="noreferrer"
-            aria-disabled={!siteCode}
-            onClick={(e) => { if (!siteCode) e.preventDefault(); }}
+          <button
+            type="button"
+            onClick={openPreview}
+            disabled={!siteCode}
             className={`rounded-lg border px-4 py-2 text-sm font-semibold ${
               siteCode
                 ? "border-[var(--color-border)] text-[var(--color-text)] hover:border-zinc-400"
                 : "border-zinc-200 text-zinc-300 cursor-not-allowed"}`}>
             Preview report ↗
-          </a>
+          </button>
           <button
             onClick={sendTest}
             disabled={!siteCode || sending}

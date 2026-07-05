@@ -3,6 +3,7 @@ import { requirePermission, requireRole, handleAuthError, noCacheHeaders } from 
 import { getTrackingDay, summariseByChannel, isOpened, isUsed, trackingDay } from "@/lib/storeReportTracking";
 import { runStoreReportDigest } from "@/lib/storeReportDigest";
 import { reportBaseUrl } from "@/lib/storeReportLoad";
+import { signReportLink } from "@/lib/reportLink";
 import { addLog } from "@/lib/activityLog";
 
 // Engagement detail log + per-channel summary for a day. The separate logging
@@ -22,11 +23,14 @@ export async function GET(req: NextRequest) {
     // (older records without them fall back to the site's latest period).
     const base = reportBaseUrl(req.nextUrl.origin);
     const buildReportUrl = (r: (typeof records)[number]): string => {
-      const p = new URLSearchParams({ site: r.siteCode });
-      if (r.year != null) p.set("year", String(r.year));
-      if (r.month != null) p.set("month", String(r.month));
-      if (r.week != null) p.set("week", String(r.week));
-      return `${base}/r?${p.toString()}`;
+      // Signed, self-expiring token (same scheme reps get) — no guessable params.
+      const token = signReportLink({
+        site: r.siteCode,
+        year: r.year != null ? r.year : undefined,
+        month: r.month != null ? r.month : undefined,
+        week: r.week != null ? r.week : undefined,
+      });
+      return `${base}/r?r=${token}`;
     };
 
     const detail = records.map((r) => ({

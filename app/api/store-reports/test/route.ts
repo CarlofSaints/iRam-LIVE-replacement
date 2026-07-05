@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { requirePermission, handleAuthError, noCacheHeaders } from "@/lib/auth";
 import { loadStoreReport, formatGeneratedAt, storeReportLogos, reportBaseUrl } from "@/lib/storeReportLoad";
+import { signReportLink } from "@/lib/reportLink";
 import { renderStoreReportEmail } from "@/lib/storeReportEmail";
 import { sendStoreReportEmail } from "@/lib/email";
 import { addLog } from "@/lib/activityLog";
@@ -45,15 +46,15 @@ export async function POST(req: NextRequest) {
 
     const token = uuid();
     const day = trackingDay();
-    const params = new URLSearchParams({
+    // Signed, self-expiring token replaces the guessable site/period params.
+    const r = signReportLink({
       site: siteCode,
-      year: String(loaded.year),
-      month: String(loaded.month),
-      week: String(loaded.week),
-      t: token,
-      d: day,
+      clientId: body.clientId || undefined,
+      year: loaded.year,
+      month: loaded.month,
+      week: loaded.week,
     });
-    if (body.clientId) params.set("clientId", body.clientId);
+    const params = new URLSearchParams({ r, t: token, d: day });
     const base = reportBaseUrl(req.nextUrl.origin);  // clean prod domain if configured
     const reportUrl = `${base}/r?${params.toString()}`;
     const trackingPixelUrl = `${base}/api/store-reports/track?t=${token}&d=${day}&e=open`;
