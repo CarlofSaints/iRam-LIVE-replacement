@@ -105,6 +105,7 @@ export function renderStoreReportPage(report: StoreReport, meta: StoreReportPage
   .item.leaving{background:#e9f6ee}
   .secttl{padding:18px 6px 2px;font:700 13px Arial;color:var(--grey)}
   .empty{padding:26px 16px;text-align:center;color:#9aa3ad;font-size:13px}
+  .disclaimer{margin:14px 16px 0;padding:13px 15px;background:#fff;border:1px solid var(--line);border-radius:10px;color:var(--grey);font-size:11.5px;line-height:1.65}
   .foot{text-align:center;color:#9aa3ad;font-size:11px;padding:22px 16px}
   .foot .logos{display:flex;justify-content:center;gap:18px;align-items:center;margin-bottom:10px}
   .foot img{height:24px}
@@ -138,6 +139,10 @@ export function renderStoreReportPage(report: StoreReport, meta: StoreReportPage
     <div class="listhead"><span id="countLbl"></span><span id="metricLbl"></span></div>
     <div id="list"></div>
     <div id="completedWrap"></div>
+  </div>
+  <div class="disclaimer">
+    This data comes from Massmart DISPO's and it is used to help show you what you need to do in the store.<br><br>
+    This report is not linked to the Massmart system. Clicking completed is just so you can track what you have completed, it does not affect the Massmart system.
   </div>
   <div class="foot">
     <div class="logos" id="logos"></div>
@@ -215,7 +220,9 @@ function visibleLines(){
 }
 
 function countFor(cat, cl){
-  return R.lines.filter(l=> (cl==="all"||l.clientId===cl) && (cat==="all"? flaggedCats(l).length : l.flags[cat])).length;
+  // Count only items still needing action (un-ticked) so each card counts DOWN
+  // as the rep ticks SKUs off, reaching 0 + green when the list is cleared.
+  return R.lines.filter(l=> (cl==="all"||l.clientId===cl) && !ticks[lineId(l)] && (cat==="all"? flaggedCats(l).length : l.flags[cat])).length;
 }
 function allTicked(cat, cl){
   const ls = R.lines.filter(l=> (cl==="all"||l.clientId===cl) && (cat==="all"? flaggedCats(l).length : l.flags[cat]));
@@ -230,8 +237,11 @@ function renderCards(){
     return '<div class="card '+(c.cls==="green"?"green":"")+(active===c.key?" sel":"")+(done?" done":"")+'" onclick="setCat(\\''+c.key+'\\')">'
       + '<div class="n">'+n+'</div><div class="l">'+c.label+'</div></div>';
   }).join("");
-  const allN = R.lines.filter(l=> cl==="all"||l.clientId===cl).length;
-  const allCard = '<div class="card all '+(active==="all"?" sel":"")+'" onclick="setCat(\\'all\\')"><div class="n">'+allN+'</div><div class="l">All products</div></div>';
+  // "All products" = un-ticked actionable items (matches the All list) so it also
+  // counts down as the rep works through them.
+  const allN = countFor("all", cl);
+  const allDone = allTicked("all", cl);
+  const allCard = '<div class="card all '+(active==="all"?" sel":"")+(allDone?" done":"")+'" onclick="setCat(\\'all\\')"><div class="n">'+allN+'</div><div class="l">All products</div></div>';
   document.getElementById("cards").innerHTML = cards + allCard;
 }
 
