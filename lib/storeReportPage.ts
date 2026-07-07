@@ -276,7 +276,7 @@ function itemHtml(l){
     // exactly what to drop the shelf price to while still holding the margin.
     if(l.flags.marginOpp){
       marginCells +=
-        g("Current price (Incl VAT)", l.inclSP==null?"—":rands(l.inclSP)) +
+        g("Current price (Incl VAT)", l.sellPrice==null?"—":rands(l.sellPrice)) +
         g("STK Margin (now)", l.stkMargin==null?"—":pct(l.stkMargin)) +
         g("Prod. Margin (target)", l.prodMargin==null?"—":pct(l.prodMargin)) +
         g("RRP — drop-to price", l.rrp==null?"—":'<b style="color:var(--green)">'+rands(l.rrp)+'</b>');
@@ -415,7 +415,7 @@ const INFO = [
   ["#df332c","Phantom","On hand above 0 but no sale and no receipt in the last 3 months (blank/old dates count as stale). The system shows stock that may not be on the shelf — verify with a physical count."],
   ["#df332c","Status","Any SKU carrying a status flag on its store record (PR ST) — open the line to see whether that status is Positive or Negative (shown when we have a rule for it). Action anything negative; query the block or delist."],
   ["#df332c","Margin Risk","On hand above 0 and the store's cost (MAC) is higher than our cost (Nett) — margin eroded; we may owe support or free stock. At risk = on hand × (MAC − Nett)."],
-  ["#2e9e5b","Margin Opportunity","On hand above 0 and the store's cost (MAC) is below ours (Nett) — the store bought this stock cheaply, so they can drop the shelf price and still make their margin. STK Margin = what they make now on this stock; Prod. Margin = the standard target margin; RRP = the price you can advise them to drop to and still hold the product margin (MAC ÷ (1 − Prod. Margin) × 1.15). Upside = on hand × (Nett − MAC)."],
+  ["#2e9e5b","Margin Opportunity","On hand above 0 and the store's cost (MAC) is below ours (Nett) — the store bought this stock cheaply, so they can drop the shelf price and still make their margin. Both margins use the selling price minus VAT: Margin = (SP − Cost) ÷ SP. STK Margin uses the store's cost (MAC) = what they make now; Prod. Margin uses our cost (Nett) = the standard target. RRP = the price you can advise them to drop to and still hold the product margin: MAC ÷ (1 − Prod. Margin) × 1.15. Upside = on hand × (Nett − MAC)."],
 ];
 function buildInfo(){
   let h='<div class="note">An article can appear in more than one list when it matches several rules — its chips show the others (e.g. + Margin Risk). Tick it off in any list and it\\'s ticked off everywhere. A card turns <b style="color:#2e9e5b">green</b> once every item in its list is ticked.</div>';

@@ -26,7 +26,7 @@
    ────────────────────────────────────────────────────────────── */
 
 import type { StatusDefinition, StatusScenario } from "./types";
-import { classifyRowStatus, parseDispoDate, effectiveProdMargin, marginFraction, VAT_RATE } from "./monthEndReport";
+import { classifyRowStatus, parseDispoDate, VAT_RATE } from "./monthEndReport";
 
 type Row = Record<string, unknown>;
 
@@ -82,9 +82,9 @@ export interface StoreLine {
   marginOppRand: number | null;   // SOH × (Nett − MAC) when Nett > MAC
 
   // Margin-Opportunity pricing advice — what the rep tells the store manager.
-  inclSP: number | null;          // current shelf price (Incl VAT) from DISPO
-  stkMargin: number | null;       // margin on stock-on-hand (based on low MAC) — fraction
-  prodMargin: number | null;      // standard product margin (based on Nett) — fraction
+  sellPrice: number | null;       // effective selling price Incl VAT (Prom SP if > 0 else Incl SP)
+  stkMargin: number | null;       // (SPexVat − MAC) / SPexVat — margin on stock-on-hand — fraction
+  prodMargin: number | null;      // (SPexVat − Nett) / SPexVat — standard product margin — fraction
   rrp: number | null;             // recommended drop-to price (Incl VAT) that still holds prodMargin on MAC
 
   flags: StoreLineFlags;
@@ -288,14 +288,19 @@ export function buildStoreReport(
         }
       }
 
-      // Pricing advice for Margin Opportunity — same maths as Month-End's
-      // "Suggested SP (Incl VAT)". STK Margin = what they make now on cheap stock
-      // (high, because MAC is low); Prod. Margin = the standard target margin; RRP
-      // = the shelf price they can drop to and STILL hold the product margin on
-      // their MAC: MAC / (1 − Prod.Margin) × (1 + VAT).
+      // Pricing advice for Margin Opportunity. Both margins are computed straight
+      // from the ex-VAT selling price and the two costs (not the DISPO margin
+      // fields) so they're always available when we have MAC + Nett:
+      //   Margin = (SP − Cost) / SP,  SP = (Prom SP > 0 ? Prom SP : Incl SP) / (1 + VAT)
+      //   STK Margin uses MAC (store's cost); Prod. Margin uses Nett (our cost).
+      // RRP = the shelf price they can drop to and STILL hold Prod. Margin on their
+      // low MAC: MAC / (1 − Prod.Margin) × (1 + VAT).
       const inclSP = num(row["Incl SP"], NaN);
-      const stkMargin = marginFraction(row["Stock Margin"]);
-      const prodMargin = effectiveProdMargin(row).value;
+      const promSP = num(row["Prom SP"], NaN);
+      const sellIncl = !isNaN(promSP) && promSP > 0 ? promSP : inclSP;
+      const spExVat = !isNaN(sellIncl) && sellIncl > 0 ? sellIncl / (1 + VAT_RATE) : NaN;
+      const stkMargin = !isNaN(spExVat) && spExVat > 0 && !isNaN(mac) ? (spExVat - mac) / spExVat : null;
+      const prodMargin = !isNaN(spExVat) && spExVat > 0 && !isNaN(nett) ? (spExVat - nett) / spExVat : null;
       let rrp: number | null = null;
       if (flags.marginOpp && prodMargin != null && !isNaN(mac) && mac > 0 && 1 - prodMargin !== 0) {
         rrp = (mac / (1 - prodMargin)) * (1 + VAT_RATE);
@@ -337,7 +342,7 @@ export function buildStoreReport(
         nett: isNaN(nett) ? null : round2(nett),
         marginRiskRand: marginRiskRand === null ? null : round2(marginRiskRand),
         marginOppRand: marginOppRand === null ? null : round2(marginOppRand),
-        inclSP: isNaN(inclSP) ? null : round2(inclSP),
+        sellPrice: isNaN(sellIncl) ? null : round2(sellIncl),
         stkMargin: stkMargin,
         prodMargin: prodMargin,
         rrp: rrp === null ? null : round2(rrp),
