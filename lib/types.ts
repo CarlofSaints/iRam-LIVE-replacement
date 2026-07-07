@@ -107,6 +107,7 @@ export interface User {
   receiveStoreAlerts?: boolean;
   receiveProductAlerts?: boolean;  // gets missing-article (LINKS/PMF) validation emails on DISPO load
   receiveStoreReportDigest?: boolean;  // gets the daily store-report engagement digest
+  receiveActionReport?: boolean;       // gets the weekly rep action-claim spreadsheet (manager/CAM)
   // Client scoping — when non-empty, this user may only see data for these
   // client IDs (external "client" accounts). Empty/undefined = all clients.
   clientIds?: string[];

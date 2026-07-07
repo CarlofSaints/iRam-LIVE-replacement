@@ -238,6 +238,22 @@ export default function StoreReportsTestPage() {
     setTimeout(() => setEngMsg(""), 4000);
   }
 
+  // ── Weekly rep action report ──
+  const [actBusy, setActBusy] = useState(false);
+  const [actMsg, setActMsg] = useState("");
+  async function runActionReport(send: boolean) {
+    setActBusy(true); setActMsg("");
+    try {
+      const res = await authFetch("/api/store-reports/action-report", { method: send ? "POST" : "GET" });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok) {
+        if (send) setActMsg(d.emailed ? `Sent to ${d.recipients?.length ?? 0} manager(s) — ${d.totalClaims} action(s), ${d.suspect} suspect.` : (d.note || "Nothing sent."));
+        else setActMsg(`This week: ${d.totalClaims} action(s) from ${d.repCount} rep(s) · ${d.suspect} suspect · ${d.pending} pending · ${d.recipients?.length ?? 0} recipient(s).`);
+      } else setActMsg(d.error || "Failed");
+    } catch { setActMsg("Network error"); }
+    setActBusy(false);
+  }
+
   // ── Site code check ──
   const [codeText, setCodeText] = useState("");
   const [codeRes, setCodeRes] = useState<CodeCheck | null>(null);
@@ -1078,6 +1094,35 @@ export default function StoreReportsTestPage() {
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── Weekly rep action report ── */}
+      {canManage && (
+        <div className="mt-10 rounded-xl border border-[var(--color-border)] bg-white p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-bold text-[var(--color-text)]">Weekly Rep Action Report</h2>
+              <p className="mt-1 max-w-2xl text-sm text-[var(--color-text-muted)]">
+                Spreadsheet of what each rep ticked off as actioned (trailing 7 days), with a
+                Consistent / Suspect / Pending verdict once a fresh DISPO re-checks it. Emailed to
+                managers/CAMs with &ldquo;Receive weekly rep action report&rdquo; ticked, every Monday 07:00.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button onClick={() => runActionReport(false)} disabled={actBusy}
+                className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-sm font-medium text-[var(--color-text)] hover:border-zinc-400 disabled:opacity-50">
+                {actBusy ? "…" : "Dry run"}
+              </button>
+              {isSuperAdmin && (
+                <button onClick={() => runActionReport(true)} disabled={actBusy}
+                  className="rounded-lg bg-[var(--color-primary)] px-3 py-1.5 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)] disabled:opacity-40">
+                  Send now
+                </button>
+              )}
+            </div>
+          </div>
+          {actMsg && <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm text-blue-700">{actMsg}</div>}
         </div>
       )}
 

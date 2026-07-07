@@ -304,6 +304,57 @@ export async function sendStoreReportDigestEmail(params: {
   });
 }
 
+// Weekly rep action-report — the claimed-actions spreadsheet to managers/CAMs.
+export async function sendActionReportEmail(params: {
+  to: string[];
+  rangeLabel: string;         // e.g. "30 Jun to 06 Jul 2026"
+  totalClaims: number;
+  repCount: number;
+  suspect: number;
+  filename: string;
+  content: Buffer;
+}): Promise<void> {
+  if (params.to.length === 0) return;
+  const resend = getResend();
+  const suspectNote = params.suspect > 0
+    ? `<p style="font-size:14px;color:#C53030;margin:0 0 8px;font-weight:600;">${params.suspect} claim(s) flagged SUSPECT — a later DISPO doesn't back up the action. See the highlighted rows in the Detail sheet.</p>`
+    : "";
+
+  await resend.emails.send({
+    from: FROM,
+    to: params.to,
+    subject: `Weekly Rep Action Report — ${params.rangeLabel} — ${params.totalClaims} actions`,
+    html: `
+      <div style="font-family:Arial,Helvetica,sans-serif;max-width:600px;margin:0 auto;background:#ffffff;">
+        <div style="background:#1C3D5A;padding:24px 32px;text-align:center;border-radius:8px 8px 0 0;">
+          <h1 style="color:#ffffff;font-size:20px;margin:0;font-weight:700;">Weekly Rep Action Report</h1>
+          <p style="color:rgba(255,255,255,0.9);font-size:13px;margin:6px 0 0;">${params.rangeLabel}</p>
+        </div>
+        <div style="padding:28px 32px;border:1px solid #E2E8F0;border-top:none;border-radius:0 0 8px 8px;">
+          <p style="font-size:15px;color:#2D3748;margin:0 0 14px;">
+            <strong>${params.totalClaims}</strong> action${params.totalClaims === 1 ? "" : "s"} claimed by
+            <strong>${params.repCount}</strong> rep${params.repCount === 1 ? "" : "s"} this week.
+          </p>
+          ${suspectNote}
+          <p style="font-size:13px;color:#4A5568;margin:0 0 8px;line-height:1.6;">
+            The attached spreadsheet lists every SKU each rep ticked off as actioned, with a verdict
+            once a fresh DISPO has been loaded to check it (Consistent / Suspect / Inconclusive / Pending).
+          </p>
+          <p style="font-size:12px;color:#A0AEC0;margin:14px 0 0;line-height:1.6;">
+            Note: reps tick items on their store report to track their own work — it does not write back to
+            any Massmart system. "Suspect" just means the next DISPO didn't confirm the action; allow for
+            paperwork lag (the day-gap is shown) before following up.
+          </p>
+          <div style="margin-top:24px;padding-top:18px;border-top:1px solid #E2E8F0;text-align:center;">
+            <p style="font-size:12px;color:#A0AEC0;margin:0;">Powered by <strong style="color:#718096;">OuterJoin</strong></p>
+          </div>
+        </div>
+      </div>
+    `,
+    attachments: [{ filename: params.filename, content: params.content }],
+  });
+}
+
 export async function sendPasswordResetEmail(params: {
   to: string;
   name: string;

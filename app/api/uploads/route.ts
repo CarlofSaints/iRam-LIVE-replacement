@@ -316,6 +316,28 @@ export async function POST(req: NextRequest) {
         clientName: client.name,
       });
 
+      // Fire-and-forget: verify rep action-claims against this fresh DISPO
+      // (e.g. a claimed Phantom write-off should show SOH → 0). Best-effort;
+      // never fail the upload. Uses the full parsed file so every site/article
+      // in the load is available regardless of channel×vendor split.
+      (async () => {
+        try {
+          const { verifyClaimsAgainstDispo } = await import("@/lib/storeReportVerify");
+          const v = await verifyClaimsAgainstDispo({ clientId, rows: result.rows });
+          if (v.checked > 0) {
+            await addLog({
+              userId: session.userId,
+              userName: session.name,
+              action: "verify_action_claims",
+              details: `Verified ${v.checked} rep action-claim(s) for ${client.name} against the new DISPO: ${v.consistent} consistent, ${v.suspect} suspect, ${v.inconclusive} inconclusive.`,
+              status: "success",
+              clientId: client.id,
+              clientName: client.name,
+            });
+          }
+        } catch { /* never fail the upload */ }
+      })();
+
       // Fire-and-forget: detect new status codes, attributed to each split
       // group's own channel so Walmart codes attach to Walmart, etc.
       (async () => {

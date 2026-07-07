@@ -13,7 +13,7 @@ export default function UsersPage() {
   const [clients, setClients] = useState<{ id: string; name: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ name: "", email: "", password: "", role: "cam", forcePasswordChange: true, receiveStoreAlerts: false, receiveProductAlerts: false, receiveStoreReportDigest: false, clientIds: [] as string[] });
+  const [form, setForm] = useState({ name: "", email: "", password: "", role: "cam", forcePasswordChange: true, receiveStoreAlerts: false, receiveProductAlerts: false, receiveStoreReportDigest: false, receiveActionReport: false, clientIds: [] as string[] });
   const [error, setError] = useState("");
   const [editId, setEditId] = useState<string | null>(null);
 
@@ -147,7 +147,7 @@ export default function UsersPage() {
     })();
   }, []);
 
-  const blankForm = { name: "", email: "", password: "", role: "cam", forcePasswordChange: true, receiveStoreAlerts: false, receiveProductAlerts: false, receiveStoreReportDigest: false, clientIds: [] as string[] };
+  const blankForm = { name: "", email: "", password: "", role: "cam", forcePasswordChange: true, receiveStoreAlerts: false, receiveProductAlerts: false, receiveStoreReportDigest: false, receiveActionReport: false, clientIds: [] as string[] };
   const toggleFormClient = (id: string) =>
     setForm((f) => ({ ...f, clientIds: f.clientIds.includes(id) ? f.clientIds.filter((c) => c !== id) : [...f.clientIds, id] }));
 
@@ -171,7 +171,7 @@ export default function UsersPage() {
 
   function startEdit(u: UserSafe) {
     setEditId(u.id);
-    setForm({ name: u.name, email: u.email, password: "", role: u.role, forcePasswordChange: u.forcePasswordChange, receiveStoreAlerts: u.receiveStoreAlerts ?? false, receiveProductAlerts: u.receiveProductAlerts ?? false, receiveStoreReportDigest: u.receiveStoreReportDigest ?? false, clientIds: u.clientIds ?? [] });
+    setForm({ name: u.name, email: u.email, password: "", role: u.role, forcePasswordChange: u.forcePasswordChange, receiveStoreAlerts: u.receiveStoreAlerts ?? false, receiveProductAlerts: u.receiveProductAlerts ?? false, receiveStoreReportDigest: u.receiveStoreReportDigest ?? false, receiveActionReport: u.receiveActionReport ?? false, clientIds: u.clientIds ?? [] });
     setShowForm(true);
     setError("");
   }
@@ -226,6 +226,10 @@ export default function UsersPage() {
             <label className="col-span-2 flex items-center gap-2 text-sm">
               <input type="checkbox" checked={form.receiveStoreReportDigest} onChange={(e) => setForm({ ...form, receiveStoreReportDigest: e.target.checked })} />
               Receive daily store-report digest (manager)
+            </label>
+            <label className="col-span-2 flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={form.receiveActionReport} onChange={(e) => setForm({ ...form, receiveActionReport: e.target.checked })} />
+              Receive weekly rep action report (manager/CAM)
             </label>
 
             {/* Client scoping — restrict this account to specific clients */}

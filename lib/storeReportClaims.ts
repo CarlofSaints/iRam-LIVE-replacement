@@ -76,10 +76,29 @@ export async function getClaims(day: string): Promise<StoreReportClaim[]> {
   return readJson<StoreReportClaim[]>(claimFileKey(day), []);
 }
 
+export async function saveClaims(day: string, claims: StoreReportClaim[]): Promise<void> {
+  await writeJson(claimFileKey(day), claims);
+}
+
 // Load claims across several send-days (weekly sheet / verification sweeps).
 export async function getClaimsForDays(days: string[]): Promise<StoreReportClaim[]> {
   const all = await Promise.all(days.map((d) => getClaims(d)));
   return all.flat();
+}
+
+// Trailing n send-days (SAST) as YYYY-MM-DD strings, newest first. Claims are
+// filed by send-day, so this bounds the weekly sheet / verification window
+// without listing the blob store.
+export function recentClaimDays(n: number, from: Date = new Date()): string[] {
+  const days: string[] = [];
+  for (let i = 0; i < n; i++) {
+    days.push(dayString(new Date(from.getTime() - i * 86400000)));
+  }
+  return days;
+}
+
+function dayString(d: Date): string {
+  return d.toLocaleDateString("en-CA", { timeZone: "Africa/Johannesburg" });
 }
 
 export interface ClaimInput {
