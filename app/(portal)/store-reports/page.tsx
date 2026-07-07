@@ -254,6 +254,35 @@ export default function StoreReportsTestPage() {
     setActBusy(false);
   }
 
+  // ── Rep actions + verification (surfaced claims) ──
+  type ClaimRow = {
+    repName: string; repEmail: string; store: string; siteCode: string; clientName: string;
+    article: string; description: string; categories: string[]; soh: number; claimedAt: string;
+    verdict: "consistent" | "suspect" | "inconclusive" | "pending"; newSoh: number | null; gapDays: number | null; note: string;
+  };
+  type ClaimsData = { window: number; summary: { total: number; consistent: number; suspect: number; inconclusive: number; pending: number }; claims: ClaimRow[] };
+  const [claimsWin, setClaimsWin] = useState(14);
+  const [claimsData, setClaimsData] = useState<ClaimsData | null>(null);
+  const [claimsBusy, setClaimsBusy] = useState(false);
+  const [claimFilter, setClaimFilter] = useState<ClaimRow["verdict"] | "all">("all");
+  async function loadClaims(win: number) {
+    setClaimsBusy(true);
+    try {
+      const res = await authFetch(`/api/store-reports/claims?window=${win}`);
+      const d = await res.json().catch(() => null);
+      setClaimsData(res.ok && d ? d : null);
+    } catch { setClaimsData(null); }
+    setClaimsBusy(false);
+  }
+  useEffect(() => { if (canManage) loadClaims(claimsWin); /* eslint-disable-next-line */ }, [claimsWin, canManage]);
+
+  const CAT_LABELS: Record<string, string> = { oos: "Out of Stock", lowCover: "Low Stock Cover", phantom: "Phantom", status: "Status", marginRisk: "Margin Risk", marginOpp: "Margin Opportunity" };
+  const VERDICT_STYLE: Record<string, string> = {
+    suspect: "bg-red-100 text-red-700", consistent: "bg-green-100 text-green-700",
+    inconclusive: "bg-amber-100 text-amber-700", pending: "bg-zinc-100 text-zinc-500",
+  };
+  const VERDICT_LABEL: Record<string, string> = { suspect: "Suspect", consistent: "Consistent", inconclusive: "Inconclusive", pending: "Pending" };
+
   // ── Site code check ──
   const [codeText, setCodeText] = useState("");
   const [codeRes, setCodeRes] = useState<CodeCheck | null>(null);
@@ -1123,6 +1152,75 @@ export default function StoreReportsTestPage() {
             </div>
           </div>
           {actMsg && <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm text-blue-700">{actMsg}</div>}
+
+          {/* Surfaced claims + verification verdicts */}
+          <div className="mt-5 border-t border-[var(--color-border)] pt-4">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2">
+                {(["all", "suspect", "pending", "inconclusive", "consistent"] as const).map((k) => {
+                  const n = k === "all" ? (claimsData?.summary.total ?? 0) : (claimsData?.summary[k] ?? 0);
+                  const on = claimFilter === k;
+                  const tone = k === "suspect" ? "border-red-300 text-red-700" : k === "consistent" ? "border-green-300 text-green-700" : k === "inconclusive" ? "border-amber-300 text-amber-700" : "border-[var(--color-border)] text-[var(--color-text)]";
+                  return (
+                    <button key={k} onClick={() => setClaimFilter(k)}
+                      className={`rounded-full border px-3 py-1 text-xs font-semibold ${tone} ${on ? "ring-2 ring-blue-400" : ""}`}>
+                      {k === "all" ? "All" : VERDICT_LABEL[k]}: {n}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="flex items-center gap-2">
+                <select value={claimsWin} onChange={(e) => setClaimsWin(Number(e.target.value))}
+                  className="rounded-lg border border-[var(--color-border)] bg-white px-2 py-1 text-sm">
+                  <option value={7}>Last 7 days</option>
+                  <option value={14}>Last 14 days</option>
+                  <option value={30}>Last 30 days</option>
+                </select>
+                <button onClick={() => loadClaims(claimsWin)} disabled={claimsBusy}
+                  className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-sm font-medium text-[var(--color-text-muted)] hover:border-zinc-400 disabled:opacity-50">
+                  {claimsBusy ? "…" : "Refresh"}
+                </button>
+              </div>
+            </div>
+
+            {(() => {
+              const rows = (claimsData?.claims ?? []).filter((c) => claimFilter === "all" || c.verdict === claimFilter);
+              if (!claimsData || rows.length === 0) {
+                return <div className="rounded-lg border border-dashed border-[var(--color-border)] px-4 py-8 text-center text-sm text-[var(--color-text-muted)]">
+                  {claimsBusy ? "Loading…" : "No rep actions to show for this period."}
+                </div>;
+              }
+              return (
+                <div className="overflow-x-auto rounded-xl border border-[var(--color-border)] bg-white">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-zinc-50 text-xs uppercase text-[var(--color-text-muted)]">
+                      <tr>
+                        <th className="px-3 py-2">Rep</th><th className="px-3 py-2">Store</th><th className="px-3 py-2">Client</th>
+                        <th className="px-3 py-2">Article</th><th className="px-3 py-2">Action(s)</th>
+                        <th className="px-3 py-2">Verdict</th><th className="px-3 py-2 text-right">SOH→New</th>
+                        <th className="px-3 py-2 text-right">Gap</th><th className="px-3 py-2">Notes</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((c, i) => (
+                        <tr key={i} className="border-t border-[var(--color-border)] align-top">
+                          <td className="px-3 py-2 font-medium text-[var(--color-text)]">{c.repName || "—"}</td>
+                          <td className="px-3 py-2">{c.store}</td>
+                          <td className="px-3 py-2">{c.clientName}</td>
+                          <td className="px-3 py-2"><div className="font-medium">{c.article}</div><div className="text-xs text-[var(--color-text-muted)]">{c.description}</div></td>
+                          <td className="px-3 py-2 text-xs">{c.categories.map((x) => CAT_LABELS[x] || x).join(", ")}</td>
+                          <td className="px-3 py-2"><span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${VERDICT_STYLE[c.verdict]}`}>{VERDICT_LABEL[c.verdict]}</span></td>
+                          <td className="px-3 py-2 text-right whitespace-nowrap">{c.soh}{c.newSoh != null ? ` → ${c.newSoh}` : ""}</td>
+                          <td className="px-3 py-2 text-right">{c.gapDays != null ? `${c.gapDays}d` : "—"}</td>
+                          <td className="px-3 py-2 text-xs text-[var(--color-text-muted)] max-w-xs">{c.note}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
+          </div>
         </div>
       )}
 
