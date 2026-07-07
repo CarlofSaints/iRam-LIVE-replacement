@@ -97,6 +97,7 @@ export function renderStoreReportPage(report: StoreReport, meta: StoreReportPage
   .detail{display:none;padding:0 14px 16px 42px}
   .item.open .detail{display:block}
   .alert{background:var(--redbg);color:#b23b35;border-radius:8px;padding:11px 12px;font-weight:600;font-size:13.5px;display:flex;gap:8px;align-items:center}
+  .alert.g{background:#e9f6ee;color:#256a41;margin-top:12px}
   .grid{margin-top:12px;border:1px solid var(--line);border-radius:10px;padding:14px;display:grid;grid-template-columns:repeat(3,1fr);gap:14px 10px}
   .g .k{color:var(--grey);font-size:11px}.g .val{font-weight:600;font-size:14px;margin-top:2px}
   .item.tick .nm{text-decoration:line-through;color:#9aa3ad}
@@ -179,6 +180,7 @@ try { ticks = JSON.parse(localStorage.getItem(TKEY) || "{}"); } catch(e){}
 function lineId(l){ return l.clientId + "|" + l.article; }
 function rands(n){ return "R " + Number(n).toLocaleString("en-ZA", {minimumFractionDigits:2, maximumFractionDigits:2}); }
 function fmt(n){ return (Math.round(n*100)/100).toLocaleString("en-ZA"); }
+function pct(n){ return (Math.round(n*1000)/10).toLocaleString("en-ZA") + "%"; }
 
 function flaggedCats(l){ return CATS.filter(c => l.flags[c.key]); }
 function metricFor(l, cat){
@@ -260,6 +262,7 @@ function itemHtml(l){
   // Margin breakdown (only when a margin flag fires) — shows how the at-risk /
   // upside amount is derived: SOH × |MAC − Nett|.
   var marginCells = "";
+  var pricingCallout = "";
   if(l.flags.marginRisk || l.flags.marginOpp){
     var isRisk = l.flags.marginRisk;
     var deltaUnit = (l.mac!=null && l.nett!=null) ? (isRisk ? l.mac - l.nett : l.nett - l.mac) : null;
@@ -269,6 +272,19 @@ function itemHtml(l){
       g("Nett cost (ours)", l.nett==null?"—":rands(l.nett)) +
       g(isRisk?"Delta (MAC − Nett)":"Delta (Nett − MAC)", deltaUnit==null?"—":rands(deltaUnit)+" /unit") +
       g(isRisk?"At risk (Δ × "+fmt(l.soh)+" SOH)":"Upside (Δ × "+fmt(l.soh)+" SOH)", totalRand==null?"—":rands(totalRand));
+    // Margin Opportunity — pricing advice so the rep can tell the store manager
+    // exactly what to drop the shelf price to while still holding the margin.
+    if(l.flags.marginOpp){
+      marginCells +=
+        g("Current price (Incl VAT)", l.inclSP==null?"—":rands(l.inclSP)) +
+        g("STK Margin (now)", l.stkMargin==null?"—":pct(l.stkMargin)) +
+        g("Prod. Margin (target)", l.prodMargin==null?"—":pct(l.prodMargin)) +
+        g("RRP — drop-to price", l.rrp==null?"—":'<b style="color:var(--green)">'+rands(l.rrp)+'</b>');
+      if(l.rrp!=null){
+        var holds = l.prodMargin==null ? "" : " and still hold the "+pct(l.prodMargin)+" product margin";
+        pricingCallout = '<div class="alert g">💡 Advise the store: drop the shelf price to <b>'+rands(l.rrp)+'</b>'+holds+'.</div>';
+      }
+    }
   }
   return '<div class="item'+(ticked?" tick":"")+'" data-id="'+esc(id)+'">'
     + '<div class="row" onclick="toggleOpen(this)">'
@@ -289,6 +305,7 @@ function itemHtml(l){
         + g("RP type", esc(l.rpType||"—"))
         + marginCells
       + '</div>'
+      + pricingCallout
     + '</div>'
   + '</div>';
 }
@@ -398,7 +415,7 @@ const INFO = [
   ["#df332c","Phantom","On hand above 0 but no sale and no receipt in the last 3 months (blank/old dates count as stale). The system shows stock that may not be on the shelf — verify with a physical count."],
   ["#df332c","Status","Any SKU carrying a status flag on its store record (PR ST) — open the line to see whether that status is Positive or Negative (shown when we have a rule for it). Action anything negative; query the block or delist."],
   ["#df332c","Margin Risk","On hand above 0 and the store's cost (MAC) is higher than our cost (Nett) — margin eroded; we may owe support or free stock. At risk = on hand × (MAC − Nett)."],
-  ["#2e9e5b","Margin Opportunity","On hand above 0 and the store's cost (MAC) is below ours (Nett) — drop the shelf price and hold margin, or push sales. Upside = on hand × (Nett − MAC)."],
+  ["#2e9e5b","Margin Opportunity","On hand above 0 and the store's cost (MAC) is below ours (Nett) — the store bought this stock cheaply, so they can drop the shelf price and still make their margin. STK Margin = what they make now on this stock; Prod. Margin = the standard target margin; RRP = the price you can advise them to drop to and still hold the product margin (MAC ÷ (1 − Prod. Margin) × 1.15). Upside = on hand × (Nett − MAC)."],
 ];
 function buildInfo(){
   let h='<div class="note">An article can appear in more than one list when it matches several rules — its chips show the others (e.g. + Margin Risk). Tick it off in any list and it\\'s ticked off everywhere. A card turns <b style="color:#2e9e5b">green</b> once every item in its list is ticked.</div>';

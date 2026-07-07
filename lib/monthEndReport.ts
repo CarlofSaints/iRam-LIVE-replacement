@@ -19,7 +19,7 @@ import { calcOpenToOrder } from "./vitalSigns";
 
 type Row = Record<string, unknown>;
 
-const VAT_RATE = 0.15;
+export const VAT_RATE = 0.15;
 const DATE_RE = /^(\d{2})-(\d{4})$/;
 
 function parseDateKey(col: string): { month: number; year: number } | null {
@@ -1079,7 +1079,7 @@ export function dataRowExtras(row: Row, ctx: DateContext): DataRowExtras {
 }
 
 // DISPO STK Margin may arrive as a fraction (0.47) or percentage points (47).
-function marginFraction(raw: unknown): number {
+export function marginFraction(raw: unknown): number {
   const v = parseNum(raw, 0);
   if (isNaN(v)) return 0;
   return Math.abs(v) > 1 ? v / 100 : v;

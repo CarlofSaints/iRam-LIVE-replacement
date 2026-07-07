@@ -26,7 +26,7 @@
    ────────────────────────────────────────────────────────────── */
 
 import type { StatusDefinition, StatusScenario } from "./types";
-import { classifyRowStatus, parseDispoDate } from "./monthEndReport";
+import { classifyRowStatus, parseDispoDate, effectiveProdMargin, marginFraction, VAT_RATE } from "./monthEndReport";
 
 type Row = Record<string, unknown>;
 
@@ -80,6 +80,12 @@ export interface StoreLine {
   nett: number | null;            // our Nett Cost
   marginRiskRand: number | null;  // SOH × (MAC − Nett) when MAC > Nett
   marginOppRand: number | null;   // SOH × (Nett − MAC) when Nett > MAC
+
+  // Margin-Opportunity pricing advice — what the rep tells the store manager.
+  inclSP: number | null;          // current shelf price (Incl VAT) from DISPO
+  stkMargin: number | null;       // margin on stock-on-hand (based on low MAC) — fraction
+  prodMargin: number | null;      // standard product margin (based on Nett) — fraction
+  rrp: number | null;             // recommended drop-to price (Incl VAT) that still holds prodMargin on MAC
 
   flags: StoreLineFlags;
 }
@@ -282,6 +288,19 @@ export function buildStoreReport(
         }
       }
 
+      // Pricing advice for Margin Opportunity — same maths as Month-End's
+      // "Suggested SP (Incl VAT)". STK Margin = what they make now on cheap stock
+      // (high, because MAC is low); Prod. Margin = the standard target margin; RRP
+      // = the shelf price they can drop to and STILL hold the product margin on
+      // their MAC: MAC / (1 − Prod.Margin) × (1 + VAT).
+      const inclSP = num(row["Incl SP"], NaN);
+      const stkMargin = marginFraction(row["Stock Margin"]);
+      const prodMargin = effectiveProdMargin(row).value;
+      let rrp: number | null = null;
+      if (flags.marginOpp && prodMargin != null && !isNaN(mac) && mac > 0 && 1 - prodMargin !== 0) {
+        rrp = (mac / (1 - prodMargin)) * (1 + VAT_RATE);
+      }
+
       if (flags.oos) counts.oos++;
       if (flags.lowCover) counts.lowCover++;
       if (flags.phantom) counts.phantom++;
@@ -318,6 +337,10 @@ export function buildStoreReport(
         nett: isNaN(nett) ? null : round2(nett),
         marginRiskRand: marginRiskRand === null ? null : round2(marginRiskRand),
         marginOppRand: marginOppRand === null ? null : round2(marginOppRand),
+        inclSP: isNaN(inclSP) ? null : round2(inclSP),
+        stkMargin: stkMargin,
+        prodMargin: prodMargin,
+        rrp: rrp === null ? null : round2(rrp),
         flags,
       });
     }
