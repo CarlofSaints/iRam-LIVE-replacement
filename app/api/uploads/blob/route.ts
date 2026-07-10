@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
-import { getSession, requirePermission, handleAuthError, noCacheHeaders } from "@/lib/auth";
+import { getSession, requirePermission, AuthError, noCacheHeaders } from "@/lib/auth";
 
 // Issues a short-lived token so the BROWSER can upload a DISPO straight to Vercel
 // Blob, bypassing the ~4.5MB serverless request-body limit that was failing large
@@ -45,9 +45,12 @@ export async function POST(req: NextRequest): Promise<Response> {
     });
     return Response.json(json);
   } catch (err) {
-    // Log the real cause (visible in Vercel function logs) — the client only ever
-    // sees a generic "Failed to retrieve the client token".
+    // Surface the REAL cause in the body (temporarily) — the blob client only
+    // shows a generic "Failed to retrieve the client token", and we need to see
+    // exactly what handleUpload threw.
     console.error("uploads/blob token error:", err);
-    return handleAuthError(err);
+    const status = err instanceof AuthError ? err.status : 500;
+    const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+    return Response.json({ error: message }, { status, headers: noCacheHeaders() });
   }
 }
