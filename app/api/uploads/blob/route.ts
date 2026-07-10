@@ -13,11 +13,17 @@ export const dynamic = "force-dynamic";
 // missing-env problem without reading server logs.
 export async function GET(req: NextRequest) {
   const session = getSession(req);
+  const tok = process.env.BLOB_READ_WRITE_TOKEN || "";
+  const parts = tok.split("_");
+  // Only shape info — prefix + counts, never the secret segment.
   return Response.json(
     {
       authed: !!session,
       role: session?.role ?? null,
-      hasBlobToken: !!process.env.BLOB_READ_WRITE_TOKEN,
+      hasBlobToken: !!tok,
+      tokenPrefix: tok.slice(0, 15),
+      tokenSegments: parts.length,
+      storeIdSegmentEmpty: !(parts[3] && parts[3].length > 0),
     },
     { headers: noCacheHeaders() },
   );
