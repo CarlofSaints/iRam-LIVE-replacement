@@ -14,6 +14,11 @@ import { requireLogin, requirePermission, noCacheHeaders, handleAuthError } from
 import { addLog } from "@/lib/activityLog";
 import type { FileType } from "@/lib/types";
 
+// Large DISPOs take real time to parse + merge. Give the function headroom so a
+// big file finishes instead of timing out (which the browser sees as a failure).
+export const maxDuration = 300;
+export const dynamic = "force-dynamic";
+
 export interface MissingArticleDetail {
   article: string;
   articleDesc: string;

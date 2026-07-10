@@ -127,7 +127,20 @@ export default function DataLoadPage() {
           force,
         }),
       });
-      const data = await res.json();
+      // A timed-out / oversized response may not be JSON — surface the real
+      // status instead of a generic "Network error".
+      const data = await res.json().catch(() => null);
+      if (!data) {
+        setResult({
+          ok: false,
+          message: res.status === 504 || res.status === 408
+            ? `The file was too large to process in time (HTTP ${res.status}). Try splitting the DISPO, or let us know so we can raise the limit.`
+            : `Upload failed (HTTP ${res.status}).`,
+        });
+        setStep("result");
+        setUploading(false);
+        return;
+      }
 
       if (data.needsConfirmation) {
         // Server returned validation warnings — ask the user
@@ -157,8 +170,9 @@ export default function DataLoadPage() {
           message: data.error || "Upload failed",
         });
       }
-    } catch {
-      setResult({ ok: false, message: "Network error" });
+    } catch (e) {
+      // Blob upload or network failure lands here — show the actual reason.
+      setResult({ ok: false, message: e instanceof Error ? `Upload failed: ${e.message}` : "Network error" });
     }
 
     setStep("result");

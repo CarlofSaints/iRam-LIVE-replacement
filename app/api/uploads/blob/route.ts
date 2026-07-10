@@ -18,13 +18,10 @@ export async function POST(req: NextRequest): Promise<Response> {
         // Same permission the upload API itself enforces. The browser's upload()
         // is a same-origin request, so the session cookie is present here.
         await requirePermission(req, "upload_data");
+        // Don't restrict content types — a browser can report an empty or odd
+        // MIME for .xlsx/.xls, which would wrongly reject the upload.
         return {
-          allowedContentTypes: [
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // .xlsx
-            "application/vnd.ms-excel", // .xls
-            "application/octet-stream",
-          ],
-          maximumSizeInBytes: 100 * 1024 * 1024, // 100MB headroom
+          maximumSizeInBytes: 200 * 1024 * 1024, // 200MB headroom
           addRandomSuffix: true,
         };
       },
