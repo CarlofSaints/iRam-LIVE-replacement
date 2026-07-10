@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { del } from "@vercel/blob";
 import { getUploadIndex, getUploadsByClient, addUpload } from "@/lib/uploadData";
 import { getClientById } from "@/lib/clientData";
 import { getChannelById, getChannels } from "@/lib/channelData";
@@ -35,20 +36,62 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  // A large DISPO is uploaded by the browser straight to Blob, then this route
+  // is called with JSON { blobUrl, ... }. We fetch + parse it, then delete the
+  // temp blob (unless we're mid-confirmation and expect a follow-up force call).
+  let tempBlobUrl: string | null = null;
+  let keepBlob = false;
   try {
     const session = await requirePermission(req, "upload_data");
 
-    const formData = await req.formData();
-    const file = formData.get("file") as File | null;
-    const clientId = formData.get("clientId") as string | null;
-    const channelId = formData.get("channelId") as string | null;
-    const fileType = formData.get("fileType") as FileType | null;
-    const reportYear = formData.get("reportYear") ? Number(formData.get("reportYear")) : undefined;
-    const reportMonth = formData.get("reportMonth") ? Number(formData.get("reportMonth")) : undefined;
-    const reportWeek = formData.get("reportWeek") ? Number(formData.get("reportWeek")) : undefined;
-    const force = formData.get("force") === "true";
+    const contentType = req.headers.get("content-type") || "";
+    let buffer: Buffer;
+    let fileName: string;
+    let clientId: string | null;
+    let channelId: string | null;
+    let fileType: FileType | null;
+    let reportYear: number | undefined;
+    let reportMonth: number | undefined;
+    let reportWeek: number | undefined;
+    let force: boolean;
 
-    if (!file || !clientId || !channelId || !fileType) {
+    if (contentType.includes("application/json")) {
+      const body = await req.json();
+      tempBlobUrl = typeof body.blobUrl === "string" ? body.blobUrl : null;
+      clientId = body.clientId ?? null;
+      channelId = body.channelId ?? null;
+      fileType = (body.fileType ?? null) as FileType | null;
+      fileName = String(body.fileName || "upload.xlsx");
+      reportYear = body.reportYear != null && body.reportYear !== "" ? Number(body.reportYear) : undefined;
+      reportMonth = body.reportMonth != null && body.reportMonth !== "" ? Number(body.reportMonth) : undefined;
+      reportWeek = body.reportWeek != null && body.reportWeek !== "" ? Number(body.reportWeek) : undefined;
+      force = body.force === true || body.force === "true";
+      if (!tempBlobUrl) {
+        return Response.json({ error: "Missing uploaded file reference" }, { status: 400, headers: noCacheHeaders() });
+      }
+      const r = await fetch(tempBlobUrl);
+      if (!r.ok) {
+        return Response.json({ error: "Could not read the uploaded file — please try again" }, { status: 400, headers: noCacheHeaders() });
+      }
+      buffer = Buffer.from(await r.arrayBuffer());
+    } else {
+      const formData = await req.formData();
+      const file = formData.get("file") as File | null;
+      clientId = formData.get("clientId") as string | null;
+      channelId = formData.get("channelId") as string | null;
+      fileType = formData.get("fileType") as FileType | null;
+      reportYear = formData.get("reportYear") ? Number(formData.get("reportYear")) : undefined;
+      reportMonth = formData.get("reportMonth") ? Number(formData.get("reportMonth")) : undefined;
+      reportWeek = formData.get("reportWeek") ? Number(formData.get("reportWeek")) : undefined;
+      force = formData.get("force") === "true";
+      if (!file) {
+        return Response.json({ error: "File, clientId, channelId, and fileType are required" }, { status: 400, headers: noCacheHeaders() });
+      }
+      fileName = file.name;
+      buffer = Buffer.from(await file.arrayBuffer());
+    }
+
+    if (!clientId || !channelId || !fileType) {
       return Response.json({ error: "File, clientId, channelId, and fileType are required" }, { status: 400, headers: noCacheHeaders() });
     }
 
@@ -63,8 +106,6 @@ export async function POST(req: NextRequest) {
 
     const channel = await getChannelById(channelId);
     if (!channel) return Response.json({ error: "Channel not found" }, { status: 404, headers: noCacheHeaders() });
-
-    const buffer = Buffer.from(await file.arrayBuffer());
 
     if (fileType === "dispo") {
       const result = parseDispo(buffer);
@@ -211,6 +252,9 @@ export async function POST(req: NextRequest) {
 
         await Promise.allSettled(emailPromises);
 
+        // Keep the temp blob so the follow-up "force" call can re-read it.
+        keepBlob = true;
+
         const parts: string[] = [];
         if (missingArticleDetails.length > 0) parts.push(`${missingArticleDetails.length} unrecognized article(s)`);
         if (missingSites.length > 0) parts.push(`${missingSites.length} unknown store(s)`);
@@ -262,7 +306,7 @@ export async function POST(req: NextRequest) {
             channelId: g.channel.id,
             channelName: g.channel.name,
             fileType: "dispo",
-            fileName: file.name,
+            fileName,
             uploadDate: new Date().toISOString(),
             uploadedBy: session.userId,
             uploadedByName: session.name,
@@ -396,5 +440,11 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: err.message }, { status: 400, headers: noCacheHeaders() });
     }
     return handleAuthError(err);
+  } finally {
+    // Clean up the browser-uploaded temp blob once we're done with it. Skipped
+    // when we returned needsConfirmation (the follow-up force call re-reads it).
+    if (tempBlobUrl && !keepBlob) {
+      try { await del(tempBlobUrl); } catch { /* best-effort cleanup */ }
+    }
   }
 }

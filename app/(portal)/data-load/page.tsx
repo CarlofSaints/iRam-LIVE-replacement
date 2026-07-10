@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
+import { upload } from "@vercel/blob/client";
 import { authFetch } from "@/lib/useAuth";
 import UploadZone from "@/components/UploadZone";
 import SearchSelect from "@/components/SearchSelect";
@@ -39,6 +40,8 @@ export default function DataLoadPage() {
 
   // Keep a ref to the uploaded file so we can re-submit with force=true
   const pendingFileRef = useRef<File | null>(null);
+  // Blob URL of the browser-uploaded file, reused across the confirm/force step.
+  const pendingBlobUrlRef = useRef<string | null>(null);
 
   const [confirmData, setConfirmData] = useState<{
     warning: string;
@@ -97,22 +100,32 @@ export default function DataLoadPage() {
   async function submitUpload(file: File, force: boolean) {
     setUploading(true);
 
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("clientId", clientId);
-    formData.append("channelId", channelId);
-    formData.append("fileType", fileType);
-    formData.append("reportYear", String(reportYear));
-    formData.append("reportMonth", String(reportMonth));
-    formData.append("reportWeek", String(reportWeek));
-    if (force) formData.append("force", "true");
-
     try {
+      // Upload the file straight to Vercel Blob from the browser so the big
+      // payload never hits the ~4.5MB serverless request-body limit (which was
+      // failing large DISPOs with "Network Error"). Done once; the confirm/force
+      // step reuses the same blob URL.
+      if (!pendingBlobUrlRef.current) {
+        const blob = await upload(file.name, file, {
+          access: "public",
+          handleUploadUrl: "/api/uploads/blob",
+        });
+        pendingBlobUrlRef.current = blob.url;
+      }
+
       const res = await authFetch("/api/uploads", {
         method: "POST",
-        body: formData,
-        rawBody: true,
-        headers: {},
+        body: JSON.stringify({
+          blobUrl: pendingBlobUrlRef.current,
+          fileName: file.name,
+          clientId,
+          channelId,
+          fileType,
+          reportYear,
+          reportMonth,
+          reportWeek,
+          force,
+        }),
       });
       const data = await res.json();
 
@@ -156,6 +169,7 @@ export default function DataLoadPage() {
     if (!clientId || !channelId) return;
     setResult(null);
     setConfirmData(null);
+    pendingBlobUrlRef.current = null; // fresh upload → new blob
     submitUpload(file, false);
   }
 
@@ -171,6 +185,7 @@ export default function DataLoadPage() {
     setResult(null);
     setConfirmData(null);
     pendingFileRef.current = null;
+    pendingBlobUrlRef.current = null;
   }
 
   if (loading) return <div className="p-8 text-sm text-[var(--color-text-muted)]">Loading...</div>;
