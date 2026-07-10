@@ -1,12 +1,27 @@
 import { NextRequest } from "next/server";
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
-import { requirePermission, handleAuthError } from "@/lib/auth";
+import { getSession, requirePermission, handleAuthError, noCacheHeaders } from "@/lib/auth";
 
 // Issues a short-lived token so the BROWSER can upload a DISPO straight to Vercel
 // Blob, bypassing the ~4.5MB serverless request-body limit that was failing large
 // files with a generic "Network Error". The follow-up POST /api/uploads then
 // fetches the blob URL server-side and parses it exactly as before.
 export const dynamic = "force-dynamic";
+
+// Diagnostic — open in the browser while logged in. Confirms the session is seen
+// here and that the Blob token is present, so we can tell an auth problem from a
+// missing-env problem without reading server logs.
+export async function GET(req: NextRequest) {
+  const session = getSession(req);
+  return Response.json(
+    {
+      authed: !!session,
+      role: session?.role ?? null,
+      hasBlobToken: !!process.env.BLOB_READ_WRITE_TOKEN,
+    },
+    { headers: noCacheHeaders() },
+  );
+}
 
 export async function POST(req: NextRequest): Promise<Response> {
   try {
@@ -18,18 +33,21 @@ export async function POST(req: NextRequest): Promise<Response> {
         // Same permission the upload API itself enforces. The browser's upload()
         // is a same-origin request, so the session cookie is present here.
         await requirePermission(req, "upload_data");
-        // Don't restrict content types — a browser can report an empty or odd
-        // MIME for .xlsx/.xls, which would wrongly reject the upload.
+        // No content-type restriction — browsers report inconsistent MIME for
+        // .xlsx/.xls. No onUploadCompleted callback: the file is processed by the
+        // follow-up /api/uploads call, and omitting it avoids a callback-URL step
+        // that can fail on some deployments.
         return {
           maximumSizeInBytes: 200 * 1024 * 1024, // 200MB headroom
           addRandomSuffix: true,
         };
       },
-      // The file is processed by the follow-up /api/uploads call, not here.
-      onUploadCompleted: async () => {},
     });
     return Response.json(json);
   } catch (err) {
+    // Log the real cause (visible in Vercel function logs) — the client only ever
+    // sees a generic "Failed to retrieve the client token".
+    console.error("uploads/blob token error:", err);
     return handleAuthError(err);
   }
 }
