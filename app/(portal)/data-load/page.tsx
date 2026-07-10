@@ -171,8 +171,24 @@ export default function DataLoadPage() {
         });
       }
     } catch (e) {
-      // Blob upload or network failure lands here — show the actual reason.
-      setResult({ ok: false, message: e instanceof Error ? `Upload failed: ${e.message}` : "Network error" });
+      let msg = e instanceof Error ? `Upload failed: ${e.message}` : "Upload failed: Network error";
+      // TEMP diagnostic: probe the token route the same way the blob client does,
+      // so the real HTTP status + server error surface here instead of the
+      // generic "Failed to retrieve the client token".
+      try {
+        const g = await authFetch("/api/uploads/blob");
+        const gtext = (await g.text()).slice(0, 140);
+        const p = await fetch("/api/uploads/blob", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ type: "blob.generate-client-token", payload: { pathname: "probe.xlsx", clientPayload: null, multipart: false } }),
+        });
+        const ptext = (await p.text()).slice(0, 200);
+        msg += `  ⟪diag GET ${g.status}: ${gtext} | tokenPOST ${p.status}: ${ptext}⟫`;
+      } catch (pe) {
+        msg += `  ⟪diag failed: ${pe instanceof Error ? pe.message : String(pe)}⟫`;
+      }
+      setResult({ ok: false, message: msg });
     }
 
     setStep("result");
