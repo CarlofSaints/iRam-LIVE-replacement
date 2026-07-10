@@ -13,9 +13,25 @@ export const dynamic = "force-dynamic";
 // missing-env problem without reading server logs.
 export async function GET(req: NextRequest) {
   const session = getSession(req);
+  if (session?.role !== "super_admin") {
+    return Response.json({ error: "super admin only" }, { status: 403, headers: noCacheHeaders() });
+  }
   const tok = process.env.BLOB_READ_WRITE_TOKEN || "";
   const parts = tok.split("_");
-  // Only shape info — prefix + counts, never the secret segment.
+  const blobEnvVars = Object.keys(process.env).filter((k) => /BLOB/i.test(k));
+
+  // Does this token actually work for normal server-side blob ops? (Settles
+  // whether it's a valid token the client path just can't parse, vs a bad env.)
+  let putTest = "not run";
+  try {
+    const { put, del } = await import("@vercel/blob");
+    const r = await put("live/_diag/ping.txt", "ok", { access: "public", addRandomSuffix: false, allowOverwrite: true });
+    putTest = `put OK -> ${r.pathname}`;
+    try { await del(r.url); } catch { /* ignore cleanup */ }
+  } catch (e) {
+    putTest = `put FAILED: ${e instanceof Error ? e.message : String(e)}`;
+  }
+
   return Response.json(
     {
       authed: !!session,
@@ -23,7 +39,8 @@ export async function GET(req: NextRequest) {
       hasBlobToken: !!tok,
       tokenPrefix: tok.slice(0, 15),
       tokenSegments: parts.length,
-      storeIdSegmentEmpty: !(parts[3] && parts[3].length > 0),
+      blobEnvVars,
+      putTest,
     },
     { headers: noCacheHeaders() },
   );
