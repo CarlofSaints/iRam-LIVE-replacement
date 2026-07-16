@@ -11,6 +11,7 @@
 import { getProductLookup } from "./productMasterData";
 import { getLinksLookup, normalizeArticle } from "./linksLookup";
 import { getStoreLookup } from "./storeLookup";
+import { normalizeSiteKey } from "./siteCode";
 import { getControlFileData } from "./controlFileData";
 import type { ProductMaster, StoreRecord } from "./types";
 
@@ -87,7 +88,9 @@ export function enrichLedgerRow(
   const siteRaw = row["Site"] ?? row["site"] ?? row["SITE"];
   if (siteRaw != null) {
     const siteKey = String(siteRaw).toLowerCase().trim();
-    const store = storeLookup.get(siteKey);
+    // Exact key first; fall back to the padding-agnostic key so an Excel-mangled
+    // site ("R001" → "R1") still resolves (storeLookup carries both).
+    const store = storeLookup.get(siteKey) ?? storeLookup.get(normalizeSiteKey(siteRaw));
     if (store) {
       enriched._province = store.province ?? "";
       enriched._townCity = store.townCity ?? "";

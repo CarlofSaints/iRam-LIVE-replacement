@@ -7,6 +7,7 @@ import { parseDispo } from "@/lib/dispoParser";
 import { mergeDispo } from "@/lib/salesData";
 import { getLinksLookup, normalizeArticle } from "@/lib/linksLookup";
 import { getMergedStores } from "@/lib/storeFileData";
+import { normalizeSiteKey } from "@/lib/siteCode";
 import { getCamById } from "@/lib/camData";
 import { getUsers } from "@/lib/userData";
 import { sendMissingProductsEmail, sendMissingStoresEmail } from "@/lib/email";
@@ -181,11 +182,44 @@ export async function POST(req: NextRequest) {
       // accept channel's store master.
       const mergedStores = await getMergedStores();
       const siteChannel = new Map<string, { id: string; name: string }>();
+      // Canonical store code by normalized key, so a DISPO site that Excel
+      // mangled into a Rand value ("R001" → "R1" / "R 1.00") can be repaired to
+      // the store master's real code before matching. Scoped to this load's
+      // channel group, exactly like siteChannel. Keys that map to more than one
+      // distinct store code are ambiguous (e.g. a master with both "R1" and
+      // "R001") and are skipped so we never repair a site to the wrong store.
+      const canonicalSiteByKey = new Map<string, string>();
+      const ambiguousSiteKeys = new Set<string>();
       for (const s of mergedStores) {
         const owner = acceptByName.get(s.channel.trim().toUpperCase());
-        if (owner && s.siteNum) siteChannel.set(s.siteNum.trim().toLowerCase(), owner);
+        if (owner && s.siteNum) {
+          siteChannel.set(s.siteNum.trim().toLowerCase(), owner);
+          const key = normalizeSiteKey(s.siteNum);
+          if (key) {
+            const existing = canonicalSiteByKey.get(key);
+            if (existing === undefined) canonicalSiteByKey.set(key, s.siteNum.trim());
+            else if (existing.toLowerCase() !== s.siteNum.trim().toLowerCase()) ambiguousSiteKeys.add(key);
+          }
+        }
       }
       const knownSites = new Set(siteChannel.keys());
+
+      // Repair Excel-mangled site codes in place against the store master before
+      // anything reads Site — so the corrected code flows through missing-site
+      // detection, the channel/vendor split, the ledger key (Article|Site) and
+      // store enrichment alike, with no change needed in those consumers.
+      let sitesRepaired = 0;
+      for (const row of result.rows) {
+        const current = String(row["Site"] ?? "").trim();
+        if (!current) continue;
+        const key = normalizeSiteKey(current);
+        if (!key || ambiguousSiteKeys.has(key)) continue;
+        const canonical = canonicalSiteByKey.get(key);
+        if (canonical && canonical.toLowerCase() !== current.toLowerCase()) {
+          row["Site"] = canonical;
+          sitesRepaired++;
+        }
+      }
 
       const missingSites: string[] = [];
       const seenSites = new Set<string>();
@@ -353,13 +387,16 @@ export async function POST(req: NextRequest) {
       const splitSuffix = perChannel.length > 1
         ? ` Split by channel×vendor: ${perChannel.map((p) => `${p.channel}/${p.vendor} ${p.rows}`).join(", ")}.`
         : "";
+      const repairSuffix = sitesRepaired > 0
+        ? ` Repaired ${sitesRepaired} Excel-mangled site code(s) against the store master.`
+        : "";
       const vendorLabel = result.vendorNumbers.length ? result.vendorNumbers.join("/") : result.vendorNumber;
 
       await addLog({
         userId: session.userId,
         userName: session.name,
         action: "upload_dispo",
-        details: `Uploaded DISPO for ${client.name} / ${mainChannelName} (${result.totalRows} rows, vendor(s) ${vendorLabel}). Ledger merge: ${mergeTotals.inserted} new, ${mergeTotals.updated} updated, ${mergeTotals.unchanged} unchanged.${splitSuffix}${logSuffix}`,
+        details: `Uploaded DISPO for ${client.name} / ${mainChannelName} (${result.totalRows} rows, vendor(s) ${vendorLabel}). Ledger merge: ${mergeTotals.inserted} new, ${mergeTotals.updated} updated, ${mergeTotals.unchanged} unchanged.${splitSuffix}${repairSuffix}${logSuffix}`,
         status: "success",
         clientId: client.id,
         clientName: client.name,
