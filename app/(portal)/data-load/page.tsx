@@ -22,6 +22,12 @@ interface HeaderCollision {
   dropped: { col: string; header: string }[];
 }
 
+// Vercel caps a serverless request body at ~4.5MB, so a DISPO above this goes
+// browser → Blob and only its URL is POSTed. Anything smaller takes the plain
+// multipart path: it is the long-proven one, and routing every file through
+// Blob meant a single failure there blocked ALL loads, not just large ones.
+const BLOB_THRESHOLD_BYTES = 4 * 1024 * 1024;
+
 export default function DataLoadPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
@@ -101,32 +107,51 @@ export default function DataLoadPage() {
     setUploading(true);
 
     try {
-      // Upload the file straight to Vercel Blob from the browser so the big
-      // payload never hits the ~4.5MB serverless request-body limit (which was
-      // failing large DISPOs with "Network Error"). Done once; the confirm/force
-      // step reuses the same blob URL.
-      if (!pendingBlobUrlRef.current) {
-        const blob = await upload(file.name, file, {
-          access: "public",
-          handleUploadUrl: "/api/uploads/blob",
-        });
-        pendingBlobUrlRef.current = blob.url;
-      }
+      let res: Response;
 
-      const res = await authFetch("/api/uploads", {
-        method: "POST",
-        body: JSON.stringify({
-          blobUrl: pendingBlobUrlRef.current,
-          fileName: file.name,
-          clientId,
-          channelId,
-          fileType,
-          reportYear,
-          reportMonth,
-          reportWeek,
-          force,
-        }),
-      });
+      if (file.size > BLOB_THRESHOLD_BYTES) {
+        // Too big to POST through the function. Upload straight to Blob from the
+        // browser once, then send only the URL; the confirm/force step reuses it.
+        if (!pendingBlobUrlRef.current) {
+          const blob = await upload(file.name, file, {
+            access: "public",
+            handleUploadUrl: "/api/uploads/blob",
+          });
+          pendingBlobUrlRef.current = blob.url;
+        }
+
+        res = await authFetch("/api/uploads", {
+          method: "POST",
+          body: JSON.stringify({
+            blobUrl: pendingBlobUrlRef.current,
+            fileName: file.name,
+            clientId,
+            channelId,
+            fileType,
+            reportYear,
+            reportMonth,
+            reportWeek,
+            force,
+          }),
+        });
+      } else {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("clientId", clientId);
+        formData.append("channelId", channelId);
+        formData.append("fileType", fileType);
+        formData.append("reportYear", String(reportYear));
+        formData.append("reportMonth", String(reportMonth));
+        formData.append("reportWeek", String(reportWeek));
+        if (force) formData.append("force", "true");
+
+        res = await authFetch("/api/uploads", {
+          method: "POST",
+          body: formData,
+          rawBody: true,
+          headers: {},
+        });
+      }
       // A timed-out / oversized response may not be JSON — surface the real
       // status instead of a generic "Network error".
       const data = await res.json().catch(() => null);
@@ -174,8 +199,9 @@ export default function DataLoadPage() {
       let msg = e instanceof Error ? `Upload failed: ${e.message}` : "Upload failed: Network error";
       // TEMP diagnostic: probe the token route the same way the blob client does,
       // so the real HTTP status + server error surface here instead of the
-      // generic "Failed to retrieve the client token".
-      try {
+      // generic "Failed to retrieve the client token". Only meaningful for the
+      // Blob path — a small file never asks for a token.
+      if (file.size > BLOB_THRESHOLD_BYTES) try {
         const g = await authFetch("/api/uploads/blob");
         const gtext = (await g.text()).slice(0, 140);
         const p = await fetch("/api/uploads/blob", {
