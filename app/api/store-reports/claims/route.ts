@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
       const rows = claims
         .map((c) => ({
           repName: c.repName, repEmail: c.repEmail,
-          store: c.storeName || c.siteCode, siteCode: c.siteCode,
+          store: c.storeName || c.siteCode, siteCode: c.siteCode, channel: c.channel,
           clientName: c.clientName, article: c.article, description: c.description,
           categories: c.categories, soh: c.soh,
           claimedAt: c.claimedAt,

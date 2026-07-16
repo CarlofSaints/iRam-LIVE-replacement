@@ -207,6 +207,9 @@ export default function StoreReportsTestPage() {
   const [eng, setEng] = useState<EngResult | null>(null);
   const [engBusy, setEngBusy] = useState(false);
   const [engMsg, setEngMsg] = useState("");
+  const [engSearch, setEngSearch] = useState("");
+  const [engChannel, setEngChannel] = useState("all");
+  const [engRep, setEngRep] = useState("all");
 
   async function loadEng(day: string) {
     setEngBusy(true); setEngMsg("");
@@ -256,7 +259,7 @@ export default function StoreReportsTestPage() {
 
   // ── Rep actions + verification (surfaced claims) ──
   type ClaimRow = {
-    repName: string; repEmail: string; store: string; siteCode: string; clientName: string;
+    repName: string; repEmail: string; store: string; siteCode: string; channel: string; clientName: string;
     article: string; description: string; categories: string[]; soh: number; claimedAt: string;
     verdict: "consistent" | "suspect" | "inconclusive" | "pending"; newSoh: number | null; gapDays: number | null; note: string;
   };
@@ -265,6 +268,9 @@ export default function StoreReportsTestPage() {
   const [claimsData, setClaimsData] = useState<ClaimsData | null>(null);
   const [claimsBusy, setClaimsBusy] = useState(false);
   const [claimFilter, setClaimFilter] = useState<ClaimRow["verdict"] | "all">("all");
+  const [claimSearch, setClaimSearch] = useState("");
+  const [claimChannel, setClaimChannel] = useState("all");
+  const [claimsCollapsed, setClaimsCollapsed] = useState(false);
   async function loadClaims(win: number) {
     setClaimsBusy(true);
     try {
@@ -643,6 +649,40 @@ export default function StoreReportsTestPage() {
     } catch { setCodeErr("Network error"); }
     setCodeBusy(false);
   }
+
+  // ── Engagement detail: search (store/site/rep) + channel + rep filters ──
+  const engChannelOptions = useMemo(
+    () => Array.from(new Set((eng?.detail ?? []).map((d) => d.channel).filter(Boolean))).sort(),
+    [eng],
+  );
+  const engRepOptions = useMemo(
+    () => Array.from(new Set((eng?.detail ?? []).map((d) => d.repName || d.repEmail).filter(Boolean))).sort(),
+    [eng],
+  );
+  const engDetailFiltered = useMemo(() => {
+    const q = engSearch.trim().toLowerCase();
+    return (eng?.detail ?? []).filter((d) => {
+      if (engChannel !== "all" && d.channel !== engChannel) return false;
+      if (engRep !== "all" && (d.repName || d.repEmail) !== engRep) return false;
+      if (q && !`${d.store} ${d.siteCode} ${d.repName} ${d.repEmail}`.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [eng, engSearch, engChannel, engRep]);
+
+  // ── Weekly rep action claims: search (rep/store) + channel filter ──
+  const claimChannelOptions = useMemo(
+    () => Array.from(new Set((claimsData?.claims ?? []).map((c) => c.channel).filter(Boolean))).sort(),
+    [claimsData],
+  );
+  const claimsFiltered = useMemo(() => {
+    const q = claimSearch.trim().toLowerCase();
+    return (claimsData?.claims ?? []).filter((c) => {
+      if (claimFilter !== "all" && c.verdict !== claimFilter) return false;
+      if (claimChannel !== "all" && c.channel !== claimChannel) return false;
+      if (q && !`${c.repName} ${c.repEmail} ${c.store} ${c.siteCode}`.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [claimsData, claimFilter, claimChannel, claimSearch]);
 
   if (!canManage) {
     return <div className="p-8 text-sm text-[var(--color-text-muted)]">You don&apos;t have access to store reports.</div>;
@@ -1155,20 +1195,14 @@ export default function StoreReportsTestPage() {
 
           {/* Surfaced claims + verification verdicts */}
           <div className="mt-5 border-t border-[var(--color-border)] pt-4">
+            {/* Header row: collapse toggle on the left, window + refresh on the right. */}
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-              <div className="flex flex-wrap items-center gap-2">
-                {(["all", "suspect", "pending", "inconclusive", "consistent"] as const).map((k) => {
-                  const n = k === "all" ? (claimsData?.summary.total ?? 0) : (claimsData?.summary[k] ?? 0);
-                  const on = claimFilter === k;
-                  const tone = k === "suspect" ? "border-red-300 text-red-700" : k === "consistent" ? "border-green-300 text-green-700" : k === "inconclusive" ? "border-amber-300 text-amber-700" : "border-[var(--color-border)] text-[var(--color-text)]";
-                  return (
-                    <button key={k} onClick={() => setClaimFilter(k)}
-                      className={`rounded-full border px-3 py-1 text-xs font-semibold ${tone} ${on ? "ring-2 ring-blue-400" : ""}`}>
-                      {k === "all" ? "All" : VERDICT_LABEL[k]}: {n}
-                    </button>
-                  );
-                })}
-              </div>
+              <button onClick={() => setClaimsCollapsed((v) => !v)}
+                className="flex items-center gap-2 text-sm font-bold text-[var(--color-text)]">
+                <span className="text-[var(--color-text-muted)]">{claimsCollapsed ? "▸" : "▾"}</span>
+                Rep action claims
+                <span className="text-xs font-normal text-[var(--color-text-muted)]">({claimsData?.summary.total ?? 0})</span>
+              </button>
               <div className="flex items-center gap-2">
                 <select value={claimsWin} onChange={(e) => setClaimsWin(Number(e.target.value))}
                   className="rounded-lg border border-[var(--color-border)] bg-white px-2 py-1 text-sm">
@@ -1183,43 +1217,80 @@ export default function StoreReportsTestPage() {
               </div>
             </div>
 
-            {(() => {
-              const rows = (claimsData?.claims ?? []).filter((c) => claimFilter === "all" || c.verdict === claimFilter);
-              if (!claimsData || rows.length === 0) {
-                return <div className="rounded-lg border border-dashed border-[var(--color-border)] px-4 py-8 text-center text-sm text-[var(--color-text-muted)]">
-                  {claimsBusy ? "Loading…" : "No rep actions to show for this period."}
-                </div>;
-              }
-              return (
-                <div className="overflow-x-auto rounded-xl border border-[var(--color-border)] bg-white">
-                  <table className="w-full text-left text-sm">
-                    <thead className="bg-zinc-50 text-xs uppercase text-[var(--color-text-muted)]">
-                      <tr>
-                        <th className="px-3 py-2">Rep</th><th className="px-3 py-2">Store</th><th className="px-3 py-2">Client</th>
-                        <th className="px-3 py-2">Article</th><th className="px-3 py-2">Action(s)</th>
-                        <th className="px-3 py-2">Verdict</th><th className="px-3 py-2 text-right">SOH→New</th>
-                        <th className="px-3 py-2 text-right">Gap</th><th className="px-3 py-2">Notes</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {rows.map((c, i) => (
-                        <tr key={i} className="border-t border-[var(--color-border)] align-top">
-                          <td className="px-3 py-2 font-medium text-[var(--color-text)]">{c.repName || "—"}</td>
-                          <td className="px-3 py-2">{c.store}</td>
-                          <td className="px-3 py-2">{c.clientName}</td>
-                          <td className="px-3 py-2"><div className="font-medium">{c.article}</div><div className="text-xs text-[var(--color-text-muted)]">{c.description}</div></td>
-                          <td className="px-3 py-2 text-xs">{c.categories.map((x) => CAT_LABELS[x] || x).join(", ")}</td>
-                          <td className="px-3 py-2"><span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${VERDICT_STYLE[c.verdict]}`}>{VERDICT_LABEL[c.verdict]}</span></td>
-                          <td className="px-3 py-2 text-right whitespace-nowrap">{c.soh}{c.newSoh != null ? ` → ${c.newSoh}` : ""}</td>
-                          <td className="px-3 py-2 text-right">{c.gapDays != null ? `${c.gapDays}d` : "—"}</td>
-                          <td className="px-3 py-2 text-xs text-[var(--color-text-muted)] max-w-xs">{c.note}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+            {!claimsCollapsed && (
+              <>
+                {/* Verdict pills */}
+                <div className="mb-3 flex flex-wrap items-center gap-2">
+                  {(["all", "suspect", "pending", "inconclusive", "consistent"] as const).map((k) => {
+                    const n = k === "all" ? (claimsData?.summary.total ?? 0) : (claimsData?.summary[k] ?? 0);
+                    const on = claimFilter === k;
+                    const tone = k === "suspect" ? "border-red-300 text-red-700" : k === "consistent" ? "border-green-300 text-green-700" : k === "inconclusive" ? "border-amber-300 text-amber-700" : "border-[var(--color-border)] text-[var(--color-text)]";
+                    return (
+                      <button key={k} onClick={() => setClaimFilter(k)}
+                        className={`rounded-full border px-3 py-1 text-xs font-semibold ${tone} ${on ? "ring-2 ring-blue-400" : ""}`}>
+                        {k === "all" ? "All" : VERDICT_LABEL[k]}: {n}
+                      </button>
+                    );
+                  })}
                 </div>
-              );
-            })()}
+
+                {/* Search (rep/store) + channel filter */}
+                <div className="mb-3 flex flex-wrap items-center gap-2">
+                  <input value={claimSearch} onChange={(e) => setClaimSearch(e.target.value)}
+                    placeholder="Search rep or store…"
+                    className="w-60 rounded-lg border border-[var(--color-border)] bg-white px-3 py-1.5 text-sm" />
+                  {claimChannelOptions.length > 0 && (
+                    <select value={claimChannel} onChange={(e) => setClaimChannel(e.target.value)}
+                      className="rounded-lg border border-[var(--color-border)] bg-white px-2 py-1.5 text-sm">
+                      <option value="all">All channels</option>
+                      {claimChannelOptions.map((ch) => <option key={ch} value={ch}>{ch}</option>)}
+                    </select>
+                  )}
+                  {(claimSearch || claimChannel !== "all" || claimFilter !== "all") && (
+                    <button onClick={() => { setClaimSearch(""); setClaimChannel("all"); setClaimFilter("all"); }}
+                      className="text-xs font-medium text-[var(--color-text-muted)] hover:underline">Clear filters</button>
+                  )}
+                  <span className="text-xs text-[var(--color-text-muted)]">
+                    showing {claimsFiltered.length}{claimsData ? ` of ${claimsData.summary.total}` : ""}
+                  </span>
+                </div>
+
+                {!claimsData || claimsFiltered.length === 0 ? (
+                  <div className="rounded-lg border border-dashed border-[var(--color-border)] px-4 py-8 text-center text-sm text-[var(--color-text-muted)]">
+                    {claimsBusy ? "Loading…" : (claimsData?.claims.length ? "No claims match these filters." : "No rep actions to show for this period.")}
+                  </div>
+                ) : (
+                  <div className="max-h-[520px] overflow-auto rounded-xl border border-[var(--color-border)] bg-white">
+                    <table className="w-full text-left text-sm">
+                      <thead className="sticky top-0 z-10 bg-zinc-50 text-xs uppercase text-[var(--color-text-muted)] shadow-sm">
+                        <tr>
+                          <th className="px-3 py-2">Rep</th><th className="px-3 py-2">Store</th><th className="px-3 py-2">Channel</th><th className="px-3 py-2">Client</th>
+                          <th className="px-3 py-2">Article</th><th className="px-3 py-2">Action(s)</th>
+                          <th className="px-3 py-2">Verdict</th><th className="px-3 py-2 text-right">SOH→New</th>
+                          <th className="px-3 py-2 text-right">Gap</th><th className="px-3 py-2">Notes</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {claimsFiltered.map((c, i) => (
+                          <tr key={i} className="border-t border-[var(--color-border)] align-top">
+                            <td className="px-3 py-2 font-medium text-[var(--color-text)]">{c.repName || "—"}</td>
+                            <td className="px-3 py-2">{c.store}</td>
+                            <td className="px-3 py-2 text-xs text-[var(--color-text-muted)]">{c.channel || "—"}</td>
+                            <td className="px-3 py-2">{c.clientName}</td>
+                            <td className="px-3 py-2"><div className="font-medium">{c.article}</div><div className="text-xs text-[var(--color-text-muted)]">{c.description}</div></td>
+                            <td className="px-3 py-2 text-xs">{c.categories.map((x) => CAT_LABELS[x] || x).join(", ")}</td>
+                            <td className="px-3 py-2"><span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${VERDICT_STYLE[c.verdict]}`}>{VERDICT_LABEL[c.verdict]}</span></td>
+                            <td className="px-3 py-2 text-right whitespace-nowrap">{c.soh}{c.newSoh != null ? ` → ${c.newSoh}` : ""}</td>
+                            <td className="px-3 py-2 text-right">{c.gapDays != null ? `${c.gapDays}d` : "—"}</td>
+                            <td className="px-3 py-2 text-xs text-[var(--color-text-muted)] max-w-xs">{c.note}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </div>
       )}
@@ -1300,39 +1371,71 @@ export default function StoreReportsTestPage() {
 
             {/* Detail log */}
             {eng.detail.length > 0 && (
-              <div className="max-h-96 overflow-y-auto rounded-xl border border-[var(--color-border)] bg-white">
-                <table className="w-full text-xs">
-                  <thead className="sticky top-0 bg-zinc-50 text-[var(--color-text-muted)]">
-                    <tr>
-                      <th className="px-3 py-2 text-left font-semibold">Store</th>
-                      <th className="px-3 py-2 text-left font-semibold">Channel</th>
-                      <th className="px-3 py-2 text-left font-semibold">Rep</th>
-                      <th className="px-3 py-2 text-center font-semibold">Opened</th>
-                      <th className="px-3 py-2 text-center font-semibold">Used</th>
-                      <th className="px-3 py-2 text-center font-semibold">Cards</th>
-                      <th className="px-3 py-2 text-center font-semibold">Report</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {eng.detail.map((d, i) => (
-                      <tr key={i} className="border-t border-zinc-100">
-                        <td className="px-3 py-1.5">{d.store}{d.test && <span className="ml-1 rounded bg-zinc-100 px-1 text-[10px] text-zinc-500">test</span>}</td>
-                        <td className="px-3 py-1.5">{d.channel}</td>
-                        <td className="px-3 py-1.5">{d.repName || d.repEmail}</td>
-                        <td className="px-3 py-1.5 text-center">{d.opened ? "✓" : "—"}</td>
-                        <td className="px-3 py-1.5 text-center">{d.used ? <span className="font-semibold text-green-600">✓</span> : "—"}</td>
-                        <td className="px-3 py-1.5 text-center">{d.distinctCards.length}</td>
-                        <td className="px-3 py-1.5 text-center">
-                          {d.reportUrl ? (
-                            <a href={d.reportUrl} target="_blank" rel="noreferrer"
-                              className="font-medium text-[var(--color-primary)] hover:underline">Open</a>
-                          ) : "—"}
-                        </td>
+              <>
+                {/* Search (store/site/rep) + channel + rep filters */}
+                <div className="mb-3 flex flex-wrap items-center gap-2">
+                  <input value={engSearch} onChange={(e) => setEngSearch(e.target.value)}
+                    placeholder="Search store, site code or rep…"
+                    className="w-64 rounded-lg border border-[var(--color-border)] bg-white px-3 py-1.5 text-sm" />
+                  {engChannelOptions.length > 0 && (
+                    <select value={engChannel} onChange={(e) => setEngChannel(e.target.value)}
+                      className="rounded-lg border border-[var(--color-border)] bg-white px-2 py-1.5 text-sm">
+                      <option value="all">All channels</option>
+                      {engChannelOptions.map((ch) => <option key={ch} value={ch}>{ch}</option>)}
+                    </select>
+                  )}
+                  {engRepOptions.length > 0 && (
+                    <select value={engRep} onChange={(e) => setEngRep(e.target.value)}
+                      className="max-w-[220px] rounded-lg border border-[var(--color-border)] bg-white px-2 py-1.5 text-sm">
+                      <option value="all">All reps</option>
+                      {engRepOptions.map((r) => <option key={r} value={r}>{r}</option>)}
+                    </select>
+                  )}
+                  {(engSearch || engChannel !== "all" || engRep !== "all") && (
+                    <button onClick={() => { setEngSearch(""); setEngChannel("all"); setEngRep("all"); }}
+                      className="text-xs font-medium text-[var(--color-text-muted)] hover:underline">Clear filters</button>
+                  )}
+                  <span className="text-xs text-[var(--color-text-muted)]">showing {engDetailFiltered.length} of {eng.detail.length}</span>
+                </div>
+
+                <div className="max-h-96 overflow-y-auto rounded-xl border border-[var(--color-border)] bg-white">
+                  <table className="w-full text-xs">
+                    <thead className="sticky top-0 z-10 bg-zinc-50 text-[var(--color-text-muted)] shadow-sm">
+                      <tr>
+                        <th className="px-3 py-2 text-left font-semibold">Store</th>
+                        <th className="px-3 py-2 text-left font-semibold">Site</th>
+                        <th className="px-3 py-2 text-left font-semibold">Channel</th>
+                        <th className="px-3 py-2 text-left font-semibold">Rep</th>
+                        <th className="px-3 py-2 text-center font-semibold">Opened</th>
+                        <th className="px-3 py-2 text-center font-semibold">Used</th>
+                        <th className="px-3 py-2 text-center font-semibold">Cards</th>
+                        <th className="px-3 py-2 text-center font-semibold">Report</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {engDetailFiltered.length === 0 ? (
+                        <tr><td colSpan={8} className="px-3 py-8 text-center text-[var(--color-text-muted)]">No rows match these filters.</td></tr>
+                      ) : engDetailFiltered.map((d, i) => (
+                        <tr key={i} className="border-t border-zinc-100">
+                          <td className="px-3 py-1.5">{d.store}{d.test && <span className="ml-1 rounded bg-zinc-100 px-1 text-[10px] text-zinc-500">test</span>}</td>
+                          <td className="px-3 py-1.5 font-mono text-[var(--color-text-muted)]">{d.siteCode}</td>
+                          <td className="px-3 py-1.5">{d.channel}</td>
+                          <td className="px-3 py-1.5">{d.repName || d.repEmail}</td>
+                          <td className="px-3 py-1.5 text-center">{d.opened ? "✓" : "—"}</td>
+                          <td className="px-3 py-1.5 text-center">{d.used ? <span className="font-semibold text-green-600">✓</span> : "—"}</td>
+                          <td className="px-3 py-1.5 text-center">{d.distinctCards.length}</td>
+                          <td className="px-3 py-1.5 text-center">
+                            {d.reportUrl ? (
+                              <a href={d.reportUrl} target="_blank" rel="noreferrer"
+                                className="font-medium text-[var(--color-primary)] hover:underline">Open</a>
+                            ) : "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
           </>
         )}
