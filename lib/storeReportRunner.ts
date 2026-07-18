@@ -22,6 +22,7 @@ import { signReportLink } from "./reportLink";
 import { renderStoreReportEmail } from "./storeReportEmail";
 import { sendStoreReportEmail } from "./email";
 import { addTrackingSend, trackingDay } from "./storeReportTracking";
+import { recordAuditOutcomes } from "./storeReportAudit";
 import { v4 as uuid } from "uuid";
 
 const normCh = (s: string) => s.toLowerCase().replace(/[\s_-]+/g, "");
@@ -48,6 +49,8 @@ export interface RunVisitOutcome {
   repEmail: string;
   store: string;
   status: RunVisitStatus;
+  repName?: string;
+  channel?: string;
   actions?: number;
   detail?: string;
 }
@@ -133,22 +136,25 @@ export async function runStoreReportSync(opts: RunOptions): Promise<RunResult> {
   // 4. Per visit.
   for (const raw of visits) {
     const v = normaliseVisit(raw);
-    if (!v.siteCode) { skipped++; outcomes.push({ siteCode: "", repEmail: v.repEmail, store: "", status: "skipped-no-sitecode", detail: "no site code on visit" }); continue; }
+    // Default identity fields on every outcome so the audit ledger always knows
+    // WHO (rep) and WHERE (store/channel) a drop happened, not just why.
+    const who = { repName: v.repName, channel: v.channel };
+    if (!v.siteCode) { skipped++; outcomes.push({ ...who, siteCode: "", repEmail: v.repEmail, store: "", status: "skipped-no-sitecode", detail: "no site code on visit" }); continue; }
 
     // Channel allow-list (separator-insensitive). Empty channel = let through.
     if (v.channel && allow.size && !allow.has(normCh(v.channel))) {
-      skipped++; outcomes.push({ siteCode: v.siteCode, repEmail: v.repEmail, store: "", status: "skipped-channel", detail: v.channel }); continue;
+      skipped++; outcomes.push({ ...who, siteCode: v.siteCode, repEmail: v.repEmail, store: "", status: "skipped-channel", detail: v.channel }); continue;
     }
 
     // Dedup: same visit GUID already processed today, or this store×rep already sent today.
     if (v.visitGuid && await hasProcessedVisit(dedupKey, v.visitGuid)) {
-      skipped++; outcomes.push({ siteCode: v.siteCode, repEmail: v.repEmail, store: "", status: "skipped-duplicate", detail: "visit already processed today" }); continue;
+      skipped++; outcomes.push({ ...who, siteCode: v.siteCode, repEmail: v.repEmail, store: "", status: "skipped-duplicate", detail: "visit already processed today" }); continue;
     }
     if (v.repEmail && await hasSent(dedupKey, v.siteCode, v.repEmail)) {
-      skipped++; outcomes.push({ siteCode: v.siteCode, repEmail: v.repEmail, store: "", status: "skipped-duplicate", detail: "store+rep already sent today" }); continue;
+      skipped++; outcomes.push({ ...who, siteCode: v.siteCode, repEmail: v.repEmail, store: "", status: "skipped-duplicate", detail: "store+rep already sent today" }); continue;
     }
     if (!v.repEmail) {
-      skipped++; outcomes.push({ siteCode: v.siteCode, repEmail: "", store: "", status: "skipped-no-email", detail: `rep "${v.repName}" has no email` }); continue;
+      skipped++; outcomes.push({ ...who, siteCode: v.siteCode, repEmail: "", store: "", status: "skipped-no-email", detail: `rep "${v.repName}" has no email` }); continue;
     }
 
     // Live-render the store's consolidated report (each client's latest data).
@@ -164,7 +170,7 @@ export async function runStoreReportSync(opts: RunOptions): Promise<RunResult> {
         // nothing to action, it's genuinely a clean store this period.
         const noMapping = report.clients.length === 0;
         outcomes.push({
-          siteCode: v.siteCode, repEmail: v.repEmail, store,
+          ...who, siteCode: v.siteCode, repEmail: v.repEmail, store,
           status: noMapping ? "skipped-no-mapping" : "skipped-no-data",
           actions: 0,
           detail: noMapping ? "site not in any loaded DISPO (check code mapping / data load)" : "no actions to report this period",
@@ -180,7 +186,7 @@ export async function runStoreReportSync(opts: RunOptions): Promise<RunResult> {
       }
 
       if (opts.dryRun) {
-        outcomes.push({ siteCode: v.siteCode, repEmail: v.repEmail, store, status: "would-send", actions: report.totalActions });
+        outcomes.push({ ...who, siteCode: v.siteCode, repEmail: v.repEmail, store, status: "would-send", actions: report.totalActions });
         continue;
       }
 
@@ -214,11 +220,11 @@ export async function runStoreReportSync(opts: RunOptions): Promise<RunResult> {
         includedStreams: report.clients.map((c) => ({ clientId: c.clientId, clientName: c.clientName, channel: report.subChannel, vendor: "" })),
       });
       sent++;
-      outcomes.push({ siteCode: v.siteCode, repEmail: v.repEmail, store, status: "sent", actions: report.totalActions });
+      outcomes.push({ ...who, siteCode: v.siteCode, repEmail: v.repEmail, store, status: "sent", actions: report.totalActions });
     } catch (e) {
       failed++;
       const detail = e instanceof Error ? e.message : "render/send failed";
-      outcomes.push({ siteCode: v.siteCode, repEmail: v.repEmail, store: "", status: "failed", detail });
+      outcomes.push({ ...who, siteCode: v.siteCode, repEmail: v.repEmail, store: v.siteCode, status: "failed", detail });
     }
   }
 
@@ -230,7 +236,13 @@ export async function runStoreReportSync(opts: RunOptions): Promise<RunResult> {
     reasons: summariseReasons(outcomes),
     message: opts.dryRun ? "Dry run" : undefined,
   };
-  if (!opts.dryRun) await recordLastRun(run);
+  if (!opts.dryRun) {
+    await recordLastRun(run);
+    // Durable per-rep audit of every outcome (incl. all skip reasons + failures),
+    // so "why didn't rep X get their report?" is answerable after the fact.
+    // Best-effort: an audit-write failure must never fail the run itself.
+    await recordAuditOutcomes(dedupKey, outcomes).catch(() => {});
+  }
 
   return { ...base, ok: failed === 0, sent, skipped: skippedCount, failed, outcomes };
 }
