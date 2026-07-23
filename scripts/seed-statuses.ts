@@ -2,10 +2,15 @@
  * Seed status definitions to a deployed instance.
  *
  * Usage:
- *   npx tsx scripts/seed-statuses.ts <BASE_URL> <SEED_SECRET>
+ *   npx tsx scripts/seed-statuses.ts <BASE_URL> <SEED_SECRET> [CHANNEL_NAME ...]
  *
- * Example:
+ * Pass one or more channel names to seed only those channels — seeding a
+ * channel overwrites admin edits made in the UI, so scope it when you only
+ * mean to add a new one.
+ *
+ * Examples:
  *   npx tsx scripts/seed-statuses.ts https://iram-live.vercel.app oj-seed-2026
+ *   npx tsx scripts/seed-statuses.ts https://iram-live.vercel.app oj-seed-2026 GAME
  */
 
 interface SeedEntry {
@@ -50,6 +55,23 @@ const MASSBUILD: SeedEntry[] = [
   { code: "Z", channelName: "MASSBUILD", classification: "POSITIVE", description: "National Product Recall", notes: "Product recalled nationally — blocking is correct. Verify recall is acknowledged internally." },
 ];
 
+// Source: SAP "Plant-Specific Material Status" (MS) list for GAME.
+// Codes + descriptions captured verbatim; classification left UNCLASSIFIED
+// until the positive/negative call is made per code.
+const GAME: SeedEntry[] = [
+  { code: "B", channelName: "GAME", classification: "UNCLASSIFIED", description: "GNFR Inactive", notes: "Goods Not For Resale, flagged inactive." },
+  { code: "D", channelName: "GAME", classification: "UNCLASSIFIED", description: "Discontinued", notes: "Retailer has discontinued the product." },
+  { code: "E", channelName: "GAME", classification: "UNCLASSIFIED", description: "Extended Range", notes: "Extended range item — not core ranged stock." },
+  { code: "I", channelName: "GAME", classification: "UNCLASSIFIED", description: "Master Data Incomplete", notes: "Article master data incomplete at the retailer." },
+  { code: "L", channelName: "GAME", classification: "UNCLASSIFIED", description: "Builders Seasonal Stock", notes: "Seasonal stock — Builders-specific code." },
+  { code: "M", channelName: "GAME", classification: "UNCLASSIFIED", description: "Marked-down", notes: "Product on markdown." },
+  { code: "Q", channelName: "GAME", classification: "UNCLASSIFIED", description: "Builders Catalogue Stock", notes: "Catalogue stock — Builders-specific code." },
+  { code: "S", channelName: "GAME", classification: "UNCLASSIFIED", description: "Special Order Warning", notes: "Special order only — warning raised at order entry." },
+  { code: "T", channelName: "GAME", classification: "UNCLASSIFIED", description: "Suspended", notes: "Product suspended at the retailer." },
+  { code: "W", channelName: "GAME", classification: "UNCLASSIFIED", description: "Builders Discon Loc Stock", notes: "Discontinued local stock — Builders-specific code." },
+  { code: "X", channelName: "GAME", classification: "UNCLASSIFIED", description: "Blocked POS & Discontinue", notes: "Blocked at point of sale and discontinued." },
+];
+
 async function main() {
   const baseUrl = process.argv[2];
   const secret = process.argv[3];
@@ -60,9 +82,19 @@ async function main() {
   }
 
   const url = `${baseUrl.replace(/\/$/, "")}/api/status-definitions/seed`;
-  const allStatuses = [...MAKRO, ...MASSBUILD];
+  const only = process.argv.slice(4).map((c) => c.toUpperCase());
+  const allStatuses = [...MAKRO, ...MASSBUILD, ...GAME].filter(
+    (s) => only.length === 0 || only.includes(s.channelName.toUpperCase()),
+  );
 
-  console.log(`Seeding ${allStatuses.length} statuses to ${url} ...`);
+  if (allStatuses.length === 0) {
+    console.error(`No statuses matched channel filter: ${only.join(", ")}`);
+    process.exit(1);
+  }
+
+  console.log(
+    `Seeding ${allStatuses.length} statuses${only.length ? ` for ${only.join(", ")}` : ""} to ${url} ...`,
+  );
 
   const res = await fetch(url, {
     method: "POST",
