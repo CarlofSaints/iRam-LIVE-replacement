@@ -146,7 +146,10 @@ export async function GET(req: NextRequest) {
 
     XLSX.utils.book_append_sheet(wb, ws, "Vital Signs");
 
-    const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+    // compression: true is essential — SheetJS writes an UNCOMPRESSED zip by
+    // default, which made this ~10k-row × 67-col report ~27MB. DEFLATE cuts it
+    // several-fold with no change to the data.
+    const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx", compression: true });
 
     // 7. Log activity
     const channelLabel = channelNames.join(", ") || channelIds.join(", ");

@@ -77,7 +77,7 @@ export async function GET(
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Data");
-    const buffer: Buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+    const buffer: Buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx", compression: true });
 
     // Keep the original filename where possible; ensure an .xlsx extension.
     const baseName = (meta.fileName || `${fileType}.xlsx`).replace(
