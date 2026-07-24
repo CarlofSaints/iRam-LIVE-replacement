@@ -453,17 +453,21 @@ export default function DataLoadPage() {
                   Column Mapping Conflicts ({confirmData.collisions.length})
                 </div>
                 <p className="mb-2 text-xs text-amber-600">
-                  Two or more columns in this file map to the same field. The app kept the first
-                  and ignored the rest. Check the kept column is correct — if not, fix the file
-                  (rename or remove the stray column) before loading.
+                  Some columns in this file have different headers that both mean the same field,
+                  so only one can supply that field&apos;s data — the other is discarded. The app keeps
+                  the first (left-most) matching column, which is normally the correct one: the genuine
+                  field sits next to the data it describes, while a look-alike column further right (e.g. a
+                  payment-terms &ldquo;Descriptio&rdquo; being mistaken for the real &ldquo;Article Description&rdquo;)
+                  is the one dropped. Check each <span className="font-semibold text-green-700">USING</span> column
+                  below is the right one. If it isn&apos;t, rename or remove the stray column in the file and re-load.
                 </p>
                 <div className="max-h-48 overflow-auto rounded-lg border border-amber-200 bg-white p-3">
                   <ul className="space-y-2 text-xs text-zinc-700">
                     {confirmData.collisions.map((c) => (
                       <li key={c.field}>
-                        <span className="font-semibold">{c.field}</span> — kept{" "}
-                        <span className="rounded bg-green-100 px-1 text-green-800">{`col ${c.kept.col} "${c.kept.header}"`}</span>
-                        , ignored{" "}
+                        Field <span className="font-semibold">{c.field}</span> will be filled from{" "}
+                        <span className="rounded bg-green-100 px-1 text-green-800">{`USING col ${c.kept.col} "${c.kept.header}"`}</span>
+                        {" — "}discarding{" "}
                         {c.dropped.map((d, i) => (
                           <span key={i}>
                             {i > 0 ? " " : ""}
@@ -578,18 +582,21 @@ export default function DataLoadPage() {
               {result.warnings.collisions && result.warnings.collisions.length > 0 && (
                 <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
                   <div className="mb-2 text-sm font-bold text-amber-700">
-                    Column Mapping Conflicts ({result.warnings.collisions.length}) — Kept First Column
+                    Column Mapping Conflicts ({result.warnings.collisions.length})
                   </div>
                   <p className="mb-2 text-xs text-amber-600">
-                    Multiple columns mapped to the same field. Verify the kept column is the correct one.
+                    Some columns had different headers that both mean the same field, so only one could
+                    supply that field&apos;s data — the app used the first (left-most) match and discarded the
+                    rest. Verify each <span className="font-semibold text-green-700">USING</span> column below
+                    is the correct one; if not, fix the stray header in the file and re-load.
                   </p>
                   <div className="max-h-40 overflow-auto rounded-lg border border-amber-200 bg-white p-3">
                     <ul className="space-y-2 text-xs text-zinc-700">
                       {result.warnings.collisions.map((c) => (
                         <li key={c.field}>
-                          <span className="font-semibold">{c.field}</span> — kept{" "}
-                          <span className="rounded bg-green-100 px-1 text-green-800">{`col ${c.kept.col} "${c.kept.header}"`}</span>
-                          , ignored{" "}
+                          Field <span className="font-semibold">{c.field}</span> was filled from{" "}
+                          <span className="rounded bg-green-100 px-1 text-green-800">{`USING col ${c.kept.col} "${c.kept.header}"`}</span>
+                          {" — "}discarded{" "}
                           {c.dropped.map((d, i) => (
                             <span key={i}>
                               {i > 0 ? " " : ""}
