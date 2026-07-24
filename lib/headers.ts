@@ -87,8 +87,16 @@ export const HEADER_ALIASES: Record<string, string> = {
   "r profile": "R. Profile",
 };
 
-// Regex to detect date-style columns
-export const DATE_COL_REGEX = /^([A-Za-z]+-\d{4}|\d{2}-\d{4})$/;
+// Regex to detect date-style columns. Accepts the many shapes retailers export
+// month columns in, so a DISPO's sales history is never silently dropped:
+//   - Month name + 2/4-digit year, with or without a separator:
+//     "Jul26", "Jul-26", "Jul 2026", "July-2026", "September2025"
+//   - Numeric month + separator + 2/4-digit year: "07-2026", "7-26"
+//   - ISO-ish year-first: "2026-07", "2026/7"
+// The alpha branch is gated on real month prefixes so ordinary text headers
+// (e.g. "Compo", "Curr Y/S") can't be mistaken for date columns.
+export const DATE_COL_REGEX =
+  /^(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s\-/]?\d{2}(?:\d{2})?|\d{1,2}[\s\-/]\d{2}(?:\d{2})?|\d{4}[\s\-/]\d{1,2})$/i;
 
 export function resolveHeader(raw: string): string {
   const lower = raw.toLowerCase().trim();

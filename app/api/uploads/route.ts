@@ -4,7 +4,7 @@ import { getUploadIndex, getUploadsByClient, addUpload } from "@/lib/uploadData"
 import { getClientById } from "@/lib/clientData";
 import { getChannelById, getChannels } from "@/lib/channelData";
 import { parseDispo } from "@/lib/dispoParser";
-import { mergeDispo } from "@/lib/salesData";
+import { mergeDispo, normalizeDateCol } from "@/lib/salesData";
 import { getLinksLookup, normalizeArticle } from "@/lib/linksLookup";
 import { getMergedStores } from "@/lib/storeFileData";
 import { normalizeSiteKey } from "@/lib/siteCode";
@@ -124,6 +124,42 @@ export async function POST(req: NextRequest) {
         if (bad.length > 0) {
           return Response.json({
             error: `Vendor number(s) ${bad.join(", ")} from file do not match client's vendor numbers (${client.vendorNumbers.join(", ")})`,
+          }, { status: 400, headers: noCacheHeaders() });
+        }
+      }
+
+      // ── Validate the selected period is actually IN the file ──
+      // The loader stamps each DISPO with the month it is for (year/month/week),
+      // and the load checklist trusts that stamp. But a DISPO only carries the
+      // months present as sales columns inside it — if someone stamps "July" on a
+      // file whose newest column is June, the checklist shows July loaded while
+      // the report has no July data. Hard-block that mismatch here so the stamp
+      // can never diverge from the data. (Only when a month is actually chosen.)
+      if (reportYear != null && !isNaN(reportYear) && reportMonth != null && !isNaN(reportMonth)) {
+        const fileMonths = new Set<string>();
+        for (const dc of result.dateColumns) {
+          const norm = normalizeDateCol(dc);
+          if (norm) fileMonths.add(norm);
+        }
+        const selected = `${String(reportMonth).padStart(2, "0")}-${reportYear}`;
+        if (!fileMonths.has(selected)) {
+          const MON = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+          const label = (mmYYYY: string) => {
+            const [mm, yyyy] = mmYYYY.split("-");
+            return `${MON[parseInt(mm, 10)] ?? mm} ${yyyy}`;
+          };
+          const available = [...fileMonths]
+            .sort((a, b) => {
+              const [am, ay] = a.split("-");
+              const [bm, by] = b.split("-");
+              return (Number(ay) * 100 + Number(am)) - (Number(by) * 100 + Number(bm));
+            })
+            .map(label);
+          const availMsg = available.length
+            ? `This DISPO contains: ${available.join(", ")}.`
+            : `This DISPO contains no recognizable monthly sales columns.`;
+          return Response.json({
+            error: `You selected ${label(selected)}, but that month is not in this DISPO. ${availMsg} Pick the correct month/year (or upload the DISPO that actually contains ${label(selected)}).`,
           }, { status: 400, headers: noCacheHeaders() });
         }
       }

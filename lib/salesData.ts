@@ -36,30 +36,29 @@ const MONTH_MAP: Record<string, string> = {
  */
 export function normalizeDateCol(header: string): string | null {
   const h = header.trim();
+  // Expand a 2-digit year to 4 digits (retail data is always 20xx).
+  const yr4 = (y: string) => (y.length === 2 ? `20${y}` : y);
 
-  // Mon-YYYY or FullMonth-YYYY → MM-YYYY
-  const monYYYY = h.match(/^([A-Za-z]+)-(\d{4})$/);
-  if (monYYYY) {
-    const mm = MONTH_MAP[monYYYY[1].toLowerCase()];
-    return mm ? `${mm}-${monYYYY[2]}` : null;
+  // Month name (abbrev or full) + optional separator + 2/4-digit year:
+  // "Jul26", "Jul-26", "Jul 2026", "July-2026", "September2025"
+  const alpha = h.match(/^([A-Za-z]+)[\s\-/]?(\d{4}|\d{2})$/);
+  if (alpha) {
+    const mm = MONTH_MAP[alpha[1].toLowerCase()];
+    return mm ? `${mm}-${yr4(alpha[2])}` : null;
   }
 
-  // MM-YYYY already canonical
-  if (/^\d{2}-\d{4}$/.test(h)) return h;
+  // Numeric month + separator + 2/4-digit year: "07-2026", "7-26"
+  const num = h.match(/^(\d{1,2})[\s\-/](\d{4}|\d{2})$/);
+  if (num) {
+    const m = parseInt(num[1], 10);
+    return m >= 1 && m <= 12 ? `${num[1].padStart(2, "0")}-${yr4(num[2])}` : null;
+  }
 
-  // M-YYYY → pad
-  const mYYYY = h.match(/^(\d{1,2})-(\d{4})$/);
-  if (mYYYY) return `${mYYYY[1].padStart(2, "0")}-${mYYYY[2]}`;
-
-  // YYYY-MM → flip
-  const yyyyMM = h.match(/^(\d{4})-(\d{1,2})$/);
-  if (yyyyMM) return `${yyyyMM[2].padStart(2, "0")}-${yyyyMM[1]}`;
-
-  // "FullMonth YYYY" (space-separated)
-  const fullMonth = h.match(/^([A-Za-z]+)\s+(\d{4})$/);
-  if (fullMonth) {
-    const mm = MONTH_MAP[fullMonth[1].toLowerCase()];
-    return mm ? `${mm}-${fullMonth[2]}` : null;
+  // Year-first: "2026-07", "2026/7"
+  const yyyyMM = h.match(/^(\d{4})[\s\-/](\d{1,2})$/);
+  if (yyyyMM) {
+    const m = parseInt(yyyyMM[2], 10);
+    return m >= 1 && m <= 12 ? `${yyyyMM[2].padStart(2, "0")}-${yyyyMM[1]}` : null;
   }
 
   return null;

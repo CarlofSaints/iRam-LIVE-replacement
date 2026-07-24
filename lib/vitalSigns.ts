@@ -204,24 +204,18 @@ function buildMonthlyColumns(dateColumns: string[]): {
   const outputCols: string[] = [];
   const dateMap = new Map<string, { unitsCol: string; valueCol: string }>();
 
-  // Determine if the first month is from a previous year (for labeling)
-  const firstParsed = sorted.length > 0 ? parseDateKey(sorted[0]) : null;
-  const lastParsed = sorted.length > 0 ? parseDateKey(sorted[sorted.length - 1]) : null;
-
-  for (let i = 0; i < sorted.length; i++) {
-    const col = sorted[i];
+  // Label every monthly column with its month AND year (e.g. "Jul-2026 Units").
+  // The year is essential: a ledger accumulates well over 12 months of history,
+  // so a month-name-only label (the old scheme) made same-month columns from
+  // different years collide into one header — the later year overwrote the
+  // earlier, and duplicate headers appeared in the sheet.
+  for (const col of sorted) {
     const p = parseDateKey(col);
     if (!p) continue;
 
-    const monName = MONTH_NAMES[p.month];
-    const isPrevYear = firstParsed && lastParsed && p.year < lastParsed.year && i === 0;
-
-    const unitsCol = isPrevYear
-      ? `${monName} Units (Prev. Year)`
-      : `${monName} Units`;
-    const valueCol = isPrevYear
-      ? `${monName} Value (Prev. Year)`
-      : `${monName} Value`;
+    const label = `${MONTH_NAMES[p.month]}-${p.year}`;
+    const unitsCol = `${label} Units`;
+    const valueCol = `${label} Value`;
 
     outputCols.push(unitsCol, valueCol);
     dateMap.set(col, { unitsCol, valueCol });
