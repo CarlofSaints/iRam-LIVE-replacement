@@ -15,6 +15,8 @@ interface DashboardClientRow {
   agedStockCount: number;
   vitalSignsRuns: number;
   monthEndRuns: number;
+  hasDataGaps: boolean;
+  dataGapLines: string[];
 }
 
 interface DashboardData {
@@ -115,7 +117,17 @@ export default function DashboardPage() {
                     className="border-b border-[var(--color-border)] last:border-0"
                   >
                     <td className="px-4 py-3 font-medium text-[var(--color-text)]">
-                      {r.clientName}
+                      <span className="inline-flex items-center gap-1.5">
+                        {r.clientName}
+                        {r.hasDataGaps && (
+                          <span
+                            title={`Data gaps — growth may be overstated:\n\n${r.dataGapLines.join("\n\n")}`}
+                            className="inline-flex cursor-help items-center gap-1 rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 ring-1 ring-amber-300"
+                          >
+                            ⚠️ Gaps
+                          </span>
+                        )}
+                      </span>
                     </td>
                     <td className="px-4 py-3 text-right text-[var(--color-text-muted)]">
                       {r.skuCount.toLocaleString()}

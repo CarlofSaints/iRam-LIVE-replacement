@@ -8,6 +8,7 @@ import { getClientById } from "@/lib/clientData";
 import { getStatusDefinitions } from "@/lib/statusData";
 import { getStatusScenarios } from "@/lib/statusScenarioData";
 import { computeVitalSigns, getVitalSignsColumnOrder } from "@/lib/vitalSigns";
+import { analyzeCoverage, coverageMessageLines, formatMonth } from "@/lib/dataCoverage";
 import { addLog } from "@/lib/activityLog";
 import { incrementReportCount } from "@/lib/reportCounts";
 import { saveReportToSharePointSafe } from "@/lib/sharepoint";
@@ -142,6 +143,27 @@ export async function GET(req: NextRequest) {
         const cell = ws[ref];
         if (cell && cell.t === "n") cell.z = RAND_FMT;
       }
+    }
+
+    // Prepend a Data Coverage sheet when the ledger's monthly series has gaps,
+    // so the warning travels with the file — growth read off an incomplete
+    // prior-year base is overstated. Lands as the FIRST tab.
+    const coverage = analyzeCoverage(dateColumns);
+    if (coverage.hasGaps) {
+      const aoa: unknown[][] = [
+        ["⚠ DATA COVERAGE WARNING"],
+        [`Client: ${clientName}`],
+        [],
+        ...coverageMessageLines(coverage).map((l) => [l]),
+        [],
+      ];
+      if (coverage.firstMonth && coverage.lastMonth) {
+        aoa.push([`Data present from ${formatMonth(coverage.firstMonth)} to ${formatMonth(coverage.lastMonth)}.`]);
+        aoa.push(["To fill a gap, re-upload the DISPO that carries that month (each DISPO includes several trailing months plus the same month a year prior)."]);
+      }
+      const cws = XLSX.utils.aoa_to_sheet(aoa);
+      cws["!cols"] = [{ wch: 130 }];
+      XLSX.utils.book_append_sheet(wb, cws, "Data Coverage");
     }
 
     XLSX.utils.book_append_sheet(wb, ws, "Vital Signs");

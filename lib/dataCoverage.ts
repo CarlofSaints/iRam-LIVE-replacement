@@ -42,6 +42,38 @@ export interface CoverageResult {
 const toIdx = (y: number, m: number) => y * 12 + (m - 1);
 const keyOf = (y: number, m: number) => `${String(m).padStart(2, "0")}-${y}`;
 
+/**
+ * Plain-text warning lines for a coverage result (empty if no gaps). Shared by
+ * the dashboard tooltip and the in-workbook Data-Coverage notes so the wording
+ * stays identical everywhere.
+ */
+export function coverageMessageLines(c: CoverageResult): string[] {
+  if (!c.hasGaps) return [];
+  const fmt = (arr: string[]) => arr.map(formatMonth).join(", ");
+  const lines: string[] = [];
+
+  if (!c.hasPriorYearData) {
+    lines.push(
+      `No prior-year (${c.priorYear}) data is loaded — year-on-year growth is not measured against a real base and should be treated as unreliable.`,
+    );
+  } else if (c.lyComparisonGaps.length > 0) {
+    lines.push(`Prior-year (${c.priorYear}) months missing from the comparison base: ${fmt(c.lyComparisonGaps)}.`);
+    lines.push(
+      `Year-on-year growth (YTD and same-month-last-year) reads too high — it is measured against an incomplete ${c.priorYear} base, and a smaller base inflates the growth %.`,
+    );
+  }
+
+  if (c.currentYtdGaps.length > 0) {
+    lines.push(`Current-year months missing (understates the current base): ${fmt(c.currentYtdGaps)}.`);
+  }
+
+  const windowSet = new Set([...c.lyComparisonGaps, ...c.currentYtdGaps]);
+  const other = c.interiorGaps.filter((m) => !windowSet.has(m));
+  if (other.length > 0) lines.push(`Other gaps in the monthly series: ${fmt(other)}.`);
+
+  return lines;
+}
+
 export function analyzeCoverage(dateColumns: string[]): CoverageResult {
   const set = new Set<string>();
   const parsed: { y: number; m: number }[] = [];

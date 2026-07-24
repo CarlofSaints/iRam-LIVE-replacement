@@ -23,6 +23,7 @@ import type {
   OTOAnalysis,
 } from "./monthEndReport";
 import { buildDateContext, dataRowExtras } from "./monthEndReport";
+import { analyzeCoverage, coverageMessageLines, formatMonth } from "./dataCoverage";
 
 // ── Colors ─────────────────────────────────────────────────────
 
@@ -417,7 +418,12 @@ export async function buildMonthEndWorkbook(
   }
 
   // Populate the Menu/cover sheet now that all other sheets exist.
-  buildMenuSheet(wb, menuSheet, { clientName, channelLabel, periodLabel, clientLogo, channelLogo });
+  const coverage = analyzeCoverage(dateColumns);
+  const dataGapLines = coverageMessageLines(coverage);
+  const coverageSpan = coverage.firstMonth && coverage.lastMonth
+    ? `${formatMonth(coverage.firstMonth)} to ${formatMonth(coverage.lastMonth)}`
+    : "";
+  buildMenuSheet(wb, menuSheet, { clientName, channelLabel, periodLabel, clientLogo, channelLogo, dataGapLines, coverageSpan });
 
   // Hide gridlines on every sheet (preserve any existing freeze panes)
   for (const ws of wb.worksheets) {
@@ -1667,7 +1673,15 @@ function addLogoImage(
 function buildMenuSheet(
   wb: ExcelJS.Workbook,
   sheet: ExcelJS.Worksheet,
-  meta: { clientName: string; channelLabel: string; periodLabel: string; clientLogo?: string; channelLogo?: string },
+  meta: {
+    clientName: string;
+    channelLabel: string;
+    periodLabel: string;
+    clientLogo?: string;
+    channelLogo?: string;
+    dataGapLines?: string[];
+    coverageSpan?: string;
+  },
 ): void {
   sheet.getColumn(1).width = 40;
   sheet.getColumn(2).width = 30;
@@ -1698,7 +1712,28 @@ function buildMenuSheet(
   };
   meanLine("Channel", meta.channelLabel);
   meanLine("Period", meta.periodLabel);
+  if (meta.coverageSpan) meanLine("Data present", meta.coverageSpan);
   row += 2;
+
+  // Data-coverage warning block (only when the monthly series has gaps).
+  if (meta.dataGapLines && meta.dataGapLines.length > 0) {
+    const title = sheet.getCell(row, 1);
+    title.value = "⚠ Data Coverage Warning — growth may be overstated";
+    title.font = { name: "Calibri", size: 11, bold: true, color: { argb: "9C6500" } };
+    title.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF2CC" } };
+    sheet.mergeCells(row, 1, row, 2);
+    row++;
+    for (const line of meta.dataGapLines) {
+      const c = sheet.getCell(row, 1);
+      c.value = line;
+      c.font = { name: "Calibri", size: 10, color: { argb: "7F6000" } };
+      c.alignment = { wrapText: true, vertical: "top" };
+      sheet.mergeCells(row, 1, row, 2);
+      sheet.getRow(row).height = Math.max(15, Math.ceil(line.length / 70) * 14);
+      row++;
+    }
+    row += 1;
+  }
 
   // Contents — hyperlink to every other sheet
   const ch = sheet.getCell(row, 1);

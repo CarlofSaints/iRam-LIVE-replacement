@@ -4,6 +4,7 @@ import { getClients } from "@/lib/clientData";
 import { getAllSalesLedgers, getSalesLedger } from "@/lib/salesData";
 import { getUploadsByClient } from "@/lib/uploadData";
 import { getReportCounts } from "@/lib/reportCounts";
+import { analyzeCoverage, coverageMessageLines } from "@/lib/dataCoverage";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -29,6 +30,10 @@ export interface DashboardClientRow {
   agedStockCount: number;
   vitalSignsRuns: number;
   monthEndRuns: number;
+  /** Data-coverage flag: true when the monthly series has gaps (esp. prior-year). */
+  hasDataGaps: boolean;
+  /** Human-readable warning lines (empty when no gaps). */
+  dataGapLines: string[];
 }
 
 export async function GET(req: NextRequest) {
@@ -46,11 +51,13 @@ export async function GET(req: NextRequest) {
       // ── Sales metrics: unique SKUs + YTD units/value across all the client's ledgers ──
       const ledgerMetas = await getAllSalesLedgers(client.id);
       const uniqueArticles = new Set<string>();
+      const clientDateCols = new Set<string>();
       let ytdUnits = 0;
       let ytdValue = 0;
 
       for (const meta of ledgerMetas) {
         const dateCols = meta.dateColumns ?? [];
+        for (const dc of dateCols) clientDateCols.add(dc);
         // YTD = the most recent year present in this ledger's date columns
         let maxYear = 0;
         for (const dc of dateCols) {
@@ -95,6 +102,8 @@ export async function GET(req: NextRequest) {
 
       const counts = reportCounts[client.id] ?? { vitalSigns: 0, monthEnd: 0 };
 
+      const coverage = analyzeCoverage([...clientDateCols]);
+
       rows.push({
         clientId: client.id,
         clientName: client.name,
@@ -106,6 +115,8 @@ export async function GET(req: NextRequest) {
         agedStockCount: agedFiles.size,
         vitalSignsRuns: counts.vitalSigns ?? 0,
         monthEndRuns: counts.monthEnd ?? 0,
+        hasDataGaps: coverage.hasGaps,
+        dataGapLines: coverageMessageLines(coverage),
       });
     }
 
