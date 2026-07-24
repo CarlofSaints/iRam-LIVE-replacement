@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { authFetch } from "@/lib/useAuth";
 import SearchSelect from "@/components/SearchSelect";
+import { analyzeCoverage, formatMonth, type CoverageResult } from "@/lib/dataCoverage";
 import type { Client, Channel, SalesLedgerMeta } from "@/lib/types";
 
 interface ReportStats {
@@ -271,6 +272,18 @@ export default function ReportsPage() {
     return sum + (l?.totalRows ?? 0);
   }, 0);
 
+  // Data-coverage check: scope to the selected channels once chosen, else the
+  // whole client (so the warning appears the moment a client is picked).
+  const coverage = useMemo(() => {
+    const src = effectiveChannelIds.length > 0
+      ? ledgers.filter((l) => effectiveChannelIds.includes(l.channelId))
+      : ledgers;
+    const cols = new Set<string>();
+    for (const l of src) for (const dc of l.dateColumns ?? []) cols.add(dc);
+    return analyzeCoverage([...cols]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ledgers, effectiveChannelIds.join(",")]);
+
   function toggleSubChannel(id: string) {
     setSelectedSubIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
@@ -494,6 +507,11 @@ export default function ReportsPage() {
           </div>
         )}
       </div>
+
+      {/* Data-coverage warning — surfaces the moment a client is selected */}
+      {clientId && ledgers.length > 0 && coverage.hasGaps && (
+        <DataGapWarning coverage={coverage} clientName={selectedClient?.name ?? "this client"} />
+      )}
 
       {/* Stats Cards */}
       {clientId && stats && (
@@ -879,6 +897,75 @@ export default function ReportsPage() {
           <RequirementBadge label="PMF" met={hasPmf} detail={hasPmf ? "Uploaded" : "Not uploaded"} />
           <RequirementBadge label="LINKS" met={hasLinks} detail={hasLinks ? "Uploaded" : "Not uploaded"} />
           <RequirementBadge label="Store Files" met={true} detail="Optional" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MonthList({ months, max = 14 }: { months: string[]; max?: number }) {
+  const shown = months.slice(0, max);
+  const extra = months.length - shown.length;
+  return (
+    <span>
+      {shown.map((m, i) => (
+        <span key={m}>
+          {i > 0 ? ", " : ""}
+          <span className="rounded bg-amber-100 px-1 font-medium text-amber-900">{formatMonth(m)}</span>
+        </span>
+      ))}
+      {extra > 0 && <span className="text-amber-700"> +{extra} more</span>}
+    </span>
+  );
+}
+
+function DataGapWarning({ coverage, clientName }: { coverage: CoverageResult; clientName: string }) {
+  const { lyComparisonGaps, currentYtdGaps, interiorGaps, hasPriorYearData, priorYear, firstMonth, lastMonth } = coverage;
+  // Interior holes not already called out in the YTD windows (avoid repetition).
+  const windowSet = new Set([...lyComparisonGaps, ...currentYtdGaps]);
+  const otherGaps = interiorGaps.filter((m) => !windowSet.has(m));
+
+  return (
+    <div className="mb-6 rounded-xl border border-amber-300 bg-amber-50 p-4">
+      <div className="flex items-start gap-3">
+        <span className="mt-0.5 text-lg leading-none" aria-hidden>⚠️</span>
+        <div className="text-sm text-amber-900">
+          <p className="font-semibold">
+            Data gaps detected for {clientName} — growth figures may be overstated
+          </p>
+
+          {!hasPriorYearData ? (
+            <p className="mt-1 text-amber-800">
+              No prior-year ({priorYear}) data is loaded, so year-on-year growth isn&apos;t measured against a
+              real base. Treat any YoY / YTD-vs-last-year growth on the reports below as unreliable.
+            </p>
+          ) : lyComparisonGaps.length > 0 ? (
+            <p className="mt-1 text-amber-800">
+              Prior-year ({priorYear}) months missing from the comparison base:{" "}
+              <MonthList months={lyComparisonGaps} />. Year-on-year growth (YTD and same-month-last-year) will
+              read <span className="font-semibold">too high</span> — it&apos;s measured against an incomplete{" "}
+              {priorYear} base, and a smaller base inflates the growth&nbsp;%.
+            </p>
+          ) : null}
+
+          {currentYtdGaps.length > 0 && (
+            <p className="mt-1 text-amber-800">
+              Current-year months missing (understates the current base): <MonthList months={currentYtdGaps} />.
+            </p>
+          )}
+
+          {otherGaps.length > 0 && (
+            <p className="mt-1 text-amber-800">
+              Other gaps in the monthly series: <MonthList months={otherGaps} />.
+            </p>
+          )}
+
+          {firstMonth && lastMonth && (
+            <p className="mt-2 text-xs text-amber-700">
+              Data present from {formatMonth(firstMonth)} to {formatMonth(lastMonth)}. To fill a gap, re-upload the
+              DISPO that carries that month (each DISPO includes several trailing months plus the same month a year prior).
+            </p>
+          )}
         </div>
       </div>
     </div>
