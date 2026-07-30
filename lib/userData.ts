@@ -21,6 +21,26 @@ export async function getUserByEmail(email: string): Promise<User | null> {
   );
 }
 
+// Email-subscription flags. Kept as one list so create and update can never
+// drift apart again — previously createUser silently dropped every one of them,
+// so a flag ticked on the New User form only took effect on a later Edit.
+const NOTIFY_FLAGS = [
+  "receiveStoreAlerts",
+  "receiveProductAlerts",
+  "receiveStoreReportDigest",
+  "receiveActionReport",
+  "receiveLoadStatus",
+] as const;
+
+export type NotifyFlag = (typeof NOTIFY_FLAGS)[number];
+
+/** Picks just the notification flags out of an arbitrary request body. */
+export function pickNotifyFlags(src: Record<string, unknown>): Partial<Pick<User, NotifyFlag>> {
+  const out: Partial<Pick<User, NotifyFlag>> = {};
+  for (const f of NOTIFY_FLAGS) if (typeof src[f] === "boolean") out[f] = src[f] as boolean;
+  return out;
+}
+
 export async function createUser(data: {
   name: string;
   email: string;
@@ -28,7 +48,7 @@ export async function createUser(data: {
   role: User["role"];
   forcePasswordChange: boolean;
   clientIds?: string[];
-}): Promise<User> {
+} & Partial<Pick<User, NotifyFlag>>): Promise<User> {
   const users = await getUsers();
   if (users.some((u) => u.email.toLowerCase() === data.email.toLowerCase())) {
     throw new Error(`User with email "${data.email}" already exists`);
@@ -44,6 +64,7 @@ export async function createUser(data: {
     active: true,
     createdAt: new Date().toISOString(),
     clientIds: data.clientIds && data.clientIds.length > 0 ? data.clientIds : undefined,
+    ...pickNotifyFlags(data as Record<string, unknown>),
   };
   users.push(user);
   await writeJson(USERS_KEY, users);
@@ -62,11 +83,7 @@ export async function updateUser(
       | "forcePasswordChange"
       | "lastLoginAt"
       | "profilePicUrl"
-      | "receiveStoreAlerts"
-      | "receiveProductAlerts"
-      | "receiveStoreReportDigest"
-      | "receiveActionReport"
-      | "receiveLoadStatus"
+      | NotifyFlag
       | "clientIds"
     >
   >
