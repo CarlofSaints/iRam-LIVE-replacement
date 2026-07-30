@@ -11,6 +11,10 @@
     {
       "path": "/api/cron/store-report-action",
       "schedule": "0 5 * * 1"
+    },
+    {
+      "path": "/api/cron/load-status",
+      "schedule": "0 14 * * 1-5"
     }
   ]
 }

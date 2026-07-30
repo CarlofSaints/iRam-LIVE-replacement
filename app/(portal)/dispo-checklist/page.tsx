@@ -26,6 +26,24 @@ interface ChecklistData {
   activePeriodKey: string | null;
 }
 
+// Weekday 16:00 status email — computed on upload TIMESTAMP (Mon 00:00 → now),
+// so it's independent of the hand-stamped week the grid above is keyed on.
+interface LoadStatus {
+  windowLabel: string;
+  asAtLabel: string;
+  clientCount: number;
+  vendorCount: number;
+  loadedVendors: number;
+  outstandingVendors: number;
+  excludedVendors: number;
+  loadsThisWeek: number;
+  recipients: string[];
+  emailed?: number;
+  failures?: { email: string; error: string }[];
+  subject?: string;
+  html?: string;
+}
+
 function fmtDate(iso?: string): string {
   if (!iso) return "";
   const d = new Date(iso);
@@ -41,6 +59,52 @@ export default function DispoChecklistPage() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
+
+  // Status-email panel
+  const [status, setStatus] = useState<LoadStatus | null>(null);
+  const [statusBusy, setStatusBusy] = useState(false);
+  const [statusError, setStatusError] = useState("");
+  const [preview, setPreview] = useState<LoadStatus | null>(null);
+
+  async function loadStatus(): Promise<LoadStatus | null> {
+    setStatusBusy(true);
+    setStatusError("");
+    try {
+      const res = await authFetch("/api/load-status?preview=html");
+      const d = await res.json().catch(() => ({}));
+      if (res.ok) { setStatus(d); return d as LoadStatus; }
+      setStatusError(d.error || "Failed to compute load status");
+    } catch {
+      setStatusError("Network error");
+    } finally {
+      setStatusBusy(false);
+    }
+    return null;
+  }
+
+  async function sendStatus() {
+    if (!confirm("Send the DISPO load status email now to everyone flagged to receive it?")) return;
+    setStatusBusy(true);
+    setStatusError("");
+    try {
+      const res = await authFetch("/api/load-status", { method: "POST", body: JSON.stringify({}) });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setStatus(d);
+        const failed = d.failures?.length ?? 0;
+        setToast(failed > 0
+          ? `Sent to ${d.emailed} of ${d.recipients.length} — ${failed} failed`
+          : `Status email sent to ${d.emailed} recipient${d.emailed === 1 ? "" : "s"}`);
+        setTimeout(() => setToast(""), 4000);
+        if (failed > 0) setStatusError(d.failures.map((f: { email: string; error: string }) => `${f.email}: ${f.error}`).join(" · "));
+      } else {
+        setStatusError(d.error || "Send failed");
+      }
+    } catch {
+      setStatusError("Network error");
+    }
+    setStatusBusy(false);
+  }
 
   async function load() {
     setLoading(true);
@@ -141,8 +205,83 @@ export default function DispoChecklistPage() {
         </div>
       )}
 
+      {/* Weekday 16:00 status email */}
+      <div className="mb-4 rounded-xl border border-[var(--color-border)] bg-white p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="max-w-2xl">
+            <h2 className="text-sm font-semibold text-[var(--color-text)]">Load status email</h2>
+            <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+              Goes out automatically <strong>every weekday at 16:00</strong> to each user ticked
+              &ldquo;Receive DISPO load status&rdquo; in Control Centre &rarr; Users. It counts loads by
+              their actual upload time from <strong>Monday 00:00 to the moment it sends</strong>, so it
+              doesn&apos;t depend on the week stamped on the file. A vendor only counts as loaded once
+              every channel it normally loads on has come in.
+            </p>
+          </div>
+          <div className="flex shrink-0 gap-2">
+            <button type="button" disabled={statusBusy}
+              onClick={async () => { const s = await loadStatus(); if (s) setPreview(s); }}
+              className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-sm font-medium text-[var(--color-text)] hover:border-zinc-400 disabled:opacity-50">
+              {statusBusy && !preview ? "Checking…" : "Preview"}
+            </button>
+            {canManage && (
+              <button type="button" disabled={statusBusy} onClick={sendStatus}
+                className="rounded-lg bg-[var(--color-primary)] px-3 py-1.5 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)] disabled:opacity-50">
+                Send now
+              </button>
+            )}
+          </div>
+        </div>
+
+        {status && (
+          <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-[var(--color-border)] pt-3 text-xs text-[var(--color-text-muted)]">
+            <span><strong className="text-[var(--color-text)]">{status.windowLabel}</strong></span>
+            <span>{status.clientCount} clients · {status.vendorCount} vendors</span>
+            <span className="text-green-700">{status.loadedVendors} loaded</span>
+            <span className={status.outstandingVendors > 0 ? "font-semibold text-red-600" : "text-zinc-400"}>
+              {status.outstandingVendors} outstanding
+            </span>
+            {status.excludedVendors > 0 && <span className="text-amber-600">{status.excludedVendors} skipped</span>}
+            <span>{status.loadsThisWeek} DISPO file(s) since Monday</span>
+            <span>
+              {status.recipients.length > 0
+                ? `Recipients: ${status.recipients.join(", ")}`
+                : "⚠ No recipients — tick a user in Control Centre → Users"}
+            </span>
+          </div>
+        )}
+        {statusError && <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{statusError}</div>}
+      </div>
+
       {error && <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
       {toast && <div className="mb-4 rounded-lg border border-green-200 bg-green-50 px-4 py-2 text-sm text-green-700">{toast}</div>}
+
+      {/* Preview of the actual email body */}
+      {preview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setPreview(null)}>
+          <div className="flex max-h-[90vh] w-full max-w-3xl flex-col rounded-xl border border-[var(--color-border)] bg-white shadow-xl"
+            onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-4 border-b border-[var(--color-border)] px-5 py-3">
+              <div>
+                <h2 className="text-sm font-semibold text-[var(--color-text)]">Email preview</h2>
+                <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">
+                  Subject: {preview.subject || "—"}
+                </p>
+                <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">
+                  Greeting uses each recipient&apos;s own first name — this preview shows yours.
+                </p>
+              </div>
+              <button onClick={() => setPreview(null)} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+                Close
+              </button>
+            </div>
+            <div className="overflow-y-auto bg-zinc-50 p-4">
+              <iframe title="Load status email preview" sandbox="" srcDoc={preview.html || ""}
+                className="h-[60vh] w-full rounded-lg border border-[var(--color-border)] bg-white" />
+            </div>
+          </div>
+        </div>
+      )}
 
       {loading && !data ? (
         <div className="text-sm text-[var(--color-text-muted)]">Loading…</div>

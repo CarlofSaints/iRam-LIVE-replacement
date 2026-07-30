@@ -66,6 +66,7 @@ export async function updateUser(
       | "receiveProductAlerts"
       | "receiveStoreReportDigest"
       | "receiveActionReport"
+      | "receiveLoadStatus"
       | "clientIds"
     >
   >

@@ -108,6 +108,7 @@ export interface User {
   receiveProductAlerts?: boolean;  // gets missing-article (LINKS/PMF) validation emails on DISPO load
   receiveStoreReportDigest?: boolean;  // gets the daily store-report engagement digest
   receiveActionReport?: boolean;       // gets the weekly rep action-claim spreadsheet (manager/CAM)
+  receiveLoadStatus?: boolean;         // gets the 16:00 weekday "who hasn't loaded a DISPO this week" status email
   // Client scoping — when non-empty, this user may only see data for these
   // client IDs (external "client" accounts). Empty/undefined = all clients.
   clientIds?: string[];
