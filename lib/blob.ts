@@ -63,7 +63,12 @@ export async function readJson<T>(key: string, fallback: T): Promise<T> {
 
 export async function writeJson<T>(key: string, data: T): Promise<void> {
   const fullKey = key.startsWith(PREFIX) ? key : PREFIX + key;
-  const json = JSON.stringify(data, null, 2);
+  // Compact, NOT pretty-printed. These blobs are machine-read only, and the big
+  // ones (sales ledgers, raw upload rows, PMF/LINKS) are tens of thousands of
+  // wide row objects — 2-space indentation was costing ~25% of the stored bytes
+  // for nothing. JSON.parse reads either form, so existing pretty blobs stay
+  // readable and shrink the next time they're written.
+  const json = JSON.stringify(data);
 
   if (!useBlob) {
     const p = localPath(fullKey);
