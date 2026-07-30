@@ -12,7 +12,7 @@
 
 import { existsSync } from "fs";
 import { join } from "path";
-import { getClients } from "./clientData";
+import { getActiveClients } from "./clientData";
 import { getAllSalesLedgers, getSalesLedger } from "./salesData";
 import { enrichLedger } from "./enrichment";
 import { getStatusDefinitions } from "./statusData";
@@ -83,7 +83,7 @@ export async function loadStoreReport(opts: LoadStoreReportOpts): Promise<Loaded
   // Perigee code points at its DISPO code); then match loosely.
   const mapped = await resolveDispoCode(opts.siteCode);
   const site = norm(mapped ?? opts.siteCode);
-  const allClients = await getClients();
+  const allClients = await getActiveClients();
   const clients = opts.clientIds && opts.clientIds.length
     ? allClients.filter((c) => opts.clientIds!.includes(c.id))
     : allClients.filter((c) => c.sendConsolidatedStoreReports);
@@ -202,7 +202,7 @@ export interface StorePickEntry {
 }
 
 export async function listStoresForClients(clientIds?: string[]): Promise<StorePickEntry[]> {
-  const allClients = await getClients();
+  const allClients = await getActiveClients();
   const clients = clientIds && clientIds.length
     ? allClients.filter((c) => clientIds.includes(c.id))
     : allClients.filter((c) => c.sendConsolidatedStoreReports);

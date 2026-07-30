@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { requirePermission, handleAuthError, noCacheHeaders } from "@/lib/auth";
-import { getClients } from "@/lib/clientData";
+import { getActiveClients } from "@/lib/clientData";
 import { listStoresForClients } from "@/lib/storeReportLoad";
 
 // Picker data for the store-report test tool: the client list + the stores that
@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
     const clientId = new URL(req.url).searchParams.get("clientId") || undefined;
 
     const [clients, stores] = await Promise.all([
-      getClients(),
+      getActiveClients(),
       listStoresForClients(clientId ? [clientId] : undefined),
     ]);
 

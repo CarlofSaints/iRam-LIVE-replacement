@@ -1,6 +1,6 @@
 import { put, list, del } from "@vercel/blob";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from "fs";
-import { join, dirname } from "path";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync, readdirSync, statSync } from "fs";
+import { join, dirname, relative } from "path";
 
 const PREFIX = "live/";
 const DATA_DIR = join(process.cwd(), "data");
@@ -93,7 +93,13 @@ export async function writeJson<T>(key: string, data: T): Promise<void> {
   writeCache.set(fullKey, { json, ts: Date.now() });
 }
 
-export async function deleteBlob(key: string): Promise<void> {
+/**
+ * Deletes a blob. Returns TRUE only if something was actually removed —
+ * a missing key returns false rather than throwing, so callers that are
+ * cleaning up opportunistically can ignore it, while the client purge can
+ * report a truthful count instead of assuming every call did something.
+ */
+export async function deleteBlob(key: string): Promise<boolean> {
   const fullKey = key.startsWith(PREFIX) ? key : PREFIX + key;
 
   // Clear cache for this key
@@ -102,19 +108,63 @@ export async function deleteBlob(key: string): Promise<void> {
   if (!useBlob) {
     try {
       const p = localPath(fullKey);
-      if (existsSync(p)) unlinkSync(p);
+      if (!existsSync(p)) return false;
+      unlinkSync(p);
+      return true;
     } catch {
-      /* ignore */
+      return false;
     }
-    return;
   }
   try {
     const { blobs } = await list({ prefix: fullKey, limit: 1 });
     const match = blobs.find((b) => b.pathname === fullKey);
-    if (match) await del(match.url);
+    if (!match) return false;
+    await del(match.url);
+    return true;
   } catch {
-    /* ignore */
+    return false;
   }
+}
+
+export interface BlobEntry { key: string; size: number }
+
+/**
+ * Every blob under a key prefix, with sizes. Used by the client purge so it
+ * deletes whatever is actually there rather than a hardcoded key list that
+ * would silently go stale the next time someone adds a per-client blob.
+ * Prefix is relative to the store root ("clients/{id}/", "sales/{id}/").
+ */
+export async function listBlobs(prefix: string): Promise<BlobEntry[]> {
+  const fullPrefix = prefix.startsWith(PREFIX) ? prefix : PREFIX + prefix;
+
+  if (!useBlob) {
+    const dir = localPath(fullPrefix);
+    const out: BlobEntry[] = [];
+    const walk = (p: string) => {
+      if (!existsSync(p)) return;
+      for (const entry of readdirSync(p, { withFileTypes: true })) {
+        const child = join(p, entry.name);
+        if (entry.isDirectory()) walk(child);
+        // relative() rather than slicing by length: join() PRESERVES a trailing
+        // separator, so a fixed offset ate the first character of every name.
+        else out.push({
+          key: fullPrefix.replace(/\/?$/, "/") + relative(dir, child).replace(/\\/g, "/"),
+          size: statSync(child).size,
+        });
+      }
+    };
+    walk(dir);
+    return out;
+  }
+
+  const out: BlobEntry[] = [];
+  let cursor: string | undefined;
+  do {
+    const res = await list({ prefix: fullPrefix, limit: 1000, cursor });
+    for (const b of res.blobs) out.push({ key: b.pathname, size: b.size ?? 0 });
+    cursor = res.hasMore ? res.cursor : undefined;
+  } while (cursor);
+  return out;
 }
 
 export async function writeBlob(

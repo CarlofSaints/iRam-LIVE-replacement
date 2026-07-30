@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { requirePermission, noCacheHeaders, handleAuthError } from "@/lib/auth";
 import { getUploadIndex } from "@/lib/uploadData";
-import { getClients } from "@/lib/clientData";
+import { getActiveClients } from "@/lib/clientData";
 import { addLog } from "@/lib/activityLog";
 import {
   getStoreReportState,
@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
       // Gate: a period is only armable when there are no outstanding streams
       // (every stream loaded or explicitly excluded) and at least one loaded.
       const [uploads, clients, state] = await Promise.all([
-        getUploadIndex(), getClients(), getStoreReportState(),
+        getUploadIndex(), getActiveClients(), getStoreReportState(),
       ]);
       const { perPeriod } = buildChecklist(uploads, clients, state);
       const summary = perPeriod[periodKey(year, month, week)];

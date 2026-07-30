@@ -76,7 +76,7 @@ export default function ChartsPage() {
 
   useEffect(() => {
     (async () => {
-      const [cRes, chRes] = await Promise.all([authFetch("/api/clients"), authFetch("/api/channels")]);
+      const [cRes, chRes] = await Promise.all([authFetch("/api/clients?scope=all"), authFetch("/api/channels")]);
       if (cRes.ok) {
         const all: Client[] = await cRes.json();
         const active = all.filter((c) => c.active);

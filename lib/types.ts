@@ -219,6 +219,12 @@ export interface Client {
   // When true, this client's data is pooled into the consolidated store
   // reports emailed to reps (see the Send Store Reports module).
   sendConsolidatedStoreReports?: boolean;
+  // Archive = active:false. All data is retained and stays readable in
+  // Reports/Charts, but the client drops out of every operational flow
+  // (DISPO checklist, load-status email, store reports, crons, uploads,
+  // dashboard). See getActiveClients() in lib/clientData.ts.
+  archivedAt?: string;   // ISO
+  archivedBy?: string;   // user name who archived it
 }
 
 // ── Uploads ──

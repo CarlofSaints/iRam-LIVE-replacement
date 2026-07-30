@@ -34,6 +34,14 @@ export async function getClientReportCounts(
   return store[clientId] ?? emptyCounts();
 }
 
+/** Forget a client's counters entirely (client purge). */
+export async function deleteClientReportCounts(clientId: string): Promise<void> {
+  const store = await getReportCounts();
+  if (store[clientId] === undefined) return;
+  delete store[clientId];
+  await writeJson(KEY, store);
+}
+
 /** Increment a client's report counter. Never throws — logging must not break a download. */
 export async function incrementReportCount(
   clientId: string,

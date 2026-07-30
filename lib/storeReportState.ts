@@ -43,6 +43,23 @@ async function save(s: StoreReportState): Promise<void> {
   await writeJson(KEY, s);
 }
 
+/**
+ * Strip a purged client's "Skip this vendor this week" marks from every period.
+ * streamId is `${clientId}|${channelId}|${vendor}`, so a stale one would keep
+ * excluding a stream that no longer exists. Returns how many were removed.
+ */
+export async function removeClientExclusions(clientId: string): Promise<number> {
+  const s = await getStoreReportState();
+  let removed = 0;
+  for (const period of Object.values(s.periods)) {
+    const kept = period.excludedStreams.filter((id) => !id.startsWith(`${clientId}|`));
+    removed += period.excludedStreams.length - kept.length;
+    period.excludedStreams = kept;
+  }
+  if (removed > 0) await save(s);
+  return removed;
+}
+
 function ensurePeriod(s: StoreReportState, year: number, month: number, week: number): WeekState {
   const k = periodKey(year, month, week);
   if (!s.periods[k]) s.periods[k] = { year, month, week, excludedStreams: [], armed: false };

@@ -81,7 +81,7 @@ export default function ReportsPage() {
   useEffect(() => {
     (async () => {
       const [cRes, chRes] = await Promise.all([
-        authFetch("/api/clients"),
+        authFetch("/api/clients?scope=all"),
         authFetch("/api/channels"),
       ]);
       if (cRes.ok) {

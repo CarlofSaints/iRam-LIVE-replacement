@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { requirePermission, handleAuthError, noCacheHeaders } from "@/lib/auth";
-import { getClients } from "@/lib/clientData";
+import { getActiveClients } from "@/lib/clientData";
 import { getAllSalesLedgers, getSalesLedger } from "@/lib/salesData";
 import { getUploadsByClient } from "@/lib/uploadData";
 import { getReportCounts } from "@/lib/reportCounts";
@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
     await requirePermission(req, "view_dashboard");
 
     const [clients, reportCounts] = await Promise.all([
-      getClients(),
+      getActiveClients(),
       getReportCounts(),
     ]);
 

@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { requirePermission, handleAuthError, noCacheHeaders } from "@/lib/auth";
-import { getClients } from "@/lib/clientData";
+import { getActiveClients } from "@/lib/clientData";
 import { getAllSalesLedgers, getSalesLedger } from "@/lib/salesData";
 import { getMergedStores } from "@/lib/storeFileData";
 import { getCodeMap, buildResolver, looseCode, type CodeMapping } from "@/lib/storeReportCodeMap";
@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
     }
 
     // DISPO codes (from ledgers) + store-master codes & names.
-    const clients = (await getClients()).filter((c) => c.sendConsolidatedStoreReports);
+    const clients = (await getActiveClients()).filter((c) => c.sendConsolidatedStoreReports);
     const dispoExact = new Set<string>();
     const dispoLoose = new Map<string, string>();   // loose → exact example
     const dispoDigits = new Map<string, string>();  // digit-core → callable example (fuzzy match)

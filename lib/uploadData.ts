@@ -40,6 +40,20 @@ export async function getUploadData(
   return readJson<Record<string, unknown>[]>(dataKey(id), []);
 }
 
+/**
+ * Drops every index entry for a client and deletes its row blobs.
+ * Used by the client purge — returns how many uploads were removed.
+ */
+export async function deleteUploadsForClient(clientId: string): Promise<number> {
+  const index = await getUploadIndex();
+  const mine = index.filter((u) => u.clientId === clientId);
+  if (mine.length === 0) return 0;
+  await writeJson(INDEX_KEY, index.filter((u) => u.clientId !== clientId));
+  let deleted = 0;
+  for (const u of mine) if (await deleteBlob(dataKey(u.id))) deleted++;
+  return deleted;
+}
+
 export async function deleteUpload(id: string): Promise<void> {
   const index = await getUploadIndex();
   const filtered = index.filter((u) => u.id !== id);

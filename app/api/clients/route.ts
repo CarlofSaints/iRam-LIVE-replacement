@@ -12,6 +12,14 @@ export async function GET(req: NextRequest) {
       const allowed = new Set(session.clientIds);
       clients = clients.filter((c) => allowed.has(c.id));
     }
+    // Archived clients are hidden by DEFAULT, so any caller that doesn't think
+    // about it gets the operational list (upload targets, dashboard…). The
+    // read-only surfaces that must still reach retained data — Reports, Charts,
+    // Activity Log, the Clients page itself — opt in with ?scope=all.
+    const scope = new URL(req.url).searchParams.get("scope");
+    if (scope === "archived") clients = clients.filter((c) => !c.active);
+    else if (scope !== "all") clients = clients.filter((c) => c.active);
+
     return Response.json(clients, { headers: noCacheHeaders() });
   } catch (err) {
     return handleAuthError(err);

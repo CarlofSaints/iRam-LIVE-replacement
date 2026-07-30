@@ -65,7 +65,7 @@ export default function ActivityLogPage() {
       try {
         const [logRes, clientRes] = await Promise.all([
           authFetch("/api/logs"),
-          authFetch("/api/clients"),
+          authFetch("/api/clients?scope=all"),
         ]);
         if (logRes.ok) setLogs(await logRes.json());
         if (clientRes.ok) {

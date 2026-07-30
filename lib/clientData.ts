@@ -16,6 +16,20 @@ export async function getClients(): Promise<Client[]> {
   return readJson<Client[]>(KEY, []);
 }
 
+/**
+ * Clients that take part in OPERATIONAL flows — DISPO checklist, the 16:00
+ * load-status email, store reports and their crons, DISPO upload targets and
+ * the dashboard grid.
+ *
+ * Archived clients (active:false) are deliberately excluded here but keep all
+ * their data and stay selectable in Reports/Charts, which read getClients()
+ * directly. If you are adding a new scheduled job or anything that chases
+ * people for data, call THIS, not getClients().
+ */
+export async function getActiveClients(): Promise<Client[]> {
+  return (await getClients()).filter((c) => c.active);
+}
+
 export async function getClientById(id: string): Promise<Client | null> {
   const clients = await getClients();
   return clients.find((c) => c.id === id) ?? null;
@@ -72,6 +86,34 @@ export async function updateClient(
   return clients[idx];
 }
 
+/**
+ * Archive (active:false) or restore a client. Archiving keeps every byte of the
+ * client's data — it only takes them out of the operational flows listed on
+ * getActiveClients(). Stamps who/when so the Clients page can show it.
+ */
+export async function setClientArchived(
+  id: string,
+  archived: boolean,
+  byUserName: string,
+): Promise<Client> {
+  const clients = await getClients();
+  const idx = clients.findIndex((c) => c.id === id);
+  if (idx === -1) throw new Error("Client not found");
+  clients[idx] = {
+    ...clients[idx],
+    active: !archived,
+    archivedAt: archived ? new Date().toISOString() : undefined,
+    archivedBy: archived ? byUserName : undefined,
+  };
+  await writeJson(KEY, clients);
+  return clients[idx];
+}
+
+/**
+ * Removes the client RECORD only. Callers must purge the client's stored data
+ * first — see purgeClient() in lib/clientPurge.ts, which is what the DELETE
+ * route uses. Calling this on its own orphans every ledger and upload blob.
+ */
 export async function deleteClient(id: string): Promise<void> {
   const clients = await getClients();
   const filtered = clients.filter((c) => c.id !== id);

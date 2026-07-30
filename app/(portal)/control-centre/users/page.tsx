@@ -139,7 +139,7 @@ export default function UsersPage() {
   useEffect(() => { load(); }, []);
   useEffect(() => {
     (async () => {
-      const res = await authFetch("/api/clients");
+      const res = await authFetch("/api/clients?scope=all");
       if (res.ok) {
         const all: { id: string; name: string }[] = await res.json();
         setClients(all);

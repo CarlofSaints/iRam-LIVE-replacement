@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { requirePermission, noCacheHeaders, handleAuthError } from "@/lib/auth";
 import { getUploadIndex } from "@/lib/uploadData";
-import { getClients } from "@/lib/clientData";
+import { getActiveClients } from "@/lib/clientData";
 import { getStoreReportState } from "@/lib/storeReportState";
 import { buildChecklist } from "@/lib/dispoChecklist";
 
@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
 
     const [uploads, clients, state] = await Promise.all([
       getUploadIndex(),
-      getClients(),
+      getActiveClients(),
       getStoreReportState(),
     ]);
 
