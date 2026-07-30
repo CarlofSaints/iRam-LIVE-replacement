@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { list } from "@vercel/blob";
+import { gunzipSync } from "zlib";
 import { requireLogin, noCacheHeaders, handleAuthError } from "@/lib/auth";
 
 /**
@@ -93,7 +94,12 @@ async function inspectBlob(fullKey: string) {
     };
   }
 
-  const text = await res.text();
+  // This endpoint deliberately bypasses readJson to inspect the raw blob, so
+  // it has to handle the gzip itself (see the transparent-gzip note in
+  // lib/blob.ts). Sniff the magic bytes exactly as readJson does.
+  const raw = Buffer.from(await res.arrayBuffer());
+  const gzipped = raw.length >= 2 && raw[0] === 0x1f && raw[1] === 0x8b;
+  const text = (gzipped ? gunzipSync(raw) : raw).toString("utf-8");
   let data: unknown;
   try {
     data = JSON.parse(text);

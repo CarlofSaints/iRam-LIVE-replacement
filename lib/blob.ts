@@ -1,4 +1,5 @@
 import { put, list, del } from "@vercel/blob";
+import { gzipSync, gunzipSync } from "zlib";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync, readdirSync, statSync } from "fs";
 import { join, dirname, relative } from "path";
 
@@ -20,13 +21,36 @@ function localPath(key: string): string {
 const writeCache = new Map<string, { json: string; ts: number }>();
 const CACHE_TTL_MS = 30_000;
 
+/* ── Transparent gzip ──
+   These blobs are repetitive tabular JSON, which compresses ~30x (a 15MB
+   ledger stores as 0.5MB). Writes gzip at level 6 — measured at ~44ms for
+   15MB, and level 9 buys nothing — and reads DETECT the format from the
+   gzip magic bytes rather than the key name.
+
+   Sniffing rather than a ".gz" suffix is what makes this migration-free:
+   blobs written before this change are plain UTF-8 and still read fine,
+   and each one shrinks the next time it happens to be written. Nothing
+   has to be converted, and a rollback can still read anything written
+   while it was live... except gzipped blobs, so a revert of this commit
+   must also re-save affected data. */
+const GZIP_LEVEL = 6;
+
+function isGzip(buf: Buffer): boolean {
+  return buf.length >= 2 && buf[0] === 0x1f && buf[1] === 0x8b;
+}
+
+function decodeMaybeGzip(buf: Buffer): string {
+  return (isGzip(buf) ? gunzipSync(buf) : buf).toString("utf-8");
+}
+
 export async function readJson<T>(key: string, fallback: T): Promise<T> {
   const fullKey = key.startsWith(PREFIX) ? key : PREFIX + key;
   if (!useBlob) {
     try {
       const p = localPath(fullKey);
       if (!existsSync(p)) return fallback;
-      return JSON.parse(readFileSync(p, "utf-8")) as T;
+      // Sniff here too, so a blob copied down from production reads locally.
+      return JSON.parse(decodeMaybeGzip(readFileSync(p))) as T;
     } catch {
       return fallback;
     }
@@ -51,7 +75,9 @@ export async function readJson<T>(key: string, fallback: T): Promise<T> {
       cache: "no-store",
     });
     if (!res.ok) return fallback;
-    const text = await res.text();
+    // arrayBuffer, not text(): the stored bytes may be gzip. decodeMaybeGzip
+    // handles both, so plain blobs written before gzip landed still read.
+    const text = decodeMaybeGzip(Buffer.from(await res.arrayBuffer()));
     const parsed = JSON.parse(text) as T;
     // Do NOT warm the cache on reads — a read-warmed entry can mask another
     // container's newer write for up to CACHE_TTL_MS. Only writes warm it.
@@ -71,13 +97,14 @@ export async function writeJson<T>(key: string, data: T): Promise<void> {
   const json = JSON.stringify(data);
 
   if (!useBlob) {
+    // Local dev stays PLAIN so the files under data/ remain greppable.
     const p = localPath(fullKey);
     mkdirSync(dirname(p), { recursive: true });
     writeFileSync(p, json);
     return;
   }
 
-  await put(fullKey, json, {
+  await put(fullKey, gzipSync(Buffer.from(json), { level: GZIP_LEVEL }), {
     access: "public",
     addRandomSuffix: false,
     allowOverwrite: true,
