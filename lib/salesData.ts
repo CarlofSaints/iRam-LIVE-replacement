@@ -1,5 +1,5 @@
 import type { SalesLedgerMeta } from "./types";
-import { readJson, writeJson, deleteBlob } from "./blob";
+import { readJson, readJsonStrict, writeJson, deleteBlob } from "./blob";
 import { DATE_COL_REGEX } from "./headers";
 
 /* ──────────────────────────────────────────────────────────────
@@ -152,8 +152,16 @@ export async function mergeDispo(params: MergeDispoParams): Promise<MergeResult>
     reportWeek,
   } = params;
 
-  // Load existing ledger (or start empty)
-  const existing = await getSalesLedger(clientId, channelId);
+  // Load existing ledger (or start empty).
+  // STRICT on purpose: this whole function is a read-modify-write of the
+  // client's entire sales history, so a transient read failure that quietly
+  // returned [] would merge this one DISPO into nothing and then SAVE that
+  // over every month already in the ledger. Failing the upload is recoverable;
+  // silently replacing the history is not.
+  const existing = await readJsonStrict<Record<string, unknown>[]>(
+    ledgerKey(clientId, channelId),
+    [],
+  );
 
   // Build lookup map keyed by Article|Site
   const ledgerMap = new Map<string, Record<string, unknown>>();
@@ -324,8 +332,9 @@ export async function mergeDispo(params: MergeDispoParams): Promise<MergeResult>
 
   await writeJson(metaKey(clientId, channelId), meta);
 
-  // Update client-level index
-  const clientIndex = await getAllSalesLedgers(clientId);
+  // Update client-level index (strict — same reason as the ledger read above:
+  // a failed read here would drop every other channel from Reports/Charts)
+  const clientIndex = await readJsonStrict<SalesLedgerMeta[]>(clientMetaIndexKey(clientId), []);
   const idx = clientIndex.findIndex((m) => m.channelId === channelId);
   if (idx >= 0) {
     clientIndex[idx] = meta;

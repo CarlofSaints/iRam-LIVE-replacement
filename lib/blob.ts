@@ -43,48 +43,105 @@ function decodeMaybeGzip(buf: Buffer): string {
   return (isGzip(buf) ? gunzipSync(buf) : buf).toString("utf-8");
 }
 
-export async function readJson<T>(key: string, fallback: T): Promise<T> {
-  const fullKey = key.startsWith(PREFIX) ? key : PREFIX + key;
+/* ── Reading ──
+   loadJson() is the one real reader. It distinguishes the two cases that a
+   plain `catch { return fallback }` fatally conflates:
+
+     found: false  → the blob genuinely is not there (a first-ever write)
+     throws        → we could not TELL: list/fetch failed, the body was
+                     truncated, the gzip or JSON did not parse
+
+   That distinction matters because almost every caller does a read-modify-
+   write. Treating "the read broke" as "there is no data" makes the next write
+   save an EMPTY collection over a full one — a transient network blip silently
+   becomes data loss. Read-only callers can still opt into the old forgiving
+   behaviour via readJson(); anything that writes back must use readJsonStrict()
+   so a failed read aborts instead of erasing. */
+export class BlobReadError extends Error {
+  constructor(key: string, cause: unknown) {
+    super(`Blob read failed for "${key}": ${cause instanceof Error ? cause.message : String(cause)}`);
+    this.name = "BlobReadError";
+  }
+}
+
+async function loadJson<T>(
+  fullKey: string,
+  skipCache: boolean,
+): Promise<{ found: boolean; value?: T }> {
   if (!useBlob) {
+    const p = localPath(fullKey);
+    if (!existsSync(p)) return { found: false };
     try {
-      const p = localPath(fullKey);
-      if (!existsSync(p)) return fallback;
       // Sniff here too, so a blob copied down from production reads locally.
-      return JSON.parse(decodeMaybeGzip(readFileSync(p))) as T;
-    } catch {
-      return fallback;
+      return { found: true, value: JSON.parse(decodeMaybeGzip(readFileSync(p))) as T };
+    } catch (err) {
+      throw new BlobReadError(fullKey, err);
     }
   }
 
-  // Check write cache first (avoids stale CDN reads after recent writes)
-  const cached = writeCache.get(fullKey);
-  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
-    try {
-      return JSON.parse(cached.json) as T;
-    } catch {
-      writeCache.delete(fullKey);
+  // Check write cache first (avoids stale CDN reads after recent writes).
+  // skipCache is for read-after-write VERIFICATION: the whole point there is to
+  // see what the store actually holds, and our own cache would just echo back
+  // the copy we hoped we wrote.
+  if (!skipCache) {
+    const cached = writeCache.get(fullKey);
+    if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
+      try {
+        return { found: true, value: JSON.parse(cached.json) as T };
+      } catch {
+        writeCache.delete(fullKey);
+      }
     }
   }
 
   // Use list() to find the blob URL, then fetch directly (cache-busted)
+  let match;
   try {
     const { blobs } = await list({ prefix: fullKey, limit: 10 });
-    const match = blobs.find((b) => b.pathname === fullKey);
-    if (!match) return fallback;
-    const res = await fetch(`${match.url}?t=${Date.now()}`, {
-      cache: "no-store",
-    });
-    if (!res.ok) return fallback;
+    match = blobs.find((b) => b.pathname === fullKey);
+  } catch (err) {
+    throw new BlobReadError(fullKey, err);
+  }
+  if (!match) return { found: false };
+
+  try {
+    const res = await fetch(`${match.url}?t=${Date.now()}`, { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     // arrayBuffer, not text(): the stored bytes may be gzip. decodeMaybeGzip
     // handles both, so plain blobs written before gzip landed still read.
     const text = decodeMaybeGzip(Buffer.from(await res.arrayBuffer()));
-    const parsed = JSON.parse(text) as T;
     // Do NOT warm the cache on reads — a read-warmed entry can mask another
     // container's newer write for up to CACHE_TTL_MS. Only writes warm it.
-    return parsed;
+    return { found: true, value: JSON.parse(text) as T };
+  } catch (err) {
+    throw new BlobReadError(fullKey, err);
+  }
+}
+
+/** Forgiving read: any failure returns `fallback`. Read-only callers only. */
+export async function readJson<T>(key: string, fallback: T): Promise<T> {
+  const fullKey = key.startsWith(PREFIX) ? key : PREFIX + key;
+  try {
+    const r = await loadJson<T>(fullKey, false);
+    return r.found ? (r.value as T) : fallback;
   } catch {
     return fallback;
   }
+}
+
+/**
+ * Strict read: returns `fallback` ONLY when the blob genuinely doesn't exist,
+ * and THROWS BlobReadError when the read failed. Use this on every path that
+ * writes the result back, so a broken read can never be saved as "empty".
+ */
+export async function readJsonStrict<T>(
+  key: string,
+  fallback: T,
+  opts?: { skipCache?: boolean },
+): Promise<T> {
+  const fullKey = key.startsWith(PREFIX) ? key : PREFIX + key;
+  const r = await loadJson<T>(fullKey, opts?.skipCache ?? false);
+  return r.found ? (r.value as T) : fallback;
 }
 
 export async function writeJson<T>(key: string, data: T): Promise<void> {

@@ -18,7 +18,7 @@
 
 import { listBlobs, deleteBlob, type BlobEntry } from "./blob";
 import { getClientById, deleteClient } from "./clientData";
-import { getUploadIndex, deleteUploadsForClient } from "./uploadData";
+import { getUploadIndex, deleteUploadsForClient, uploadMetaKey } from "./uploadData";
 import { removeClientExclusions } from "./storeReportState";
 import { deleteClientReportCounts } from "./reportCounts";
 import type { UploadMeta } from "./types";
@@ -78,7 +78,12 @@ export async function previewPurge(clientId: string): Promise<PurgePreview> {
 // client's uploads at once.
 async function uploadRowBlobs(uploads: UploadMeta[]): Promise<BlobEntry[]> {
   if (uploads.length === 0) return [];
-  const wanted = new Set(uploads.map((u) => `uploads/${u.id}.json`));
+  // Both blobs per upload: the rows and the small meta record the index is
+  // rebuilt from. Missing the meta blob here would under-report the purge and,
+  // worse, leave the record that makes getUploadIndex() resurrect the upload.
+  const wanted = new Set(
+    uploads.flatMap((u) => [`uploads/${u.id}.json`, uploadMetaKey(u.id)]),
+  );
   const all = await listBlobs("uploads/");
   return all.filter((b) => wanted.has(stripPrefix(b.key)));
 }
