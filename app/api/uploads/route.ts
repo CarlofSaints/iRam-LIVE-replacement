@@ -13,6 +13,7 @@ import { getUsers } from "@/lib/userData";
 import { sendMissingProductsEmail, sendMissingStoresEmail } from "@/lib/email";
 import { requireLogin, requirePermission, noCacheHeaders, handleAuthError } from "@/lib/auth";
 import { addLog } from "@/lib/activityLog";
+import { acquireUploadLock, releaseUploadLock, lockMessage } from "@/lib/uploadLock";
 import type { FileType } from "@/lib/types";
 
 // Large DISPOs take real time to parse + merge. Give the function headroom so a
@@ -47,6 +48,7 @@ export async function POST(req: NextRequest) {
   // temp blob (unless we're mid-confirmation and expect a follow-up force call).
   let tempBlobUrl: string | null = null;
   let keepBlob = false;
+  let lockId: string | null = null;
   try {
     const session = await requirePermission(req, "upload_data");
 
@@ -112,6 +114,28 @@ export async function POST(req: NextRequest) {
 
     const channel = await getChannelById(channelId);
     if (!channel) return Response.json({ error: "Channel not found" }, { status: 404, headers: noCacheHeaders() });
+
+    // ── One upload at a time, app-wide ──
+    // Taken BEFORE parsing (the expensive part) and held until this request
+    // finishes, including the needsConfirmation round-trip's early return —
+    // the lock is released in the finally, so a user reading a warning dialog
+    // never blocks the rest of the team. See lib/uploadLock.ts for why.
+    const acquired = await acquireUploadLock({
+      userId: session.userId,
+      userName: session.name,
+      clientName: client.name,
+      fileName,
+    });
+    if (!acquired.ok) {
+      // Nothing was processed, so keep the browser-uploaded temp blob — the
+      // retry reuses it instead of pushing 20MB up the wire a second time.
+      keepBlob = true;
+      return Response.json(
+        { busy: true, error: lockMessage(acquired.heldBy) },
+        { status: 409, headers: noCacheHeaders() },
+      );
+    }
+    lockId = acquired.lock.id;
 
     if (fileType === "dispo") {
       const result = parseDispo(buffer);
@@ -519,6 +543,11 @@ export async function POST(req: NextRequest) {
     }
     return handleAuthError(err);
   } finally {
+    // Release on EVERY exit — success, validation error, thrown parse error,
+    // and the needsConfirmation early return. Anything else strands the whole
+    // team behind this request until the lock's TTL expires.
+    if (lockId) await releaseUploadLock(lockId);
+
     // Clean up the browser-uploaded temp blob once we're done with it. Skipped
     // when we returned needsConfirmation (the follow-up force call re-reads it).
     if (tempBlobUrl && !keepBlob) {

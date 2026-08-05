@@ -49,6 +49,11 @@ export default function DataLoadPage() {
   // Blob URL of the browser-uploaded file, reused across the confirm/force step.
   const pendingBlobUrlRef = useRef<string | null>(null);
 
+  // Set when the server refuses because another upload is already running.
+  // Deliberately a blocking dialog, not a toast: a load that didn't happen
+  // must not be dismissible by looking away for three seconds.
+  const [busyMessage, setBusyMessage] = useState<string | null>(null);
+
   const [confirmData, setConfirmData] = useState<{
     warning: string;
     missingArticles: MissingArticleDetail[];
@@ -163,6 +168,16 @@ export default function DataLoadPage() {
             : `Upload failed (HTTP ${res.status}).`,
         });
         setStep("result");
+        setUploading(false);
+        return;
+      }
+
+      // Another upload holds the app-wide lock. Nothing was processed, so keep
+      // the file and the whole selection intact — retrying is one click.
+      if (res.status === 409 && data.busy) {
+        pendingFileRef.current = file;
+        setBusyMessage(data.error || "Another upload is running. Please try again in a minute.");
+        setStep("upload");
         setUploading(false);
         return;
       }
@@ -615,6 +630,55 @@ export default function DataLoadPage() {
           <button onClick={reset} className="mt-4 rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)]">
             Upload Another
           </button>
+        </div>
+      )}
+
+      {/* Upload-in-progress dialog. No backdrop-click dismissal and no timeout:
+          this says "your DISPO did not load", and that has to be read, not
+          glimpsed. It goes away only via the buttons. */}
+      {busyMessage && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="upload-busy-title"
+            className="w-full max-w-md rounded-xl border border-[var(--color-border)] bg-white shadow-xl"
+          >
+            <div className="flex items-start gap-3 border-b border-[var(--color-border)] px-5 py-4">
+              <span className="text-xl leading-none" aria-hidden="true">⏳</span>
+              <h2 id="upload-busy-title" className="text-sm font-semibold text-[var(--color-text)]">
+                A DISPO is already being processed
+              </h2>
+            </div>
+
+            <div className="px-5 py-4">
+              <p className="text-sm leading-relaxed text-[var(--color-text)]">{busyMessage}</p>
+              <p className="mt-3 text-xs text-[var(--color-text-muted)]">
+                Your file and settings have been kept — clicking Try again re-sends the same
+                upload, nothing needs to be re-selected.
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-2 border-t border-[var(--color-border)] px-5 py-3">
+              <button
+                onClick={() => setBusyMessage(null)}
+                className="rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm font-semibold text-[var(--color-text)] hover:border-zinc-400"
+              >
+                Close
+              </button>
+              <button
+                onClick={() => {
+                  const file = pendingFileRef.current;
+                  setBusyMessage(null);
+                  if (file) submitUpload(file, false);
+                }}
+                disabled={uploading || !pendingFileRef.current}
+                className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)] disabled:opacity-50"
+              >
+                Try again
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
