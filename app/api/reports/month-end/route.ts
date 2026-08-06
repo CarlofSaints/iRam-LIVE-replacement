@@ -27,7 +27,6 @@ import { getStatusScenarios } from "@/lib/statusScenarioData";
 import { getMergedStores } from "@/lib/storeFileData";
 import { getProductLookup } from "@/lib/productMasterData";
 import { getControlFileData } from "@/lib/controlFileData";
-import { getClientLogo, getChannelLogo } from "@/lib/logoData";
 import { saveReportToSharePointSafe } from "@/lib/sharepoint";
 
 /* This report is an order of magnitude heavier than Vital Signs: it reads the
@@ -221,12 +220,14 @@ export async function GET(req: NextRequest) {
     // Numerical Distribution — scenario depends on whether a ranging file exists
     enter("reading the store master, product master and ranging file");
     const hasRanging = !!client?.controlFiles?.ranging;
-    const [ndStores, ndProducts, ndRanging, clientLogo, channelLogo] = await Promise.all([
+    /* Logos are no longer fetched: the workbook is built with exceljs's
+       streaming writer, which cannot embed floating images, so the Menu cover
+       sheet no longer carries them. That also drops two blob reads from this
+       already-heavy route. */
+    const [ndStores, ndProducts, ndRanging] = await Promise.all([
       getMergedStores(),
       getProductLookup(clientId),
       hasRanging ? getControlFileData<Record<string, unknown>>(clientId, "ranging") : Promise.resolve([]),
-      getClientLogo(clientId),
-      mainChannelId ? getChannelLogo(mainChannelId) : Promise.resolve(null),
     ]);
     enter("building Numerical Distribution");
     let ndAnalysis;
@@ -296,8 +297,6 @@ export async function GET(req: NextRequest) {
       phantomAnalysis,
       includeSheets,
       ndAnalysis,
-      clientLogo?.dataUrl,
-      channelLogo?.dataUrl,
       otoAnalysis,
       dscSummary,
       dscDetail,

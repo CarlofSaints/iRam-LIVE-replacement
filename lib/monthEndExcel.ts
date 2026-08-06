@@ -8,6 +8,7 @@
    ────────────────────────────────────────────────────────────── */
 
 import ExcelJS from "exceljs";
+import { PassThrough } from "node:stream";
 import type {
   SalesSummaryLevel,
   SummaryRow,
@@ -62,6 +63,126 @@ const HEADER_ICONS: Record<string, string> = {
   "act dsc": "⏳", "dsc bracket": "⏳", bracket: "⏳", "soh (units)": "📦",
   "total soh": "📦", "soh %": "📦",
 };
+
+/* ── Streaming ────────────────────────────────────────────────────
+   Built with exceljs's streaming WorkbookWriter, not the in-memory Workbook.
+   The in-memory one holds a styled object per cell for EVERY sheet at once and
+   then assembles the whole XML on top of that at write time; at TOPLINE's size
+   (87,854 ledger rows) that needs ~6GB and the function was OOM-killed at 42s
+   with no JSON body, which is why the failure was so opaque. Streaming commits
+   each sheet as it finishes and frees it — measured peak 1.4GB for the same
+   data, and the Data sheet additionally commits row-by-row.
+
+   Three WorksheetWriter constraints are worked around below, and all three are
+   easy to reintroduce by accident:
+
+     1. `sheet.views` is GETTER-ONLY and mutating the array in place is a
+        SILENT failure — it reads back correctly in memory but lands as null in
+        the file, because the sheetView XML is written when the sheet opens.
+        Views must go through `sheetOpts()` at addWorksheet time. That is why
+        the three sheets whose freeze row used to be computed mid-build
+        (Margin, Phantom, OTO Detail) now derive it beforehand.
+     2. `sheet.columnCount` is undefined — see `columnExtent()`.
+     3. There is no `removeWorksheet`, so an unselected sheet must never be
+        created, rather than being created and removed afterwards.
+
+   Also unavailable: `addImage`. The Menu cover sheet's client/channel logos
+   cannot be embedded in streaming mode (WorksheetWriter has only
+   addBackgroundImage, which tiles and does not print), so they were dropped —
+   a deliberate call; the report is otherwise identical. */
+
+type SheetTarget = ExcelJS.Worksheet & { commit?: () => Promise<void> | void };
+
+// Standard options for every sheet. Gridlines are hidden here because the old
+// build did it in a post-pass over wb.worksheets, which is impossible once a
+// sheet has been committed and freed.
+function sheetOpts(
+  view?: Partial<ExcelJS.WorksheetView>,
+): Partial<ExcelJS.AddWorksheetOptions> {
+  return {
+    properties: { defaultColWidth: 14 },
+    views: [{ showGridLines: false, ...(view ?? {}) } as ExcelJS.WorksheetView],
+  };
+}
+
+// WorksheetWriter has no columnCount; every sheet here writes a full-width
+// header row, so its cell count is the same thing.
+function columnExtent(sheet: ExcelJS.Worksheet): number {
+  try {
+    return sheet.getRow(1).cellCount || 1;
+  } catch {
+    return 1;
+  }
+}
+
+// Tab order, and the sheet key gating each one. The Menu sheet is now written
+// before any other sheet exists, so it links from this list rather than by
+// inspecting wb.worksheets as it used to.
+const MENU_SHEET_ORDER: { key: string; name: string }[] = [
+  { key: "sales", name: "Sales" },
+  { key: "oos", name: "OOS" },
+  { key: "oosDetail", name: "OOS Detail" },
+  { key: "dsc", name: "DSC" },
+  { key: "dscDetail", name: "DSC Detail" },
+  { key: "status", name: "Status" },
+  { key: "statusDetail", name: "Status Detail" },
+  { key: "margin", name: "Margin" },
+  { key: "phantom", name: "Phantom" },
+  { key: "oto", name: "OTO" },
+  { key: "otoDetail", name: "OTO Detail" },
+  { key: "nd", name: "ND" },
+  { key: "ndDetail", name: "ND Detail" },
+  { key: "ndFalse", name: "ND False" },
+  { key: "data", name: "Data" },
+];
+
+/* Finish a sheet and flush it. This is the old whole-workbook post-pass scoped
+   to a single sheet and run immediately before commit — it can't be done
+   globally at the end any more because committed sheets are gone. Centres and
+   wraps column headings, prepends the mapped icon, wraps section title-bars,
+   titles and notes, then adds the 🏠 Menu button LAST so the header pass
+   doesn't touch it (same ordering as before). */
+function polishRow(r: ExcelJS.Row): void {
+  r.eachCell((cell) => {
+    const fill = cell.fill as { type?: string; fgColor?: { argb?: string } } | undefined;
+    const fillArgb = fill?.type === "pattern" ? fill.fgColor?.argb : undefined;
+    const font = cell.font as Partial<ExcelJS.Font> | undefined;
+    const align = cell.alignment ?? {};
+
+    if (fillArgb === HEADER_BG) {
+      cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+      if (typeof cell.value === "string") {
+        const icon = HEADER_ICONS[cell.value.trim().toLowerCase()];
+        if (icon && !cell.value.startsWith(icon)) cell.value = `${icon} ${cell.value}`;
+      }
+    } else if (fillArgb === SUBHEADER_BG) {
+      cell.alignment = { ...align, wrapText: true };
+    } else if (
+      typeof cell.value === "string" &&
+      (font?.italic === true ||
+        (font?.color?.argb === HEADER_BG && (font?.size ?? 0) >= 12))
+    ) {
+      cell.alignment = { ...align, wrapText: true };
+    }
+  });
+}
+
+async function commitSheet(sheet: SheetTarget, home = true): Promise<void> {
+  sheet.eachRow(polishRow);
+  if (home) addHomeButton(sheet);
+  await sheet.commit?.();
+}
+
+/* For a sheet whose rows are committed AS THEY ARE WRITTEN (the Data sheet),
+   the post-pass and the 🏠 button must be applied to row 1 up front. Committing
+   row 2 flushes row 1 along with it, and touching a committed row throws
+   "Out of bounds: this row has been committed" — so there is no going back
+   afterwards the way there is for a sheet held whole in memory. */
+function polishStreamedHeader(sheet: SheetTarget): void {
+  polishRow(sheet.getRow(1));
+  addHomeButton(sheet);
+  sheet.getRow(1).commit();
+}
 
 function thinBorder(): Partial<ExcelJS.Borders> {
   const side: Partial<ExcelJS.Border> = { style: "thin", color: { argb: BORDER_COLOR } };
@@ -141,13 +262,25 @@ export async function buildMonthEndWorkbook(
   phantomAnalysis?: PhantomAnalysis,
   includeSheets: string[] = [],
   ndAnalysis?: NDAnalysis,
-  clientLogo?: string,
-  channelLogo?: string,
   otoAnalysis?: OTOAnalysis,
   dscSummary?: DscSummary,
   dscDetail: DscDetailRow[] = [],
 ): Promise<Buffer> {
-  const wb = new ExcelJS.Workbook();
+  // Collect the streamed output into a Buffer — the caller needs bytes for
+  // both the download response and the SharePoint save.
+  const out = new PassThrough();
+  const chunks: Buffer[] = [];
+  out.on("data", (c: Buffer) => chunks.push(c));
+  const collected = new Promise<Buffer>((resolve, reject) => {
+    out.on("end", () => resolve(Buffer.concat(chunks)));
+    out.on("error", reject);
+  });
+
+  const wb = new ExcelJS.stream.xlsx.WorkbookWriter({
+    stream: out,
+    useStyles: true,        // without this every fill / font / border is dropped
+    useSharedStrings: true,
+  });
   wb.creator = "iRam LIVE Replacement";
   wb.created = new Date();
   nextCfPriority = 1; // reset CF rule priorities per workbook
@@ -156,51 +289,120 @@ export async function buildMonthEndWorkbook(
   // status, statusDetail, margin, phantom, data.
   const want = (key: string) => includeSheets.length === 0 || includeSheets.includes(key);
 
-  // Menu/cover sheet is created first so it lands as the first tab; it's
-  // populated (header, logos, hyperlinks) after all other sheets exist.
-  const menuSheet = wb.addWorksheet("Menu", { properties: { defaultColWidth: 14 } });
+  /* Which sheets will actually exist. A sheet needs BOTH to be selected and to
+     have data behind it — DSC/Status/Margin/Phantom/OTO/ND are all skipped when
+     their analysis is absent. This map is the single source of truth for both
+     the Menu's hyperlinks and the dispatch below: the Menu is now written
+     before any other sheet exists, so if the two ever disagreed it would link
+     to tabs that were never created and Excel would report a broken link. */
+  const has: Record<string, boolean> = {
+    sales: want("sales"),
+    oos: want("oos"),
+    oosDetail: want("oosDetail"),
+    dsc: !!dscSummary && want("dsc"),
+    dscDetail: dscDetail.length > 0 && want("dscDetail"),
+    status: !!statusSummary && want("status"),
+    statusDetail: statusDetail.length > 0 && want("statusDetail"),
+    margin: !!marginAnalysis && want("margin"),
+    phantom: !!phantomAnalysis && want("phantom"),
+    oto: !!otoAnalysis && want("oto"),
+    otoDetail: !!otoAnalysis && want("otoDetail"),
+    nd: !!ndAnalysis && want("nd"),
+    ndDetail: !!ndAnalysis && want("ndDetail"),
+    ndFalse: !!ndAnalysis && ndAnalysis.hasRanging && ndAnalysis.falseDetail.length > 0 && want("ndFalse"),
+    data: dataRows.length > 0 && want("data"),
+  };
+
+  // Sheets are written in creation order and can't be reordered or removed
+  // afterwards, so the Menu/cover sheet is built and committed FIRST. It used
+  // to be populated last (once the other sheets existed) purely so it could
+  // link to them — but the tab names are known up front from want(), so
+  // nothing actually required deferring it.
+  const coverage = analyzeCoverage(dateColumns);
+  const dataGapLines = coverageMessageLines(coverage);
+  const coverageSpan = coverage.firstMonth && coverage.lastMonth
+    ? `${formatMonth(coverage.firstMonth)} to ${formatMonth(coverage.lastMonth)}`
+    : "";
+  const menuSheet = wb.addWorksheet("Menu", sheetOpts());
+  buildMenuSheet(wb, menuSheet, {
+    clientName, channelLabel, periodLabel, dataGapLines, coverageSpan,
+    sheetNames: MENU_SHEET_ORDER.filter((s) => has[s.key]).map((s) => s.name),
+  });
+  await commitSheet(menuSheet, false);   // the Menu needs no 🏠 button
+
+  // Shared across the three inline sheet blocks below, so it is hoisted out of
+  // them (each block re-initialises it to 1).
+  let row = 1;
 
   // ── Sheet 1: Sales ───────────────────────────────────────────
-  const salesSheet = wb.addWorksheet("Sales", {
-    properties: { defaultColWidth: 14 },
-  });
+  if (has.sales) {
+    const salesSheet = wb.addWorksheet("Sales", sheetOpts());
 
-  // Title row
-  let row = 1;
-  const titleCell = salesSheet.getCell(row, 1);
-  titleCell.value = `Sales Summary — ${clientName} — ${channelLabel} — ${periodLabel}`;
-  titleCell.font = { name: "Calibri", size: 14, bold: true, color: { argb: HEADER_BG } };
-  salesSheet.mergeCells(row, 1, row, SUMMARY_COLS.length);
-  row += 2;
+    // Title row
+    row = 1;
+    const titleCell = salesSheet.getCell(row, 1);
+    titleCell.value = `Sales Summary — ${clientName} — ${channelLabel} — ${periodLabel}`;
+    titleCell.font = { name: "Calibri", size: 14, bold: true, color: { argb: HEADER_BG } };
+    salesSheet.mergeCells(row, 1, row, SUMMARY_COLS.length);
+    row += 2;
 
-  // Write each level's volume + value tables
-  for (const level of levels) {
-    // First-column header reflects the dimension; the Store level reports
-    // SKU count rather than store count.
-    const dim = level.level === "Store" ? "Site" : level.level;
-    const countLabel = level.level === "Store" ? "Number of SKU's" : "# Stores";
+    // Write each level's volume + value tables
+    for (const level of levels) {
+      // First-column header reflects the dimension; the Store level reports
+      // SKU count rather than store count.
+      const dim = level.level === "Store" ? "Site" : level.level;
+      const countLabel = level.level === "Store" ? "Number of SKU's" : "# Stores";
 
-    // Volume table
-    row = writeSummaryTable(salesSheet, row, `${dim} — Volume (Units)`, level.volumeRows, level.volumeTotal, false, dim, countLabel);
-    row += 1; // gap
+      // Volume table
+      row = writeSummaryTable(salesSheet, row, `${dim} — Volume (Units)`, level.volumeRows, level.volumeTotal, false, dim, countLabel);
+      row += 1; // gap
 
-    // Value table
-    row = writeSummaryTable(salesSheet, row, `${dim} — Value (Rand)`, level.valueRows, level.valueTotal, true, dim, countLabel);
-    row += 2; // larger gap between levels
+      // Value table
+      row = writeSummaryTable(salesSheet, row, `${dim} — Value (Rand)`, level.valueRows, level.valueTotal, true, dim, countLabel);
+      row += 2; // larger gap between levels
+    }
+
+    // Set column widths
+    SUMMARY_COLS.forEach((col, i) => {
+      const excelCol = salesSheet.getColumn(i + 1);
+      excelCol.width = col.width;
+    });
+
+    await commitSheet(salesSheet);
   }
 
-  // Set column widths
-  SUMMARY_COLS.forEach((col, i) => {
-    const excelCol = salesSheet.getColumn(i + 1);
-    excelCol.width = col.width;
-  });
+  /* Sheets are emitted in MENU_SHEET_ORDER, gated by the same `has` map the
+     Menu's contents were built from. */
+  if (has.oos) await buildOosSheet(wb, oosSummary, clientName, channelLabel, periodLabel);
+  if (has.oosDetail) await buildOosDetailSheet(wb, oosDetail);
+  if (has.dsc) await buildDscSheet(wb, dscSummary!, clientName, channelLabel, periodLabel);
+  if (has.dscDetail) await buildDscDetailSheet(wb, dscDetail);
+  if (has.status) await buildStatusSheet(wb, statusSummary!, clientName, channelLabel, periodLabel);
+  if (has.statusDetail) await buildStatusDetailSheet(wb, statusDetail);
+  if (has.margin) await buildMarginDetailSheet(wb, marginAnalysis!, clientName, channelLabel, periodLabel);
+  if (has.phantom) await buildPhantomSheet(wb, phantomAnalysis!, clientName, channelLabel, periodLabel);
+  if (has.oto) await buildOtoSummarySheet(wb, otoAnalysis!, clientName, channelLabel, periodLabel);
+  if (has.otoDetail) await buildOtoDetailSheet(wb, otoAnalysis!, clientName, channelLabel, periodLabel);
+  if (has.nd) await buildNdSheet(wb, ndAnalysis!, clientName, channelLabel, periodLabel);
+  if (has.ndDetail) await buildNdDetailSheet(wb, ndAnalysis!);
+  if (has.ndFalse) await buildNdFalseSheet(wb, ndAnalysis!);
+  if (has.data) await buildDataSheet(wb, dataRows, dateColumns);
 
-  // ── Sheet 2: OOS ─────────────────────────────────────────────
-  const oosSheet = wb.addWorksheet("OOS", {
-    properties: { defaultColWidth: 14 },
-  });
+  await wb.commit();
+  return collected;
+}
 
-  row = 1;
+// ── OOS summary sheet ──────────────────────────────────────────
+async function buildOosSheet(
+  wb: ExcelJS.Workbook,
+  oosSummary: OOSSummary,
+  clientName: string,
+  channelLabel: string,
+  periodLabel: string,
+): Promise<void> {
+  const oosSheet = wb.addWorksheet("OOS", sheetOpts());
+
+  let row = 1;
 
   // Title
   const oosTitleCell = oosSheet.getCell(row, 1);
@@ -312,11 +514,19 @@ export async function buildMonthEndWorkbook(
     );
   }
 
-  // ── Sheet 3: OOS Detail ──────────────────────────────────────
-  const detailSheet = wb.addWorksheet("OOS Detail", {
-    properties: { defaultColWidth: 14 },
-  });
+  await commitSheet(oosSheet);
+}
 
+// ── OOS Detail sheet ───────────────────────────────────────────
+async function buildOosDetailSheet(
+  wb: ExcelJS.Workbook,
+  oosDetail: OOSDetailRow[],
+): Promise<void> {
+  // Freeze row must be declared at creation — a streamed sheet's views cannot
+  // be set afterwards (silently lost).
+  const detailSheet = wb.addWorksheet("OOS Detail", sheetOpts({ state: "frozen", ySplit: 1 }));
+
+  let row = 1;
   const detailColDefs = [
     { header: "Sub-Channel", width: 14, key: "subChannel" as const },
     { header: "Province", width: 14, key: "province" as const },
@@ -370,118 +580,14 @@ export async function buildMonthEndWorkbook(
     };
   }
 
-  // Freeze top row on detail sheet
-  detailSheet.views = [{ state: "frozen", ySplit: 1 }];
-
-  // ── DSC (Days of Stock Cover) sheets ─────────────────────────
-  if (dscSummary && want("dsc")) buildDscSheet(wb, dscSummary, clientName, channelLabel, periodLabel);
-  if (dscDetail.length > 0 && want("dscDetail")) buildDscDetailSheet(wb, dscDetail);
-
-  // ── Status + Status Detail sheets ────────────────────────────
-  if (statusSummary && want("status")) buildStatusSheet(wb, statusSummary, clientName, channelLabel, periodLabel);
-  if (statusDetail.length > 0 && want("statusDetail")) buildStatusDetailSheet(wb, statusDetail);
-
-  // ── Margin Detail sheet (summary block on top of the grid) ───
-  if (marginAnalysis && want("margin")) {
-    buildMarginDetailSheet(wb, marginAnalysis, clientName, channelLabel, periodLabel);
-  }
-
-  // ── Phantom sheet (summary block on top of the grid) ─────────
-  if (phantomAnalysis && want("phantom")) {
-    buildPhantomSheet(wb, phantomAnalysis, clientName, channelLabel, periodLabel);
-  }
-
-  // ── Open to Order sheets (summary cascade + detail) ──────────
-  if (otoAnalysis) {
-    if (want("oto")) buildOtoSummarySheet(wb, otoAnalysis, clientName, channelLabel, periodLabel);
-    if (want("otoDetail")) buildOtoDetailSheet(wb, otoAnalysis, clientName, channelLabel, periodLabel);
-  }
-
-  // ── Numerical Distribution sheets ────────────────────────────
-  if (ndAnalysis) {
-    if (want("nd")) buildNdSheet(wb, ndAnalysis, clientName, channelLabel, periodLabel);
-    if (want("ndDetail")) buildNdDetailSheet(wb, ndAnalysis);
-    if (ndAnalysis.hasRanging && ndAnalysis.falseDetail.length > 0 && want("ndFalse")) buildNdFalseSheet(wb, ndAnalysis);
-  }
-
-  // ── Data sheet (flat enriched rows + native AutoFilter) ──────
-  if (dataRows.length > 0 && want("data")) {
-    buildDataSheet(wb, dataRows, dateColumns);
-  }
-
-  // Remove the always-built inline sheets if they weren't selected.
-  for (const [name, key] of [["Sales", "sales"], ["OOS", "oos"], ["OOS Detail", "oosDetail"]] as const) {
-    if (!want(key)) {
-      const ws = wb.getWorksheet(name);
-      if (ws) wb.removeWorksheet(ws.id);
-    }
-  }
-
-  // Populate the Menu/cover sheet now that all other sheets exist.
-  const coverage = analyzeCoverage(dateColumns);
-  const dataGapLines = coverageMessageLines(coverage);
-  const coverageSpan = coverage.firstMonth && coverage.lastMonth
-    ? `${formatMonth(coverage.firstMonth)} to ${formatMonth(coverage.lastMonth)}`
-    : "";
-  buildMenuSheet(wb, menuSheet, { clientName, channelLabel, periodLabel, clientLogo, channelLogo, dataGapLines, coverageSpan });
-
-  // Hide gridlines on every sheet (preserve any existing freeze panes)
-  for (const ws of wb.worksheets) {
-    ws.views = ws.views && ws.views.length
-      ? ws.views.map((v) => ({ ...v, showGridLines: false }))
-      : [{ showGridLines: false }];
-  }
-
-  // Centre + wrap every column heading (cells filled with the header colour),
-  // prepend an icon where mapped, and wrap section title-bars, titles and
-  // notes too so their text always fits instead of being clipped.
-  for (const ws of wb.worksheets) {
-    ws.eachRow((row) => {
-      row.eachCell((cell) => {
-        const fill = cell.fill as { type?: string; fgColor?: { argb?: string } } | undefined;
-        const fillArgb = fill?.type === "pattern" ? fill.fgColor?.argb : undefined;
-        const font = cell.font as Partial<ExcelJS.Font> | undefined;
-        const align = cell.alignment ?? {};
-
-        if (fillArgb === HEADER_BG) {
-          // Column header — centre + wrap, add icon.
-          cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
-          if (typeof cell.value === "string") {
-            const icon = HEADER_ICONS[cell.value.trim().toLowerCase()];
-            if (icon && !cell.value.startsWith(icon)) cell.value = `${icon} ${cell.value}`;
-          }
-        } else if (fillArgb === SUBHEADER_BG) {
-          // Section title bar — keep its alignment, just wrap.
-          cell.alignment = { ...align, wrapText: true };
-        } else if (
-          typeof cell.value === "string" &&
-          (font?.italic === true ||
-            (font?.color?.argb === HEADER_BG && (font?.size ?? 0) >= 12))
-        ) {
-          // Title or italic note cell — keep alignment, wrap.
-          cell.alignment = { ...align, wrapText: true };
-        }
-      });
-    });
-  }
-
-  // Home button — a hyperlink back to the Menu sheet on every other sheet.
-  // Added last so the header icon/centre pass above doesn't touch it.
-  for (const ws of wb.worksheets) {
-    if (ws.name === "Menu") continue;
-    addHomeButton(ws);
-  }
-
-  // ── Generate buffer ──────────────────────────────────────────
-  const buffer = await wb.xlsx.writeBuffer();
-  return Buffer.from(buffer);
+  await commitSheet(detailSheet);
 }
 
 // Add a "🏠 Menu" hyperlink so the reader can jump back to the Menu/cover
 // sheet. Placed at the right end of the title/header row so it never collides
 // with existing content or shifts any of the live formula row references.
 function addHomeButton(sheet: ExcelJS.Worksheet): void {
-  const col = (sheet.columnCount || 1) + 2;
+  const col = columnExtent(sheet) + 2;
   const cell = sheet.getCell(1, col);
   cell.value = { text: "🏠 Menu", hyperlink: "#'Menu'!A1" };
   cell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "0563C1" }, underline: true };
@@ -493,12 +599,12 @@ function addHomeButton(sheet: ExcelJS.Worksheet): void {
 
 // ── Flat data sheet — every enriched row, with Excel AutoFilter so the
 //    user can slice by any column (sub-channel, category, …) inside Excel.
-function buildDataSheet(
+async function buildDataSheet(
   wb: ExcelJS.Workbook,
   rows: Record<string, unknown>[],
   dateColumns: string[],
-): void {
-  const sheet = wb.addWorksheet("Data", { properties: { defaultColWidth: 14 } });
+): Promise<void> {
+  const sheet = wb.addWorksheet("Data", sheetOpts({ state: "frozen", ySplit: 1 }));
 
   const sortedDates = [...dateColumns].sort((a, b) => {
     const pa = a.match(/^(\d{2})-(\d{4})$/);
@@ -558,40 +664,53 @@ function buildDataSheet(
   [...fixedCols.map((c) => c.width), ...sortedDates.map(() => 9), ...tailCols.map((c) => c.width), ...extraDefs.map((c) => c.width)]
     .forEach((w, i) => { sheet.getColumn(i + 1).width = w; });
 
-  // Data rows
+  /* Data rows. This is the single biggest sheet in the workbook — one row per
+     ledger line (87k+ for the largest client) across ~45 columns — so each row
+     is committed as it is written rather than accumulating. Committing frees
+     the row's cell objects immediately, which is what keeps peak memory flat
+     instead of proportional to row count. Nothing may read back a committed
+     row, so all per-row work happens before the commit() below. */
+  // Row 1 is finished and flushed BEFORE any data row is committed — see
+  // polishStreamedHeader. autoFilter is set here too, for the same reason.
+  sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: rows.length + 1, column: headers.length } };
+  polishStreamedHeader(sheet);
+
   let r = 2;
   for (const row of rows) {
+    const xlRow = sheet.getRow(r);
     let c = 1;
     for (const col of fixedCols) {
-      const cell = sheet.getCell(r, c++);
+      const cell = xlRow.getCell(c++);
       cell.value = col.get(row);
       cell.font = bodyFont();
     }
     for (const dc of sortedDates) {
-      const cell = sheet.getCell(r, c++);
+      const cell = xlRow.getCell(c++);
       cell.value = toNum(row[dc]);
       cell.numFmt = "#,##0";
       cell.font = bodyFont();
     }
     for (const col of tailCols) {
-      const cell = sheet.getCell(r, c++);
+      const cell = xlRow.getCell(c++);
       cell.value = col.get(row);
       cell.numFmt = col.fmt;
       cell.font = bodyFont();
     }
     const extras = dataRowExtras(row, ctx);
     for (const def of extraDefs) {
-      const cell = sheet.getCell(r, c++);
+      const cell = xlRow.getCell(c++);
       const v = def.get(extras);
       cell.value = v === null || v === undefined ? "" : v;
       cell.numFmt = def.fmt;
       cell.font = bodyFont();
     }
+    xlRow.commit();
     r++;
   }
 
-  sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: rows.length + 1, column: headers.length } };
-  sheet.views = [{ state: "frozen", ySplit: 1 }];
+  // Header and 🏠 button were handled up front; every data row is already
+  // committed, so this just closes the sheet.
+  await sheet.commit();
 }
 
 function toNum(v: unknown): number {
@@ -620,14 +739,14 @@ function dscBracketFill(bracket: string): string | null {
   return null;
 }
 
-function buildDscSheet(
+async function buildDscSheet(
   wb: ExcelJS.Workbook,
   dsc: DscSummary,
   clientName: string,
   channelLabel: string,
   periodLabel: string,
-): void {
-  const sheet = wb.addWorksheet("DSC", { properties: { defaultColWidth: 14 } });
+): Promise<void> {
+  const sheet = wb.addWorksheet("DSC", sheetOpts());
   const brackets = dsc.brackets;
   const span = Math.max(6, brackets.length + 3); // widest table width
 
@@ -764,11 +883,13 @@ function buildDscSheet(
   writeMatrix("Category", "# SKUs", "skus", dsc.byCategory, dsc.totalSkus);
   writeMatrix("SKU", "# Sites", "sites", dsc.bySku, dsc.totalSites);
   writeMatrix("Store", "# SKUs", "skus", dsc.byStore, dsc.totalSkus);
+
+  await commitSheet(sheet);
 }
 
 // ── DSC Detail — every in-base SKU×store line, sorted by Act DSC desc ──
-function buildDscDetailSheet(wb: ExcelJS.Workbook, rows: DscDetailRow[]): void {
-  const sheet = wb.addWorksheet("DSC Detail", { properties: { defaultColWidth: 14 } });
+async function buildDscDetailSheet(wb: ExcelJS.Workbook, rows: DscDetailRow[]): Promise<void> {
+  const sheet = wb.addWorksheet("DSC Detail", sheetOpts({ state: "frozen", ySplit: 1 }));
   const cols: { header: string; width: number; key: keyof DscDetailRow; num?: boolean }[] = [
     { header: "Sub-Channel", width: 14, key: "subChannel" },
     { header: "Province", width: 14, key: "province" },
@@ -813,18 +934,18 @@ function buildDscDetailSheet(wb: ExcelJS.Workbook, rows: DscDetailRow[]): void {
   if (rows.length > 0) {
     sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: rows.length + 1, column: cols.length } };
   }
-  sheet.views = [{ state: "frozen", ySplit: 1 }];
+  await commitSheet(sheet);
 }
 
 // ── Status sheet — PR ST breakdown + PR ST × PMF Product Status ──
-function buildStatusSheet(
+async function buildStatusSheet(
   wb: ExcelJS.Workbook,
   s: StatusSummary,
   clientName: string,
   channelLabel: string,
   periodLabel: string,
-): void {
-  const sheet = wb.addWorksheet("Status", { properties: { defaultColWidth: 14 } });
+): Promise<void> {
+  const sheet = wb.addWorksheet("Status", sheetOpts());
   let row = 1;
 
   const title = sheet.getCell(row, 1);
@@ -905,11 +1026,13 @@ function buildStatusSheet(
     cls.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
     row++;
   }
+
+  await commitSheet(sheet);
 }
 
 // ── Status Detail — negative SKU×store combinations only ────────
-function buildStatusDetailSheet(wb: ExcelJS.Workbook, rows: StatusDetailRow[]): void {
-  const sheet = wb.addWorksheet("Status Detail", { properties: { defaultColWidth: 14 } });
+async function buildStatusDetailSheet(wb: ExcelJS.Workbook, rows: StatusDetailRow[]): Promise<void> {
+  const sheet = wb.addWorksheet("Status Detail", sheetOpts({ state: "frozen", ySplit: 1 }));
   const cols: { header: string; width: number; key: keyof StatusDetailRow }[] = [
     { header: "Sub-Channel", width: 14, key: "subChannel" },
     { header: "Province", width: 14, key: "province" },
@@ -947,18 +1070,24 @@ function buildStatusDetailSheet(wb: ExcelJS.Workbook, rows: StatusDetailRow[]): 
   if (rows.length > 0) {
     sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: rows.length + 1, column: cols.length } };
   }
-  sheet.views = [{ state: "frozen", ySplit: 1 }];
+  await commitSheet(sheet);
 }
 
 // ── Margin Detail — opportunity/risk summary block on top of the grid ──
-function buildMarginDetailSheet(
+async function buildMarginDetailSheet(
   wb: ExcelJS.Workbook,
   m: MarginAnalysis,
   clientName: string,
   channelLabel: string,
   periodLabel: string,
-): void {
-  const sheet = wb.addWorksheet("Margin", { properties: { defaultColWidth: 14 } });
+): Promise<void> {
+  /* The grid's header row has to be known BEFORE the sheet is created, because
+     a streamed sheet's frozen view can only be set at addWorksheet time. The
+     summary block above the grid is fixed height: title (1), gap, base stat
+     (3), gap, summary header (5), one row per summary status, gap. */
+  const MARGIN_SUMMARY_STATUSES = 2;              // OPPORTUNITY + RISK
+  const headerRow = 5 + 1 + MARGIN_SUMMARY_STATUSES + 1;   // → 9
+  const sheet = wb.addWorksheet("Margin", sheetOpts({ state: "frozen", ySplit: headerRow }));
   const headers = [
     "Site", "Site Name", "Product Code", "Article", "Product Status", "PR ST",
     "SOH", "MAC", "Nett Cost", "Incl SP", "Prod. Margin", "STK Margin",
@@ -1009,8 +1138,12 @@ function buildMarginDetailSheet(
   }
   cur += 1; // gap before the grid
 
-  // Detail grid header
-  const headerRow = cur;
+  // Detail grid header. `cur` must have landed on the row the frozen view was
+  // created with — if the summary block above ever changes height, headerRow
+  // has to change with it.
+  if (cur !== headerRow) {
+    throw new Error(`Margin sheet layout drifted: expected header row ${headerRow}, got ${cur}`);
+  }
   headers.forEach((h, i) => {
     const c = sheet.getCell(headerRow, i + 1);
     c.value = h; c.font = headerFont();
@@ -1066,7 +1199,7 @@ function buildMarginDetailSheet(
   if (m.rows.length > 0) {
     sheet.autoFilter = { from: { row: headerRow, column: 1 }, to: { row: headerRow + m.rows.length, column: headers.length } };
   }
-  sheet.views = [{ state: "frozen", ySplit: headerRow }];
+  await commitSheet(sheet);
 }
 
 // ── Write a single summary table ───────────────────────────────
@@ -1210,15 +1343,19 @@ function writeSummaryDataRow(
 }
 
 // ── Phantom sheet — phantom-stock summary on top of the detail grid ──
-function buildPhantomSheet(
+async function buildPhantomSheet(
   wb: ExcelJS.Workbook,
   p: PhantomAnalysis,
   clientName: string,
   channelLabel: string,
   periodLabel: string,
-): void {
-  const sheet = wb.addWorksheet("Phantom", { properties: { defaultColWidth: 14 } });
-  const detailHeaders = ["Site", "Site Name", "Product Code", "Article", "PR ST", "Product Status", "SOH", "Date Last Sold", "Date Last Received"];
+): Promise<void> {
+  /* Header row must be known before the sheet exists (frozen view is fixed at
+     creation). Layout above the grid: title (1), filter note (2), gap, three
+     overall stats (4-6), gap, by-status header, one row per status, gap. */
+  const headerRow = 10 + p.byStatus.length;
+  const sheet = wb.addWorksheet("Phantom", sheetOpts({ state: "frozen", ySplit: headerRow }));
+  const detailHeaders =["Site", "Site Name", "Product Code", "Article", "PR ST", "Product Status", "SOH", "Date Last Sold", "Date Last Received"];
   const detailWidths = [14, 22, 14, 12, 10, 14, 8, 15, 17];
 
   let cur = 1;
@@ -1270,8 +1407,10 @@ function buildPhantomSheet(
   }
   cur += 1;
 
-  // Detail grid
-  const headerRow = cur;
+  // Detail grid. Must match the row the frozen view was created with.
+  if (cur !== headerRow) {
+    throw new Error(`Phantom sheet layout drifted: expected header row ${headerRow}, got ${cur}`);
+  }
   detailHeaders.forEach((h, i) => {
     const c = sheet.getCell(headerRow, i + 1);
     c.value = h; c.font = headerFont();
@@ -1304,18 +1443,18 @@ function buildPhantomSheet(
   if (p.detail.length > 0) {
     sheet.autoFilter = { from: { row: headerRow, column: 1 }, to: { row: headerRow + p.detail.length, column: detailHeaders.length } };
   }
-  sheet.views = [{ state: "frozen", ySplit: headerRow }];
+  await commitSheet(sheet);
 }
 
 // ── Numerical Distribution summary (4 cascading rollup tables) ──
-function buildNdSheet(
+async function buildNdSheet(
   wb: ExcelJS.Workbook,
   nd: NDAnalysis,
   clientName: string,
   channelLabel: string,
   periodLabel: string,
-): void {
-  const sheet = wb.addWorksheet("ND", { properties: { defaultColWidth: 14 } });
+): Promise<void> {
+  const sheet = wb.addWorksheet("ND", sheetOpts());
   let cur = 1;
 
   const title = sheet.getCell(cur, 1);
@@ -1379,11 +1518,13 @@ function buildNdSheet(
   writeTable("Province", nd.byProvince);
   writeTable("SKU", nd.bySku);
   writeTable("Site", nd.bySite);
+
+  await commitSheet(sheet);
 }
 
 // ── ND Detail — one row per ranged (or active) SKU/site, ND 1/0 ──
-function buildNdDetailSheet(wb: ExcelJS.Workbook, nd: NDAnalysis): void {
-  const sheet = wb.addWorksheet("ND Detail", { properties: { defaultColWidth: 14 } });
+async function buildNdDetailSheet(wb: ExcelJS.Workbook, nd: NDAnalysis): Promise<void> {
+  const sheet = wb.addWorksheet("ND Detail", sheetOpts({ state: "frozen", ySplit: 1 }));
   const cols: { header: string; width: number; key: keyof NDDetailRowLite }[] = [
     { header: "Sub-Channel", width: 14, key: "subChannel" },
     { header: "Province", width: 14, key: "province" },
@@ -1427,12 +1568,12 @@ function buildNdDetailSheet(wb: ExcelJS.Workbook, nd: NDAnalysis): void {
   if (nd.detail.length > 0) {
     sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: nd.detail.length + 1, column: ndCol } };
   }
-  sheet.views = [{ state: "frozen", ySplit: 1 }];
+  await commitSheet(sheet);
 }
 
 // ── ND False — stock (SOH>0) in NON-ranged SKU/site combos ──────
-function buildNdFalseSheet(wb: ExcelJS.Workbook, nd: NDAnalysis): void {
-  const sheet = wb.addWorksheet("ND False", { properties: { defaultColWidth: 14 } });
+async function buildNdFalseSheet(wb: ExcelJS.Workbook, nd: NDAnalysis): Promise<void> {
+  const sheet = wb.addWorksheet("ND False", sheetOpts({ state: "frozen", ySplit: 1 }));
   const cols: { header: string; width: number; key: keyof NDFalseRowLite }[] = [
     { header: "Sub-Channel", width: 14, key: "subChannel" },
     { header: "Province", width: 14, key: "province" },
@@ -1473,7 +1614,7 @@ function buildNdFalseSheet(wb: ExcelJS.Workbook, nd: NDAnalysis): void {
   if (nd.falseDetail.length > 0) {
     sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: nd.falseDetail.length + 1, column: sohCol } };
   }
-  sheet.views = [{ state: "frozen", ySplit: 1 }];
+  await commitSheet(sheet);
 }
 
 // Helper alias types for keyof access (string-valued columns only)
@@ -1488,14 +1629,14 @@ const OTO_NOTE =
   "Because every line below meets these same conditions, the SOH / SOO / SIT / Status / Product Status columns are omitted — they would be identical on every row.";
 
 // OTO Summary — cascading rollups by Sub-Channel, Category, SKU, then Site.
-function buildOtoSummarySheet(
+async function buildOtoSummarySheet(
   wb: ExcelJS.Workbook,
   oto: OTOAnalysis,
   clientName: string,
   channelLabel: string,
   periodLabel: string,
-): void {
-  const sheet = wb.addWorksheet("OTO", { properties: { defaultColWidth: 14 } });
+): Promise<void> {
+  const sheet = wb.addWorksheet("OTO", sheetOpts());
   let cur = 1;
 
   const title = sheet.getCell(cur, 1);
@@ -1584,18 +1725,23 @@ function buildOtoSummarySheet(
   writeTable("Category", oto.byCategory);
   writeTable("SKU", oto.bySku);
   writeTable("Site", oto.bySite);
+
+  await commitSheet(sheet);
 }
 
 // OTO Detail — one row per qualifying SKU/site line.
-function buildOtoDetailSheet(
+async function buildOtoDetailSheet(
   wb: ExcelJS.Workbook,
   oto: OTOAnalysis,
   clientName: string,
   channelLabel: string,
   periodLabel: string,
-): void {
-  const sheet = wb.addWorksheet("OTO Detail", { properties: { defaultColWidth: 14 } });
-  const cols: { header: string; width: number; key: keyof OTOAnalysis["detail"][number]; fmt?: string; align?: "right" }[] = [
+): Promise<void> {
+  // Header row known up front (frozen view is fixed at creation):
+  // title (1), note (2), gap.
+  const headerRow = 4;
+  const sheet = wb.addWorksheet("OTO Detail", sheetOpts({ state: "frozen", ySplit: headerRow }));
+  const cols:{ header: string; width: number; key: keyof OTOAnalysis["detail"][number]; fmt?: string; align?: "right" }[] = [
     { header: "Site Num", width: 12, key: "site" },
     { header: "Site Name", width: 24, key: "siteName" },
     { header: "Product Code", width: 14, key: "productCode" },
@@ -1621,7 +1767,10 @@ function buildOtoDetailSheet(
   sheet.getRow(cur).height = 64;
   cur += 2;
 
-  const headerRow = cur;
+  // Must match the row the frozen view was created with.
+  if (cur !== headerRow) {
+    throw new Error(`OTO Detail sheet layout drifted: expected header row ${headerRow}, got ${cur}`);
+  }
   cols.forEach((c, i) => {
     const cell = sheet.getCell(headerRow, i + 1);
     cell.value = c.header; cell.font = headerFont();
@@ -1646,30 +1795,15 @@ function buildOtoDetailSheet(
   if (oto.detail.length > 0) {
     sheet.autoFilter = { from: { row: headerRow, column: 1 }, to: { row: headerRow + oto.detail.length, column: cols.length } };
   }
-  sheet.views = [{ state: "frozen", ySplit: headerRow }];
+  await commitSheet(sheet);
 }
 
-// ── Menu / cover sheet — header, logos, hyperlinks to every sheet ──
-function addLogoImage(
-  wb: ExcelJS.Workbook,
-  sheet: ExcelJS.Worksheet,
-  dataUrl: string,
-  col: number,
-  row: number,
-): void {
-  const m = /^data:image\/(\w+);base64,(.+)$/i.exec(dataUrl);
-  if (!m) return;
-  let ext = m[1].toLowerCase();
-  if (ext === "jpg") ext = "jpeg";
-  if (ext !== "png" && ext !== "jpeg" && ext !== "gif") return; // exceljs-embeddable only
-  try {
-    const imgId = wb.addImage({ base64: m[2], extension: ext as "png" | "jpeg" | "gif" });
-    sheet.addImage(imgId, { tl: { col, row }, ext: { width: 180, height: 70 } });
-  } catch {
-    /* skip un-embeddable image */
-  }
-}
-
+/* ── Menu / cover sheet — header + hyperlinks to every sheet ──
+   The client and channel logos used to sit across the top of this sheet. They
+   are gone: WorksheetWriter has no addImage (only addBackgroundImage, which
+   tiles and does not print), so a streamed workbook cannot embed them. The
+   header block still starts at row 6 so the rest of the cover sheet's layout
+   is unchanged. */
 function buildMenuSheet(
   wb: ExcelJS.Workbook,
   sheet: ExcelJS.Worksheet,
@@ -1677,20 +1811,17 @@ function buildMenuSheet(
     clientName: string;
     channelLabel: string;
     periodLabel: string;
-    clientLogo?: string;
-    channelLogo?: string;
     dataGapLines?: string[];
     coverageSpan?: string;
+    // Tab names in order. Passed in rather than read off wb.worksheets, because
+    // this sheet is now written before any of the others exist.
+    sheetNames: string[];
   },
 ): void {
   sheet.getColumn(1).width = 40;
   sheet.getColumn(2).width = 30;
 
-  // Logos across the top (client left, channel right)
-  if (meta.clientLogo) addLogoImage(wb, sheet, meta.clientLogo, 0, 0);
-  if (meta.channelLogo) addLogoImage(wb, sheet, meta.channelLogo, 4, 0);
-
-  // Header block (below the logo band)
+  // Header block
   let row = 6;
   const h1 = sheet.getCell(row, 1);
   h1.value = meta.clientName;
@@ -1743,14 +1874,11 @@ function buildMenuSheet(
   sheet.mergeCells(row, 1, row, 2);
   row++;
 
-  for (const ws of wb.worksheets) {
-    if (ws.name === "Menu") continue;
+  for (const name of meta.sheetNames) {
     const cell = sheet.getCell(row, 1);
-    cell.value = { text: ws.name, hyperlink: `#'${ws.name}'!A1` };
+    cell.value = { text: name, hyperlink: `#'${name}'!A1` };
     cell.font = { name: "Calibri", size: 11, color: { argb: "0563C1" }, underline: true };
     cell.border = thinBorder();
     row++;
   }
-
-  sheet.views = [{ showGridLines: false }];
 }
