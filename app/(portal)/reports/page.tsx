@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { authFetch } from "@/lib/useAuth";
 import SearchSelect from "@/components/SearchSelect";
+import MultiSelect from "@/components/MultiSelect";
 import { analyzeCoverage, formatMonth, type CoverageResult } from "@/lib/dataCoverage";
 import type { Client, Channel, SalesLedgerMeta } from "@/lib/types";
 
@@ -743,45 +744,22 @@ export default function ReportsPage() {
             <label className="mb-1 block text-xs font-medium text-[var(--color-text-muted)]">
               Sheets to include
             </label>
-            <details className="relative inline-block">
-              <summary className="cursor-pointer select-none rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm">
-                {selectedSheets.length === REPORT_SHEETS.length
+            {/* Was a native <details>, which only closes by clicking its own
+                summary again — tick a sheet and you were stuck with the panel
+                open. Now dismissable by click-away, Escape, Tab or Done. */}
+            <MultiSelect
+              label="Sheets"
+              widthClass="w-56"
+              searchable={false}
+              options={REPORT_SHEETS.map((s) => ({ value: s.key, label: s.label }))}
+              selected={selectedSheets}
+              onChange={setSelectedSheets}
+              summary={
+                selectedSheets.length === REPORT_SHEETS.length
                   ? "All sheets"
-                  : `${selectedSheets.length} of ${REPORT_SHEETS.length} sheets`}
-              </summary>
-              <div className="absolute z-20 mt-1 w-56 rounded-lg border border-[var(--color-border)] bg-white p-2 shadow-lg">
-                <div className="mb-1 flex gap-3 border-b border-[var(--color-border)] pb-1">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedSheets(REPORT_SHEETS.map((s) => s.key))}
-                    className="text-xs text-[var(--color-primary)] hover:underline"
-                  >
-                    Select all
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedSheets([])}
-                    className="text-xs text-[var(--color-primary)] hover:underline"
-                  >
-                    Clear
-                  </button>
-                </div>
-                {REPORT_SHEETS.map((s) => (
-                  <label key={s.key} className="flex cursor-pointer items-center gap-2 px-1 py-1 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={selectedSheets.includes(s.key)}
-                      onChange={() =>
-                        setSelectedSheets((prev) =>
-                          prev.includes(s.key) ? prev.filter((x) => x !== s.key) : [...prev, s.key]
-                        )
-                      }
-                    />
-                    {s.label}
-                  </label>
-                ))}
-              </div>
-            </details>
+                  : `${selectedSheets.length} of ${REPORT_SHEETS.length} sheets`
+              }
+            />
           </div>
         )}
 

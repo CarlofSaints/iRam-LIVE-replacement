@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { authFetch } from "@/lib/useAuth";
 import type { Client, Channel } from "@/lib/types";
 import SearchSelect from "@/components/SearchSelect";
+import MultiSelect from "@/components/MultiSelect";
 import {
   ResponsiveContainer, BarChart, Bar, LineChart, Line, XAxis, YAxis,
   Tooltip, Legend, CartesianGrid, LabelList,
@@ -257,54 +258,6 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function MultiSelect({ label, options, selected, onChange }: {
-  label: string;
-  options: Opt[];
-  selected: string[];
-  onChange: (next: string[]) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [q, setQ] = useState("");
-  const sorted = useMemo(() => [...options].sort((a, b) => a.label.localeCompare(b.label)), [options]);
-  const filtered = q ? sorted.filter((o) => o.label.toLowerCase().includes(q.toLowerCase())) : sorted;
-  const toggle = (v: string) => onChange(selected.includes(v) ? selected.filter((x) => x !== v) : [...selected, v]);
-  return (
-    <div className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className={`flex items-center gap-1 rounded-lg border px-3 py-1.5 text-sm ${selected.length ? "border-[var(--color-primary)] bg-[var(--color-primary)]/5 font-medium" : "border-[var(--color-border)] bg-white"}`}
-      >
-        {label}{selected.length ? ` · ${selected.length}` : ""}
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9" /></svg>
-      </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute z-20 mt-1 w-72 rounded-lg border border-[var(--color-border)] bg-white p-2 shadow-lg">
-            <input
-              autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Search ${label.toLowerCase()}…`}
-              className="mb-2 w-full rounded-md border border-[var(--color-border)] px-2 py-1 text-sm"
-            />
-            <div className="mb-1 flex justify-between px-1 text-xs">
-              <button type="button" onClick={() => onChange(Array.from(new Set([...selected, ...filtered.map((o) => o.value)])))} className="text-[var(--color-primary)] hover:underline">Select shown</button>
-              <button type="button" onClick={() => onChange([])} className="text-[var(--color-text-muted)] hover:underline">Clear</button>
-            </div>
-            <div className="max-h-60 overflow-y-auto">
-              {filtered.length === 0 && <div className="px-1 py-2 text-xs text-[var(--color-text-muted)]">No matches</div>}
-              {filtered.map((o) => (
-                <label key={o.value} className="flex items-center gap-2 rounded px-1 py-1 text-sm hover:bg-[var(--color-bg-subtle,#f5f5f5)]">
-                  <input type="checkbox" checked={selected.includes(o.value)} onChange={() => toggle(o.value)} />
-                  <span className="truncate" title={o.label}>{o.label}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (

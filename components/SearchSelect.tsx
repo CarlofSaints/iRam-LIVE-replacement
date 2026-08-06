@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useDismissable } from "@/lib/useDismissable";
 
 export interface SearchSelectOption {
   value: string;
@@ -29,7 +30,7 @@ export default function SearchSelect({
   widthClass?: string;
   disabled?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const { open, setOpen, containerRef, triggerRef, onBlurCapture } = useDismissable();
   const [q, setQ] = useState("");
 
   const sorted = useMemo(
@@ -50,10 +51,13 @@ export default function SearchSelect({
   }
 
   return (
-    <div className="relative">
+    <div className="relative" ref={containerRef} onBlurCapture={onBlurCapture}>
       <button
         type="button"
+        ref={triggerRef}
         disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
         className={`flex ${widthClass} items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm disabled:opacity-50 ${
           value
@@ -70,7 +74,9 @@ export default function SearchSelect({
       </button>
       {open && (
         <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          {/* No full-screen overlay — see lib/useDismissable.ts. It used to
+              swallow the click that dismissed it, so moving to the next
+              filter took two clicks. */}
           <div className={`absolute z-20 mt-1 ${widthClass} rounded-lg border border-[var(--color-border)] bg-white p-2 shadow-lg`}>
             <input
               autoFocus
