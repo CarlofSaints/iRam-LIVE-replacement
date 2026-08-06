@@ -45,6 +45,7 @@ export default function ReportsPage() {
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [downloadingMonthEnd, setDownloadingMonthEnd] = useState(false);
+  const [monthEndError, setMonthEndError] = useState("");
   const [toast, setToast] = useState("");
 
   // Stats
@@ -371,16 +372,33 @@ export default function ReportsPage() {
       if (mainChannelId) params.set("mainChannelId", mainChannelId);
       if (selectedSheets.length) params.set("sheets", selectedSheets.join(","));
 
+      const startedAt = Date.now();
       const res = await authFetch(`/api/reports/month-end?${params}`);
       if (!res.ok) {
-        const err = await res
-          .json()
-          .catch(() => ({ error: "Download failed" }));
-        setToast(err.error ?? "Download failed");
-        setTimeout(() => setToast(""), 4000);
+        /* A failed report must STAY on screen. This used to be a toast that
+           cleared itself after 4 seconds, so the reason was gone before anyone
+           could read it and "it just doesn't generate" was all we ever heard. */
+        const secs = Math.round((Date.now() - startedAt) / 1000);
+        const err = await res.json().catch(() => null);
+        if (err?.error) {
+          setMonthEndError(err.error);
+        } else if (res.status === 504 || res.status === 408 || res.status === 502) {
+          setMonthEndError(
+            `The report ran for ${secs} seconds and was cut off by the server before it finished (HTTP ${res.status}). ` +
+              `It has too much to build in one go. Untick the big detail sheets — Data, OOS Detail, Status Detail, DSC Detail, ND Detail — ` +
+              `or narrow the Sub-Channel / Category filters, and run it again.`,
+          );
+        } else {
+          setMonthEndError(
+            `The report failed after ${secs} seconds (HTTP ${res.status}), and the server did not say why — ` +
+              `it most likely ran out of memory building the workbook. Untick the big detail sheets ` +
+              `(Data, OOS Detail, Status Detail, DSC Detail, ND Detail) and try again.`,
+          );
+        }
         setDownloadingMonthEnd(false);
         return;
       }
+      setMonthEndError("");
       const blob = await res.blob();
       const disposition = res.headers.get("Content-Disposition") ?? "";
       const fnMatch = disposition.match(/filename="?([^"]+)"?/);
@@ -398,8 +416,9 @@ export default function ReportsPage() {
       setToast("Month-End report downloaded" + spSaveSuffix(res));
       setTimeout(() => setToast(""), 5000);
     } catch {
-      setToast("Download failed");
-      setTimeout(() => setToast(""), 4000);
+      setMonthEndError(
+        "The connection dropped before the report finished. If it keeps happening, untick the big detail sheets and try again.",
+      );
     }
     setDownloadingMonthEnd(false);
   }
@@ -694,6 +713,29 @@ export default function ReportsPage() {
             {downloadingMonthEnd ? "Generating..." : "Download Excel"}
           </button>
         </div>
+
+        {/* A failed report stays put until it is dismissed — see downloadMonthEnd. */}
+        {monthEndError && (
+          <div
+            role="alert"
+            className="mb-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-red-800">
+                  The Month-End report did not generate
+                </p>
+                <p className="mt-1 text-sm leading-relaxed text-red-800">{monthEndError}</p>
+              </div>
+              <button
+                onClick={() => setMonthEndError("")}
+                className="shrink-0 rounded border border-red-300 px-2 py-1 text-xs font-semibold text-red-800 hover:bg-red-100"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Sheets to include */}
         {clientId && mainChannelId && (
