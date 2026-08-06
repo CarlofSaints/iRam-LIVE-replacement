@@ -93,7 +93,13 @@ export default function RolesPage() {
       )}
 
       <div className="rounded-xl border border-[var(--color-border)] bg-white">
-        <div className="max-h-[520px] overflow-auto">
+        {/* Was a hard-coded 520px, which forced scrolling on any screen and got
+            worse with every permission added. Size to the viewport instead: the
+            offset is the page padding + the heading row. The cap stays because
+            it is what keeps the header row and the Permission column sticky —
+            CSS computes overflow-y to auto as soon as overflow-x is set, so
+            there is no "grow vertically but scroll horizontally" option here. */}
+        <div className="max-h-[calc(100vh-11rem)] overflow-auto">
           <table className="w-full text-sm">
             <thead className="sticky top-0 z-10 bg-white">
               <tr className="border-b border-[var(--color-border)]">
@@ -119,7 +125,7 @@ export default function RolesPage() {
                   key={perm.key}
                   className="border-b border-[var(--color-border)] last:border-0"
                 >
-                  <td className="sticky left-0 z-10 bg-white px-6 py-3 font-medium text-[var(--color-text)]">
+                  <td className="sticky left-0 z-10 bg-white px-6 py-2 font-medium text-[var(--color-text)]">
                     {perm.label}
                   </td>
                   {roles.map((rd) => {
@@ -127,7 +133,7 @@ export default function RolesPage() {
                     const has = rp?.permissions.includes(perm.key) ?? false;
                     const locked = rd.role === "super_admin";
                     return (
-                      <td key={rd.role} className="px-4 py-3 text-center">
+                      <td key={rd.role} className="px-4 py-2 text-center">
                         <button
                           onClick={() => toggle(rd.role, perm.key)}
                           disabled={locked}
