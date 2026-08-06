@@ -31,8 +31,15 @@ const LOCK_TTL_MS = 6 * 60 * 1000;
 
 /* How long to wait before verifying we hold the lock. list()+fetch is
    eventually consistent, so an immediate re-read can still show the previous
-   value and make us think we lost a race we won. */
-const VERIFY_DELAY_MS = 600;
+   value and make us think we lost a race we won.
+
+   One read at 600ms was not enough. In production the re-read kept returning
+   the PREVIOUS value long past that, so every attempt failed its own
+   verification and the app wedged: nobody could load a DISPO at all. Re-read
+   several times and give the store a few seconds to catch up before
+   concluding we lost. */
+const VERIFY_ATTEMPTS = 4;
+const VERIFY_DELAY_MS = 700;
 
 export interface UploadLock {
   id: string;
@@ -49,8 +56,28 @@ export type AcquireResult =
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-const isExpired = (lock: UploadLock): boolean =>
-  Date.now() - new Date(lock.startedAt).getTime() > LOCK_TTL_MS;
+export const isExpired = (lock: UploadLock, now = Date.now()): boolean =>
+  now - new Date(lock.startedAt).getTime() > LOCK_TTL_MS;
+
+/**
+ * What the read-back after our own write means. Pure, so the rule that wedged
+ * production in August is testable without a blob store:
+ *
+ *   "won"   — our id came back, OR what came back is dead (absent, null, or
+ *             past its TTL). A dead value cannot be a live competitor however
+ *             it got in front of us, and we have already written our lock.
+ *   "lost"  — a DIFFERENT lock that is still within its TTL. Real competitor.
+ *   "retry" — nothing conclusive yet; read again, the store may be lagging.
+ */
+export function classifyVerify(
+  confirmed: UploadLock | null,
+  ourId: string,
+  now = Date.now(),
+): "won" | "lost" | "retry" {
+  if (confirmed?.id === ourId) return "won";
+  if (confirmed?.id && !isExpired(confirmed, now)) return "lost";
+  return "retry";
+}
 
 /** Whoever currently holds the lock, or null. Expired holders read as null. */
 export async function getUploadLock(): Promise<UploadLock | null> {
@@ -72,12 +99,41 @@ export async function acquireUploadLock(
   const lock: UploadLock = { ...info, id: uuid(), startedAt: new Date().toISOString() };
   await writeJson(KEY, lock);
 
-  await sleep(VERIFY_DELAY_MS);
-  const confirmed = await readJsonStrict<UploadLock | null>(KEY, null, { skipCache: true });
-  if (confirmed?.id !== lock.id) {
-    // Someone else's write landed on top of ours — they hold it, we back off.
-    return { ok: false, heldBy: confirmed?.id ? confirmed : null };
+  /* Verify we actually hold it — but only ever LOSE to a live competitor.
+     The read-back has three failure shapes and only one of them means we lost:
+
+       our id            → we won.
+       a DIFFERENT lock,
+         still running   → they won, back off.
+       anything else
+         (absent, null,
+          EXPIRED, or a
+          stale copy of a
+          dead lock)     → nobody is uploading. We already wrote our lock, so
+                           we won. Blocking here is what wedged the app: an
+                           expired holder was reported as live, so the message
+                           named someone whose load had finished nine minutes
+                           earlier and no retry could ever get through.
+
+     An expired value can never be a live competitor, no matter how it got in
+     front of us — that is the whole point of the TTL. */
+  for (let attempt = 0; attempt < VERIFY_ATTEMPTS; attempt++) {
+    await sleep(VERIFY_DELAY_MS);
+    const confirmed = await readJsonStrict<UploadLock | null>(KEY, null, { skipCache: true });
+    const verdict = classifyVerify(confirmed, lock.id);
+
+    if (verdict === "won") return { ok: true, lock };
+    if (verdict === "lost") {
+      // A real, running upload landed on top of ours. Back off — and take our
+      // own write with us if it is somehow still the stored value, so a failed
+      // acquire never litters a lock that nothing will release.
+      await releaseUploadLock(lock.id);
+      return { ok: false, heldBy: confirmed };
+    }
+    // Stale, absent or expired: give the store another moment to catch up.
   }
+
+  // Read never caught up, and everything we saw was dead. We wrote it; we hold it.
   return { ok: true, lock };
 }
 
@@ -95,6 +151,18 @@ export async function releaseUploadLock(id: string): Promise<void> {
     // Never fail an otherwise-successful upload on cleanup. A stranded lock
     // expires on its own after LOCK_TTL_MS.
   }
+}
+
+/**
+ * Escape hatch: clear the lock whoever holds it. An app-wide gate with no
+ * manual override is one bad request away from stopping every load in the
+ * business, which is exactly what happened — so there is now a way out that
+ * does not involve a deploy. The API route decides who may call this.
+ */
+export async function forceClearUploadLock(): Promise<UploadLock | null> {
+  const current = await readJsonStrict<UploadLock | null>(KEY, null, { skipCache: true });
+  await writeJson(KEY, null);
+  return current?.id ? current : null;
 }
 
 /** Human-readable wait message for the blocked user. */

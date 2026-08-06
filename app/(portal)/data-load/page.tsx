@@ -53,6 +53,8 @@ export default function DataLoadPage() {
   // Deliberately a blocking dialog, not a toast: a load that didn't happen
   // must not be dismissible by looking away for three seconds.
   const [busyMessage, setBusyMessage] = useState<string | null>(null);
+  const [clearing, setClearing] = useState(false);
+  const [clearResult, setClearResult] = useState<string | null>(null);
 
   const [confirmData, setConfirmData] = useState<{
     warning: string;
@@ -176,6 +178,7 @@ export default function DataLoadPage() {
       // the file and the whole selection intact — retrying is one click.
       if (res.status === 409 && data.busy) {
         pendingFileRef.current = file;
+        setClearResult(null);
         setBusyMessage(data.error || "Another upload is running. Please try again in a minute.");
         setStep("upload");
         setUploading(false);
@@ -249,6 +252,27 @@ export default function DataLoadPage() {
     if (!file) return;
     setConfirmData(null);
     await submitUpload(file, true);
+  }
+
+  /* Release a stuck upload queue. The server refuses if the named load is
+     genuinely still running, so this is safe to offer to anyone who loads
+     DISPOs — it can only clear a lock that is already dead. */
+  async function clearStuckLock() {
+    setClearing(true);
+    setClearResult(null);
+    try {
+      const res = await authFetch("/api/uploads/lock", { method: "DELETE" });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.success) {
+        setClearResult("Queue released — click Try again to load your DISPO.");
+      } else {
+        setClearResult(data?.error || `Could not clear the queue (HTTP ${res.status}).`);
+      }
+    } catch {
+      setClearResult("Could not reach the server to clear the queue.");
+    } finally {
+      setClearing(false);
+    }
   }
 
   function reset() {
@@ -657,14 +681,29 @@ export default function DataLoadPage() {
                 Your file and settings have been kept — clicking Try again re-sends the same
                 upload, nothing needs to be re-selected.
               </p>
+              <p className="mt-3 text-xs text-[var(--color-text-muted)]">
+                If that load actually finished a while ago and this keeps coming back, the
+                queue is stuck — <strong>Clear stuck load</strong> releases it. It refuses to
+                touch an upload that is genuinely still running.
+              </p>
+              {clearResult && (
+                <p className="mt-2 text-xs font-semibold text-[var(--color-text)]">{clearResult}</p>
+              )}
             </div>
 
             <div className="flex justify-end gap-2 border-t border-[var(--color-border)] px-5 py-3">
               <button
-                onClick={() => setBusyMessage(null)}
+                onClick={() => { setBusyMessage(null); setClearResult(null); }}
                 className="rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm font-semibold text-[var(--color-text)] hover:border-zinc-400"
               >
                 Close
+              </button>
+              <button
+                onClick={clearStuckLock}
+                disabled={clearing}
+                className="rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm font-semibold text-[var(--color-text)] hover:border-zinc-400 disabled:opacity-50"
+              >
+                {clearing ? "Clearing…" : "Clear stuck load"}
               </button>
               <button
                 onClick={() => {
