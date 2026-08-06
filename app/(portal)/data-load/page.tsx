@@ -53,6 +53,7 @@ export default function DataLoadPage() {
   // Deliberately a blocking dialog, not a toast: a load that didn't happen
   // must not be dismissible by looking away for three seconds.
   const [busyMessage, setBusyMessage] = useState<string | null>(null);
+  const [showResultModal, setShowResultModal] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [clearResult, setClearResult] = useState<string | null>(null);
 
@@ -236,6 +237,11 @@ export default function DataLoadPage() {
     }
 
     setStep("result");
+    /* Every finished load — good or bad — raises a dialog that only a button
+       closes. Now that uploads queue, a load can finish minutes after the
+       person looked away, and the result panel alone was being missed. A
+       failure that goes unnoticed is a DISPO nobody knows is absent. */
+    setShowResultModal(true);
     setUploading(false);
   }
 
@@ -277,6 +283,7 @@ export default function DataLoadPage() {
 
   function reset() {
     setStep("select");
+    setShowResultModal(false);
     setResult(null);
     setConfirmData(null);
     pendingFileRef.current = null;
@@ -660,6 +667,114 @@ export default function DataLoadPage() {
       {/* Upload-in-progress dialog. No backdrop-click dismissal and no timeout:
           this says "your DISPO did not load", and that has to be read, not
           glimpsed. It goes away only via the buttons. */}
+      {/* Load finished — say so unmissably. Closes only via a button: no
+          click-outside, no Escape, no timer. The full breakdown (and any
+          warning tables) stays on the page underneath. */}
+      {showResultModal && result && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="upload-result-title"
+            className="w-full max-w-md rounded-xl border border-[var(--color-border)] bg-white shadow-xl"
+          >
+            <div
+              className={`flex items-start gap-3 rounded-t-xl border-b px-5 py-4 ${
+                result.ok ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"
+              }`}
+            >
+              <span className="text-xl leading-none" aria-hidden="true">
+                {result.ok ? "✅" : "⛔"}
+              </span>
+              <h2
+                id="upload-result-title"
+                className={`text-sm font-semibold ${result.ok ? "text-green-800" : "text-red-800"}`}
+              >
+                {result.ok ? "DISPO loaded successfully" : "DISPO was NOT loaded"}
+              </h2>
+            </div>
+
+            <div className="px-5 py-4">
+              <div className="rounded-lg border border-[var(--color-border)] bg-zinc-50 px-3 py-2 text-sm">
+                <strong>{selectedClient?.name}</strong> &middot;{" "}
+                {channels.find((c) => c.id === channelId)?.name} &middot;{" "}
+                {reportYear}
+                {String(reportMonth).padStart(2, "0")} Wk{reportWeek}
+              </div>
+
+              {result.ok ? (
+                <>
+                  <p className="mt-3 text-sm leading-relaxed text-[var(--color-text)]">
+                    {result.rowCount != null
+                      ? `${result.rowCount.toLocaleString()} rows were processed and merged into the sales ledger.`
+                      : result.message}
+                  </p>
+                  {result.merge && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <span className="inline-flex items-center rounded-md bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
+                        {result.merge.inserted.toLocaleString()} new
+                      </span>
+                      <span className="inline-flex items-center rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+                        {result.merge.updated.toLocaleString()} updated
+                      </span>
+                      <span className="inline-flex items-center rounded-md bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600">
+                        {result.merge.unchanged.toLocaleString()} unchanged
+                      </span>
+                    </div>
+                  )}
+                  {/* A forced load succeeds WITH warnings — do not let a green
+                      tick imply the data was clean. */}
+                  {(result.warnings?.missingArticles?.length ||
+                    result.warnings?.missingSites?.length) && (
+                    <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                      Loaded with warnings:{" "}
+                      {result.warnings?.missingArticles?.length
+                        ? `${result.warnings.missingArticles.length} article(s) not in LINKS`
+                        : ""}
+                      {result.warnings?.missingArticles?.length &&
+                      result.warnings?.missingSites?.length
+                        ? ", "
+                        : ""}
+                      {result.warnings?.missingSites?.length
+                        ? `${result.warnings.missingSites.length} site(s) not in the store master`
+                        : ""}
+                      . The full list is on the page behind this box.
+                    </p>
+                  )}
+                  <p className="mt-3 text-xs text-[var(--color-text-muted)]">
+                    It will now show as loaded on the DISPO Load Checklist.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="mt-3 text-sm leading-relaxed text-[var(--color-text)]">
+                    {result.message}
+                  </p>
+                  <p className="mt-3 text-sm font-semibold text-red-800">
+                    Nothing was saved. This DISPO still needs to be loaded.
+                  </p>
+                </>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2 border-t border-[var(--color-border)] px-5 py-3">
+              <button
+                onClick={() => setShowResultModal(false)}
+                className="rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm font-semibold text-[var(--color-text)] hover:border-zinc-400"
+              >
+                {result.ok ? "Close" : "See details"}
+              </button>
+              <button
+                onClick={reset}
+                className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)]"
+              >
+                {result.ok ? "Load another DISPO" : "Start over"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {busyMessage && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div
