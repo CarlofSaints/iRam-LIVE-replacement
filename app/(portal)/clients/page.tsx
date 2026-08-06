@@ -25,6 +25,7 @@ function fmtBytes(bytes: number): string {
 export default function ClientsPage() {
   const { can } = usePermissions();
   const canManage = can("manage_clients");
+  const canDelete = can("delete_clients");
   const [clients, setClients] = useState<Client[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [cams, setCams] = useState<CAM[]>([]);
@@ -297,11 +298,16 @@ export default function ClientsPage() {
                           className="text-xs font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-50">
                           {busyId === c.id ? "…" : c.active ? "Archive" : "Restore"}
                         </button>
-                        <button type="button" onClick={() => openDelete(c)}
-                          title="Permanently delete this client and all of its stored data"
-                          className="ml-4 text-xs font-medium text-red-600 hover:underline">
-                          Delete
-                        </button>
+                        {/* Separate permission — see delete_clients in lib/types.ts.
+                            The API enforces it too; this only keeps the button
+                            out of the way of people who cannot use it. */}
+                        {canDelete && (
+                          <button type="button" onClick={() => openDelete(c)}
+                            title="Permanently delete this client and all of its stored data"
+                            className="ml-4 text-xs font-medium text-red-600 hover:underline">
+                            Delete
+                          </button>
+                        )}
                       </td>
                     )}
                   </tr>

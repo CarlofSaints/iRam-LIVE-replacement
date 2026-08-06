@@ -181,16 +181,25 @@ export default function Sidebar() {
     pathname.startsWith("/control-centre")
   );
 
-  // Per-permission nav gating. Items not listed here are always shown.
+  /* Per-permission nav gating. Items not listed here are always shown.
+     This map used to be applied ONLY to the Control Centre list, so anything
+     in the top or bottom nav appeared for everyone regardless of permission —
+     Activity Log was visible to every user, and clicking it just produced an
+     empty page when /api/logs correctly returned 403. The API was never the
+     problem; the link was. It now covers all three lists. */
   const navPermission: Record<string, string> = {
     "/control-centre/templates": "download_templates",
     "/control-centre/storage": "manage_clients",
     "/control-centre/data-health": "manage_clients",
+    "/activity-log": "view_activity_log",
   };
-  const visibleControlCentreNav = controlCentreNav.filter((item) => {
+  const allowed = (item: NavItem) => {
     const perm = navPermission[item.href];
     return !perm || can(perm);
-  });
+  };
+  const visibleTopNav = topNav.filter(allowed);
+  const visibleControlCentreNav = controlCentreNav.filter(allowed);
+  const visibleBottomNav = bottomNav.filter(allowed);
 
   return (
     <aside className="flex h-full w-60 flex-col border-r border-[var(--color-border)] bg-white">
@@ -212,7 +221,7 @@ export default function Sidebar() {
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto px-3 py-3">
         <div className="space-y-0.5">
-          {topNav.map((item) => (
+          {visibleTopNav.map((item) => (
             <NavLink key={item.href} item={item} />
           ))}
         </div>
@@ -247,7 +256,7 @@ export default function Sidebar() {
         </div>
 
         <div className="mt-4 space-y-0.5">
-          {bottomNav.map((item) => (
+          {visibleBottomNav.map((item) => (
             <NavLink key={item.href} item={item} />
           ))}
         </div>

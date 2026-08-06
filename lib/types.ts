@@ -20,7 +20,14 @@ export const ALL_PERMISSIONS = [
   { key: "manage_users" as const, label: "Manage Users" },
   { key: "manage_roles" as const, label: "Manage Roles" },
   { key: "manage_channels" as const, label: "Manage Channels" },
-  { key: "manage_clients" as const, label: "Manage Clients" },
+  { key: "manage_clients" as const, label: "Manage Clients (add / edit / archive)" },
+  /* Split out of manage_clients on 6 Aug 2026. Adding a client and destroying
+     one are not the same act: a CAM needs the first to do their job, and the
+     second is irreversible — it purges every ledger, upload and control file
+     the client has. Granting add/edit should never imply the ability to
+     delete. Archive stays under manage_clients: it is reversible and keeps
+     all the data. */
+  { key: "delete_clients" as const, label: "Delete Clients (permanent, purges all data)" },
   { key: "manage_cams" as const, label: "Manage CAMs" },
   { key: "manage_store_files" as const, label: "Manage Store Control Files" },
   { key: "manage_statuses" as const, label: "Manage Status Definitions" },
@@ -59,7 +66,7 @@ export const ROLE_DEFINITIONS: RoleDefinition[] = [
     label: "Admin",
     description: "Manage clients, channels, data, and users",
     permissions: [
-      "manage_users", "manage_channels", "manage_clients", "manage_cams",
+      "manage_users", "manage_channels", "manage_clients", "delete_clients", "manage_cams",
       "manage_store_files", "manage_statuses", "upload_data", "manage_control_files",
       "delete_uploads", "manage_store_reports", "view_dashboard", "view_uploads", "view_activity_log", "view_charts", "download_templates", "export_data",
     ],

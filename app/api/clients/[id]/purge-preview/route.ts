@@ -11,7 +11,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    await requirePermission(req, "manage_clients");
+    // Part of the delete flow — it enumerates exactly what deletion would
+    // destroy, so it belongs with the delete permission, not with add/edit.
+    await requirePermission(req, "delete_clients");
     const { id } = await params;
     const preview = await previewPurge(id);
     return Response.json(preview, { headers: noCacheHeaders() });

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { authFetch } from "@/lib/useAuth";
+import { authFetch, usePermissions } from "@/lib/useAuth";
 import type { LogEntry } from "@/lib/types";
 import SearchSelect from "@/components/SearchSelect";
 
@@ -52,6 +52,11 @@ function actionLabel(action: string): string {
 }
 
 export default function ActivityLogPage() {
+  /* The nav link is hidden without this permission and /api/logs enforces it,
+     but a bookmarked or shared URL still lands here. Say no plainly rather
+     than rendering an empty log, which reads as "there is no activity". */
+  const { can, loaded: permsLoaded } = usePermissions();
+
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [clients, setClients] = useState<{ id: string; name: string }[]>([]);
   const [loading, setLoading] = useState(true);
@@ -118,6 +123,18 @@ export default function ActivityLogPage() {
   }, [logs, actionFilter, userFilter, clientFilter]);
 
   const hasFilters = !!(actionFilter || clientFilter || userFilter);
+
+  if (permsLoaded && !can("view_activity_log")) {
+    return (
+      <div className="p-8">
+        <h1 className="text-2xl font-bold text-[var(--color-text)]">Activity Log</h1>
+        <p className="mt-3 max-w-prose text-sm text-[var(--color-text-muted)]">
+          You do not have access to the activity log. If you need it, ask an
+          administrator to grant your role the <strong>View Activity Log</strong> permission.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="p-8">

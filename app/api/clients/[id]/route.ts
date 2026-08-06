@@ -48,7 +48,9 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await requirePermission(req, "manage_clients");
+    // NOT manage_clients — that grants add/edit/archive, which a CAM needs.
+    // This purges every ledger, upload and control file the client has.
+    const session = await requirePermission(req, "delete_clients");
     const { id } = await params;
 
     const client = await getClientById(id);
