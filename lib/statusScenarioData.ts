@@ -1,5 +1,6 @@
 import type { StatusScenario } from "./types";
 import { readJson, writeJson } from "./blob";
+import { scenarioClientStatuses, normaliseConditions } from "./scenarioConditions";
 import { v4 as uuid } from "uuid";
 
 const KEY = "status-scenarios.json";
@@ -21,7 +22,7 @@ export async function createStatusScenario(data: {
     id: uuid(),
     statusCode: data.statusCode.trim().toUpperCase(),
     channelId: data.channelId,
-    conditions: data.conditions,
+    conditions: normaliseConditions(data.conditions ?? {}),
     classification: data.classification,
     description: data.description,
     createdAt: now,
@@ -47,7 +48,7 @@ export async function updateStatusScenario(
     all[idx].channelId = updates.channelId;
   }
   if (updates.conditions !== undefined) {
-    all[idx].conditions = updates.conditions;
+    all[idx].conditions = normaliseConditions(updates.conditions);
   }
   if (updates.classification !== undefined) {
     all[idx].classification = updates.classification;
@@ -70,7 +71,17 @@ export async function deleteStatusScenario(id: string): Promise<void> {
 /**
  * Evaluate scenarios for a given status code and enriched row.
  * Returns "POSITIVE" | "NEGATIVE" if a scenario matches, null if no match.
- * Most specific match wins (more conditions = higher priority).
+ *
+ * Most specific match wins. Specificity is:
+ *   1. the number of conditions the scenario constrains (more = wins), then
+ *   2. how NARROW the client-status constraint is (fewer statuses = wins).
+ *
+ * The second rule exists because a scenario can now list several statuses.
+ * "ACTIVE" and "ACTIVE or DISCONTINUED" both constrain one condition, so
+ * without it a row with PMF status ACTIVE would be decided by whichever
+ * happened to sit earlier in the stored list — i.e. by insertion order. The
+ * narrower rule is the one that was deliberately written for that status, so
+ * it takes precedence.
  */
 export function evaluateScenarios(
   statusCode: string,
@@ -81,18 +92,22 @@ export function evaluateScenarios(
   const matching = scenarios.filter((s) => s.statusCode === upper);
   if (matching.length === 0) return null;
 
-  // Score each by specificity (number of active conditions)
   let bestMatch: StatusScenario | null = null;
   let bestScore = -1;
+  let bestBreadth = Infinity;
 
   for (const s of matching) {
     let score = 0;
     let conditionsMet = true;
+    // Unconstrained scenarios never win a tie-break on narrowness.
+    let breadth = Infinity;
 
-    if (s.conditions.clientStatus !== undefined) {
+    const wanted = scenarioClientStatuses(s.conditions);
+    if (wanted.length > 0) {
       score++;
+      breadth = wanted.length;
       const productStatus = String(row["_productStatus"] ?? "").trim().toUpperCase();
-      if (productStatus !== s.conditions.clientStatus.toUpperCase()) {
+      if (!wanted.includes(productStatus)) {
         conditionsMet = false;
       }
     }
@@ -105,8 +120,10 @@ export function evaluateScenarios(
       }
     }
 
-    if (conditionsMet && score > bestScore) {
+    if (!conditionsMet) continue;
+    if (score > bestScore || (score === bestScore && breadth < bestBreadth)) {
       bestScore = score;
+      bestBreadth = breadth;
       bestMatch = s;
     }
   }

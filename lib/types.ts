@@ -327,7 +327,13 @@ export interface StatusDefinition {
 // ── Status Scenarios (conditional classification) ──
 
 export interface StatusScenarioConditions {
-  clientStatus?: string;      // from PMF (e.g. "ACTIVE", "DISCONTINUED")
+  /** One or more PMF statuses (e.g. ["ACTIVE", "DISCONTINUED"]). The row
+   *  matches if its PMF status is ANY of these. Empty/absent = any status. */
+  clientStatuses?: string[];
+  /** @deprecated Single-status form, kept so scenarios saved before
+   *  multi-select still evaluate. Read via `scenarioClientStatuses()`, never
+   *  directly — anything saved from now on writes `clientStatuses`. */
+  clientStatus?: string;
   rangingStatus?: boolean;     // from ranging control file (true/false)
 }
 

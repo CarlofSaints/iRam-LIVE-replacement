@@ -2,6 +2,8 @@
 
 import { useEffect, useState, FormEvent } from "react";
 import { authFetch, useAuth } from "@/lib/useAuth";
+import MultiSelect from "@/components/MultiSelect";
+import { scenarioClientStatuses, statusSummary } from "@/lib/scenarioConditions";
 import type { StatusDefinition, StatusClassification, Channel, StatusScenario } from "@/lib/types";
 
 const CLASSIFICATIONS: StatusClassification[] = ["POSITIVE", "NEGATIVE", "UNCLASSIFIED"];
@@ -46,7 +48,7 @@ export default function StatusReferencePage() {
   const [scenarioForm, setScenarioForm] = useState({
     statusCode: "",
     channelId: "" as string,
-    clientStatus: "" as string,
+    clientStatuses: [] as string[],   // empty = any PMF status
     rangingStatus: "" as string,
     classification: "NEGATIVE" as "POSITIVE" | "NEGATIVE",
     description: "",
@@ -56,7 +58,7 @@ export default function StatusReferencePage() {
   const [editScenarioForm, setEditScenarioForm] = useState({
     statusCode: "",
     channelId: "" as string,
-    clientStatus: "" as string,
+    clientStatuses: [] as string[],   // empty = any PMF status
     rangingStatus: "" as string,
     classification: "NEGATIVE" as "POSITIVE" | "NEGATIVE",
     description: "",
@@ -180,7 +182,8 @@ export default function StatusReferencePage() {
     if (!channelId) { setScenarioError("Channel is required"); return; }
 
     const conditions: Record<string, unknown> = {};
-    if (scenarioForm.clientStatus) conditions.clientStatus = scenarioForm.clientStatus;
+    // Empty list = "Any", so it is simply left off the conditions.
+    if (scenarioForm.clientStatuses.length > 0) conditions.clientStatuses = scenarioForm.clientStatuses;
     if (scenarioForm.rangingStatus !== "") conditions.rangingStatus = scenarioForm.rangingStatus === "true";
 
     const res = await authFetch("/api/status-scenarios", {
@@ -198,13 +201,13 @@ export default function StatusReferencePage() {
       return;
     }
     setShowAddScenario(false);
-    setScenarioForm({ statusCode: "", channelId: "", clientStatus: "", rangingStatus: "", classification: "NEGATIVE", description: "" });
+    setScenarioForm({ statusCode: "", channelId: "", clientStatuses: [], rangingStatus: "", classification: "NEGATIVE", description: "" });
     reloadScenarios();
   }
 
   async function handleEditScenario(id: string) {
     const conditions: Record<string, unknown> = {};
-    if (editScenarioForm.clientStatus) conditions.clientStatus = editScenarioForm.clientStatus;
+    if (editScenarioForm.clientStatuses.length > 0) conditions.clientStatuses = editScenarioForm.clientStatuses;
     if (editScenarioForm.rangingStatus !== "") conditions.rangingStatus = editScenarioForm.rangingStatus === "true";
 
     const res = await authFetch(`/api/status-scenarios/${id}`, {
@@ -525,17 +528,20 @@ export default function StatusReferencePage() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-[var(--color-text-muted)]">Client Status (from PMF)</label>
-                  <select
-                    value={scenarioForm.clientStatus}
-                    onChange={(e) => setScenarioForm({ ...scenarioForm, clientStatus: e.target.value })}
-                    className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm"
-                  >
-                    <option value="">Any</option>
-                    {productStatuses.map((s) => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </select>
+                  <label className="mb-1 block text-xs font-medium text-[var(--color-text-muted)]">
+                    Client Status (from PMF)
+                  </label>
+                  <MultiSelect
+                    label="Client Status"
+                    options={productStatuses.map((s) => ({ value: s, label: s }))}
+                    selected={scenarioForm.clientStatuses}
+                    onChange={(next) => setScenarioForm({ ...scenarioForm, clientStatuses: next })}
+                    widthClass="w-full"
+                    summary={statusSummary(scenarioForm.clientStatuses)}
+                  />
+                  <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                    Matches if the product&apos;s PMF status is any of the ticked ones. None ticked = any status.
+                  </p>
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-medium text-[var(--color-text-muted)]">Ranging Status</label>
@@ -634,16 +640,14 @@ export default function StatusReferencePage() {
                           </select>
                         </td>
                         <td className="px-6 py-3">
-                          <select
-                            value={editScenarioForm.clientStatus}
-                            onChange={(e) => setEditScenarioForm({ ...editScenarioForm, clientStatus: e.target.value })}
-                            className="rounded-lg border border-[var(--color-border)] px-2 py-1 text-sm"
-                          >
-                            <option value="">Any</option>
-                            {productStatuses.map((s) => (
-                              <option key={s} value={s}>{s}</option>
-                            ))}
-                          </select>
+                          <MultiSelect
+                            label="Client Status"
+                            options={productStatuses.map((s) => ({ value: s, label: s }))}
+                            selected={editScenarioForm.clientStatuses}
+                            onChange={(next) => setEditScenarioForm({ ...editScenarioForm, clientStatuses: next })}
+                            widthClass="w-56"
+                            summary={statusSummary(editScenarioForm.clientStatuses)}
+                          />
                         </td>
                         <td className="px-6 py-3">
                           <select
@@ -687,7 +691,12 @@ export default function StatusReferencePage() {
                           <td className="px-6 py-3 text-[var(--color-text-muted)]">{channelName(sc.channelId)}</td>
                         )}
                         <td className="px-6 py-3 font-mono font-medium text-[var(--color-text)]">{sc.statusCode}</td>
-                        <td className="px-6 py-3 text-[var(--color-text-muted)]">{sc.conditions.clientStatus || "Any"}</td>
+                        <td
+                          className="px-6 py-3 text-[var(--color-text-muted)]"
+                          title={scenarioClientStatuses(sc.conditions).join(", ")}
+                        >
+                          {statusSummary(scenarioClientStatuses(sc.conditions))}
+                        </td>
                         <td className="px-6 py-3 text-[var(--color-text-muted)]">
                           {sc.conditions.rangingStatus === true ? "TRUE" : sc.conditions.rangingStatus === false ? "FALSE" : "Any"}
                         </td>
@@ -702,7 +711,9 @@ export default function StatusReferencePage() {
                                   setEditScenarioForm({
                                     statusCode: sc.statusCode,
                                     channelId: sc.channelId || selectedChannel,
-                                    clientStatus: sc.conditions.clientStatus || "",
+                                    // Reads the legacy single field too, so an
+                                    // old scenario opens with its status ticked.
+                                    clientStatuses: scenarioClientStatuses(sc.conditions),
                                     rangingStatus: sc.conditions.rangingStatus === true ? "true" : sc.conditions.rangingStatus === false ? "false" : "",
                                     classification: sc.classification,
                                     description: sc.description || "",
