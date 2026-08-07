@@ -75,6 +75,7 @@ export async function updateClient(
       | "controlFiles"
       | "notes"
       | "sendConsolidatedStoreReports"
+      | "sqlClientName"
     >
   >
 ): Promise<Client> {

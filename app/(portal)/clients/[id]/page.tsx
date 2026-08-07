@@ -64,8 +64,25 @@ export default function ClientDetailPage() {
   const [saving, setSaving] = useState(false);
   const [editForm, setEditForm] = useState({
     name: "", vendorNumbers: "", camId: "", channelIds: [] as string[], notes: "",
-    sendConsolidatedStoreReports: false,
+    sendConsolidatedStoreReports: false, sqlClientName: "",
   });
+
+  /* Client names as SQL Server knows them, for the SQL Name suggestion list.
+     Only the super admin can read the pilot status endpoint, so for everyone
+     else this stays empty and the field is simply free text — the datalist is
+     a convenience, never a gate. */
+  const [sqlClientNames, setSqlClientNames] = useState<string[]>([]);
+  const [sqlNameError, setSqlNameError] = useState("");
+  useEffect(() => {
+    if (!editing) return;
+    authFetch("/api/sql-pilot/status")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d?.sqlClientNames) setSqlClientNames(d.sqlClientNames);
+        else if (d && !d.configured) setSqlNameError("SQL proxy not configured — suggestions unavailable");
+      })
+      .catch(() => setSqlNameError("could not load SQL client list"));
+  }, [editing]);
 
   // Product mapping state
   const [pmfHeaders, setPmfHeaders] = useState<string[]>([]);
@@ -436,6 +453,7 @@ export default function ClientDetailPage() {
       channelIds: validChannelIds,
       notes: client.notes ?? "",
       sendConsolidatedStoreReports: client.sendConsolidatedStoreReports ?? false,
+      sqlClientName: client.sqlClientName ?? "",
     });
     setEditing(true);
   }
@@ -460,6 +478,9 @@ export default function ClientDetailPage() {
         channelIds: editForm.channelIds,
         notes: editForm.notes || undefined,
         sendConsolidatedStoreReports: editForm.sendConsolidatedStoreReports,
+        // Trimmed: a trailing space would make the SQL lookup miss and look
+        // exactly like "this client has no data".
+        sqlClientName: editForm.sqlClientName.trim() || undefined,
       }),
     });
     if (res.ok) {
@@ -562,6 +583,12 @@ export default function ClientDetailPage() {
                 ? <span className="rounded-full bg-green-50 px-2 py-0.5 text-xs text-green-700">Included</span>
                 : <span className="text-[var(--color-text-muted)]">Not included</span>}</div>
             </div>
+            <div>
+              <span className="text-[var(--color-text-muted)]">SQL Name</span>
+              <div className="font-medium">{client.sqlClientName
+                ? <span className="font-mono text-xs">{client.sqlClientName}</span>
+                : <span className="text-[var(--color-text-muted)]">Not mapped</span>}</div>
+            </div>
             {client.notes && <div className="col-span-2"><span className="text-[var(--color-text-muted)]">Notes</span><div className="mt-1">{client.notes}</div></div>}
           </div>
         </div>
@@ -616,6 +643,30 @@ export default function ClientDetailPage() {
                   );
                 })}
               </div>
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-[var(--color-text)]">SQL Name</label>
+              <input
+                value={editForm.sqlClientName}
+                onChange={(e) => setEditForm({ ...editForm, sqlClientName: e.target.value })}
+                list="sql-client-name-options"
+                placeholder="e.g. BISCO — leave blank if this client is not in SQL"
+                className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm"
+              />
+              {/* Typed free-text, but suggested from the live SQL client list so
+                  a typo doesn't silently look like "SQL has no data for this
+                  client" — the two are indistinguishable from the app's side. */}
+              <datalist id="sql-client-name-options">
+                {sqlClientNames.map((n) => <option key={n} value={n} />)}
+              </datalist>
+              <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                This client&apos;s name on the SQL Server side. SQL uses short trading names where
+                iRam uses full legal ones (&ldquo;BISCO&rdquo; vs &ldquo;BISCO PLUS (PTY) LTD&rdquo;),
+                so it has to be set explicitly. Used only by the SQL Direct pilot.
+                {sqlNameError && (
+                  <> <span className="text-amber-700">({sqlNameError})</span></>
+                )}
+              </p>
             </div>
             <div>
               <label className="mb-1 block text-sm font-medium text-[var(--color-text)]">Notes</label>

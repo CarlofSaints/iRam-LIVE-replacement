@@ -231,6 +231,13 @@ export interface Client {
   linkedClientIds: string[];
   controlFiles: Record<ControlFileType, ControlFileMeta | null>;
   notes?: string;
+  /* This client's name on the SQL Server side (SQL Direct pilot).
+     SQL keys every stored procedure on a client NAME string and uses short
+     trading names where iRam uses full legal ones — "BISCO" vs "BISCO PLUS
+     (PTY) LTD" — so only 1 of 30 clients matched by name alone. A wrong or
+     missing name is indistinguishable from "SQL has no data for this client",
+     which is why this is set explicitly rather than guessed by fuzzy match. */
+  sqlClientName?: string;
   // When true, this client's data is pooled into the consolidated store
   // reports emailed to reps (see the Send Store Reports module).
   sendConsolidatedStoreReports?: boolean;
