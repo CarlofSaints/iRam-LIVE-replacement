@@ -390,10 +390,21 @@ export default function ReportsPage() {
               `or narrow the Sub-Channel / Category filters, and run it again.`,
           );
         } else {
+          /* No JSON body means the function was killed rather than returning
+             an error — the route's catch always responds with JSON. Since the
+             workbook is streamed this should no longer happen on size alone,
+             so don't claim to know the cause.
+
+             The old wording here told people to untick "the big detail sheets
+             (Data, OOS Detail, …)". That was measurably wrong: dropping Data
+             alone changed nothing, and only unticking EVERY detail sheet
+             helped. Naming a partial list sent people down a dead end. */
           setMonthEndError(
-            `The report failed after ${secs} seconds (HTTP ${res.status}), and the server did not say why — ` +
-              `it most likely ran out of memory building the workbook. Untick the big detail sheets ` +
-              `(Data, OOS Detail, Status Detail, DSC Detail, ND Detail) and try again.`,
+            `The report failed after ${secs} seconds (HTTP ${res.status}) and the server did not say why, ` +
+              `which usually means it hit a resource limit. Try again — if it fails a second time, untick ` +
+              `every detail sheet (Data, OOS Detail, DSC Detail, Status Detail, OTO Detail, ND Detail, ` +
+              `ND False) to confirm it is a size problem, then send this message to Carl. ` +
+              `Unticking only some of them will not help.`,
           );
         }
         setDownloadingMonthEnd(false);

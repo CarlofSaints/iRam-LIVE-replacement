@@ -280,7 +280,13 @@ export async function buildMonthEndWorkbook(
     stream: out,
     useStyles: true,        // without this every fill / font / border is dropped
     useSharedStrings: true,
-  });
+    /* The streaming writer's default zip level is tuned for speed, which made
+       the output ~25% larger than the old in-memory writeBuffer() produced
+       (VERMONT 18.6MB → 23.2MB). These are emailed and stored, so trade a
+       little CPU for the smaller file — same tradeoff as the Vital Signs
+       `compression: true` fix. */
+    zip: { zlib: { level: 6 } },
+  } as never);
   wb.creator = "iRam LIVE Replacement";
   wb.created = new Date();
   nextCfPriority = 1; // reset CF rule priorities per workbook
