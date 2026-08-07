@@ -72,6 +72,15 @@ export default function StatusReferencePage() {
   // All unique product statuses from PMFs (for scenario condition dropdown)
   const [productStatuses, setProductStatuses] = useState<string[]>([]);
 
+  /* Status codes offered when editing a scenario. Always includes the one the
+     scenario already has: a <select> whose value matches no <option> renders
+     the FIRST option instead, and saving then writes that back — so editing a
+     scenario whose code has no status definition (live: "0") silently changed
+     which code it applied to. */
+  const editCodeOptions = editScenarioForm.statusCode && !allStatusCodes.includes(editScenarioForm.statusCode)
+    ? [editScenarioForm.statusCode, ...allStatusCodes]
+    : allStatusCodes;
+
   // Load channels, scenarios, and product statuses on mount
   useEffect(() => {
     (async () => {
@@ -634,8 +643,17 @@ export default function StatusReferencePage() {
                             onChange={(e) => setEditScenarioForm({ ...editScenarioForm, statusCode: e.target.value })}
                             className="rounded-lg border border-[var(--color-border)] px-2 py-1 text-sm"
                           >
-                            {allStatusCodes.map((code) => (
-                              <option key={code} value={code}>{code}</option>
+                            {/* The scenario's OWN code is always an option, even
+                                if no status definition declares it. Options come
+                                from the status definitions, so a scenario on a
+                                code with no definition (live: "0") had nothing to
+                                select — the browser fell back to the first option
+                                and Save silently rewrote the code to "A". */}
+                            {editCodeOptions.map((code) => (
+                              <option key={code} value={code}>
+                                {code}
+                                {allStatusCodes.includes(code) ? "" : " (no definition)"}
+                              </option>
                             ))}
                           </select>
                         </td>
