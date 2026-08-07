@@ -43,6 +43,14 @@ export const ALL_PERMISSIONS = [
   { key: "view_charts" as const, label: "View Charts" },
   { key: "download_templates" as const, label: "Download Control File Templates" },
   { key: "export_data" as const, label: "Export Data" },
+  /* SQL Direct pilot — reads DISPO / store / product data straight from SQL
+     Server instead of the manual uploads, so it can be compared against what
+     is loaded today before anything switches over. Deliberately absent from
+     the admin / CAM / viewer permission lists below: super_admin's list is
+     computed from ALL_PERMISSIONS, so this lands on the super admin ONLY and
+     mergeRoleDefaults will not grant it to any other role. That is what keeps
+     the pilot invisible to the team without hard-coding anyone's user id. */
+  { key: "view_sql_pilot" as const, label: "SQL Direct (pilot) — super admin only" },
 ] as const;
 
 export type PermissionKey = (typeof ALL_PERMISSIONS)[number]["key"];

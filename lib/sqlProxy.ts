@@ -45,6 +45,31 @@ export async function sqlQuery<T = Record<string, unknown>>(
   return res.json() as Promise<ProxyResponse<T>>;
 }
 
+/* Proxy /health — reports whether the proxy itself can reach SQL Server. Kept
+   separate from a query call so the SQL Direct pilot can tell "the proxy is
+   down" apart from "the proxy is up but this stored procedure failed", which
+   look identical from a failed /query alone. */
+export async function proxyHealth(): Promise<Record<string, unknown>> {
+  if (!PROXY_URL) throw new Error("SQL_PROXY_URL not configured");
+  const res = await fetch(`${PROXY_URL}/health`, { cache: "no-store" });
+  const body = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, ...body };
+}
+
+/* The proxy's named-query registry. The proxy refuses raw SQL, so this is the
+   definitive list of what can be asked for — used to show whether each pilot
+   source is actually wired up on the proxy rather than assuming it. */
+export async function listProxyQueries(): Promise<{ name: string; description: string }[]> {
+  if (!PROXY_URL || !PROXY_KEY) throw new Error("SQL proxy not configured");
+  const res = await fetch(`${PROXY_URL}/query`, {
+    headers: { "x-api-key": PROXY_KEY },
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`SQL proxy error (${res.status})`);
+  const body = (await res.json()) as { queries?: { name: string; description: string }[] };
+  return body.queries ?? [];
+}
+
 // Today's Massmart store visits / check-ins (the store-report trigger source).
 export async function getTodayMassmartVisits(): Promise<Record<string, unknown>[]> {
   const r = await sqlQuery<Record<string, unknown>>("massmart_visits_today");
