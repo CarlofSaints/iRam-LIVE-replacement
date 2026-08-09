@@ -1,9 +1,9 @@
-/* ──────────────────────────────────────────────────────────────
-   Month-End Report — aggregation & computation engine
+﻿/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+   Month-End Report â€” aggregation & computation engine
 
    Takes enriched ledger rows, groups and aggregates them into
    cascading summary tables at multiple levels:
-     Sub-Channel → Province → Category → Store → Product
+     Sub-Channel â†’ Province â†’ Category â†’ Store â†’ Product
 
    Each level has Volume + Value variants with columns:
      Entity, # Stores, YTD, LY YTD, Current Month, Same Month LY,
@@ -11,7 +11,7 @@
      Contribution %
 
    Also computes OOS summary + detail data.
-   ────────────────────────────────────────────────────────────── */
+   â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 import type { StatusDefinition, StatusScenario, StatusClassification, StoreRecord, ProductMaster } from "./types";
 import { evaluateScenarios } from "./statusScenarioData";
@@ -35,7 +35,7 @@ function effectivePriceExVat(row: Row, inclKey = "Incl SP", promKey = "Prom SP")
   return price / (1 + VAT_RATE);
 }
 
-// ── Date column classification ─────────────────────────────────
+// â”€â”€ Date column classification â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface DateContext {
   dateColumns: string[];
@@ -113,7 +113,7 @@ export function buildDateContext(dateColumns: string[]): DateContext {
   };
 }
 
-// ── Row-level value extraction ─────────────────────────────────
+// â”€â”€ Row-level value extraction â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface RowMetrics {
   ytdUnits: number;
@@ -165,7 +165,7 @@ function getRowMetrics(row: Row, ctx: DateContext): RowMetrics {
   };
 }
 
-// ── Aggregated summary row ─────────────────────────────────────
+// â”€â”€ Aggregated summary row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface SummaryRow {
   name: string;
@@ -267,7 +267,7 @@ function r2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-// ── Grand total row ────────────────────────────────────────────
+// â”€â”€ Grand total row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function computeGrandTotal(summaryRows: SummaryRow[], totalStoreCount?: number): SummaryRow {
   const totals: SummaryRow = {
@@ -310,10 +310,25 @@ function computeGrandTotal(summaryRows: SummaryRow[], totalStoreCount?: number):
   return totals;
 }
 
-// ── Full Sales Summary (cascading levels) ──────────────────────
+// â”€â”€ Full Sales Summary (cascading levels) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+/* A client is one company but often several VENDOR NUMBERS, each carrying its
+   own product range. The DISPO parser resolves a vendor per row and stamps it
+   as `_vendor` (a DC line inherits the vendor of the same article found under
+   a numeric vendor), and the ledger merge preserves it â€” so every enriched row
+   knows which vendor range it belongs to.
+
+   The report is scoped to a client + channel, never to one vendor, so without
+   this the ranges are silently blended: a file named "â€¦ - 1063 - â€¦" (just the
+   client's FIRST vendor number) actually contains all of them. The legacy iRam
+   LIVE emitted one file per vendor; this keeps a single file and separates
+   them with a column instead. */
+export function rowVendor(row: Row): string {
+  return String(row["_vendor"] ?? "").trim();
+}
 
 export interface SalesSummaryLevel {
-  level: string;          // "Sub-Channel", "Province", "Category", "Store", "Product"
+  level: string;          // "Vendor", "Sub-Channel", "Province", "Category", "Store", "Product"
   volumeRows: SummaryRow[];
   volumeTotal: SummaryRow;
   valueRows: SummaryRow[];
@@ -333,7 +348,7 @@ export function buildSalesSummary(
     grandYtdValue += m.ytdValue;
   }
 
-  // True unique store count across the whole dataset — used for the grand
+  // True unique store count across the whole dataset â€” used for the grand
   // total of every "stores" mode level (a store can sit in many Category /
   // Product groups, so summing per-group counts would over-count).
   const storeSet = new Set<string>();
@@ -344,6 +359,20 @@ export function buildSalesSummary(
   const tStores = storeSet.size;
 
   const levels: SalesSummaryLevel[] = [];
+
+  /* Level 0: Vendor â€” first, because it is the widest cut of the report and
+     the one the reader needs before any other number means anything. A client
+     with a single vendor number simply gets a one-row table. */
+  const vendorKey = (r: Row) => rowVendor(r) || "Unknown";
+  const vendVolume = aggregateRows(rows, ctx, vendorKey, grandYtdUnits, "volume");
+  const vendValue = aggregateRows(rows, ctx, vendorKey, grandYtdValue, "value");
+  levels.push({
+    level: "Vendor",
+    volumeRows: vendVolume,
+    volumeTotal: computeGrandTotal(vendVolume, tStores),
+    valueRows: vendValue,
+    valueTotal: computeGrandTotal(vendValue, tStores),
+  });
 
   // Level 1: Sub-Channel
   const subChVolume = aggregateRows(rows, ctx, (r) => String(r["_storeSubChannel"] || r["_storeChannel"] || "Unknown"), grandYtdUnits, "volume");
@@ -378,7 +407,7 @@ export function buildSalesSummary(
     valueTotal: computeGrandTotal(catValue, tStores),
   });
 
-  // Level 4: Store — count is "Number of SKUs" (SKU instances with sales
+  // Level 4: Store â€” count is "Number of SKUs" (SKU instances with sales
   // and/or stock at the store), not store count.
   const storeVolume = aggregateRows(rows, ctx, (r) => String(r["_storeName"] || r["Site Name"] || r["Site"] || "Unknown"), grandYtdUnits, "volume", "skus");
   const storeValue = aggregateRows(rows, ctx, (r) => String(r["_storeName"] || r["Site Name"] || r["Site"] || "Unknown"), grandYtdValue, "value", "skus");
@@ -404,10 +433,10 @@ export function buildSalesSummary(
   return levels;
 }
 
-// ── OOS Summary ────────────────────────────────────────────────
+// â”€â”€ OOS Summary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface OOSSummary {
-  baseCount: number;       // SKU×store rows with stock and/or sales (the base)
+  baseCount: number;       // SKUÃ—store rows with stock and/or sales (the base)
   oosCount: number;        // base rows where SOH <= 0
   oosPct: number;
   productSummary: OOSProductRow[];
@@ -416,6 +445,7 @@ export interface OOSSummary {
 
 export interface OOSProductRow {
   article: string;
+  vendor: string;
   description: string;
   category: string;
   productStatus: string;
@@ -433,7 +463,7 @@ export interface OOSStoreRow {
   oosPct: number;
 }
 
-// Parse a possibly string/blank numeric cell. Blank → blankAs; non-numeric → NaN.
+// Parse a possibly string/blank numeric cell. Blank â†’ blankAs; non-numeric â†’ NaN.
 function parseNum(v: unknown, blankAs: number): number {
   if (typeof v === "number") return v;
   if (v == null) return blankAs;
@@ -443,7 +473,7 @@ function parseNum(v: unknown, blankAs: number): number {
   return isNaN(n) ? NaN : n;
 }
 
-// A SKU×store is "in base" if it has stock on hand and/or any sales (across the
+// A SKUÃ—store is "in base" if it has stock on hand and/or any sales (across the
 // ledger's date columns). It is OOS when, being in base, its SOH is 0 or below.
 function classifyOOS(row: Row, dateColumns: string[]): { inBase: boolean; isOOS: boolean } {
   const soh = parseNum(row["SOH"], 0);
@@ -470,6 +500,7 @@ export function buildOOSSummary(rows: Row[], dateColumns: string[]): OOSSummary 
     description: string;
     category: string;
     productStatus: string;
+    vendor: string;
     baseStores: Set<string>;
     oosStores: Set<string>;
   }>();
@@ -499,6 +530,7 @@ export function buildOOSSummary(rows: Row[], dateColumns: string[]): OOSSummary 
           description: String(row["Article Desc"] ?? ""),
           category: String(row["_category"] ?? ""),
           productStatus: String(row["_productStatus"] ?? ""),
+          vendor: rowVendor(row),
           baseStores: new Set(),
           oosStores: new Set(),
         };
@@ -534,6 +566,7 @@ export function buildOOSSummary(rows: Row[], dateColumns: string[]): OOSSummary 
     if (entry.oosStores.size === 0) continue; // only include products with OOS
     productSummary.push({
       article,
+      vendor: entry.vendor,
       description: entry.description,
       category: entry.category,
       productStatus: entry.productStatus,
@@ -570,7 +603,7 @@ export function buildOOSSummary(rows: Row[], dateColumns: string[]): OOSSummary 
   };
 }
 
-// ── OOS Detail (granular rows where SOH < 1) ──────────────────
+// â”€â”€ OOS Detail (granular rows where SOH < 1) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface OOSDetailRow {
   subChannel: string;
@@ -578,6 +611,7 @@ export interface OOSDetailRow {
   category: string;
   subCategory: string;
   article: string;
+  vendor: string;
   description: string;
   site: string;
   siteName: string;
@@ -603,6 +637,7 @@ export function buildOOSDetail(rows: Row[], dateColumns: string[]): OOSDetailRow
     detail.push({
       subChannel: String(row["_storeSubChannel"] || row["_storeChannel"] || ""),
       province: String(row["_province"] || ""),
+      vendor: rowVendor(row),
       category: String(row["_category"] || ""),
       subCategory: String(row["_subCategory"] || ""),
       article: String(row["Article"] ?? ""),
@@ -631,16 +666,16 @@ export function buildOOSDetail(rows: Row[], dateColumns: string[]): OOSDetailRow
   return detail;
 }
 
-// ── DSC (Days of Stock Cover) distribution ─────────────────────
+// â”€â”€ DSC (Days of Stock Cover) distribution â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //
 // Act DSC = how many days the current stock-on-hand will last at the recent
 // run-rate. The route classifies every row into a bracket (`_dscAlert`) via
-// classifyDSC — from "Out of Stock" (no cover) through to "ALERT" (overstock,
-// ≥ the client's alert threshold). These builders aggregate SOH (the stock
+// classifyDSC â€” from "Out of Stock" (no cover) through to "ALERT" (overstock,
+// â‰¥ the client's alert threshold). These builders aggregate SOH (the stock
 // actually sitting in each bracket) plus distinct SKU / site counts, so the
 // summary answers "how much of my stock is over-/under-covered, and where".
 //
-// Universe = the OOS base (SKU×store with stock and/or sales). SOH is summed
+// Universe = the OOS base (SKUÃ—store with stock and/or sales). SOH is summed
 // per bracket, so "Out of Stock" naturally contributes ~0 SOH but still carries
 // a line/SKU/site count.
 
@@ -653,7 +688,7 @@ function dscBracketOf(row: Row): string {
 
 export interface DscBracketRow {
   bracket: string;
-  lines: number;        // SKU×store rows in this bracket
+  lines: number;        // SKUÃ—store rows in this bracket
   skus: number;         // distinct articles
   sites: number;        // distinct sites
   soh: number;          // total stock-on-hand sitting in this bracket
@@ -688,7 +723,7 @@ export function buildDscSummary(
   bracketOrder: string[],
 ): DscSummary {
   // Final ordered bracket set: the configured order, plus any stray label that
-  // actually appears in the data (defensive — never silently drop a bracket).
+  // actually appears in the data (defensive â€” never silently drop a bracket).
   const seen = new Set<string>();
   for (const row of rows) {
     if (!classifyOOS(row, dateColumns).inBase) continue;
@@ -701,7 +736,7 @@ export function buildDscSummary(
   // Overall accumulators (per bracket)
   const overallAcc = brackets.map(() => ({ lines: 0, soh: 0, skus: new Set<string>(), sites: new Set<string>() }));
 
-  // Entity accumulators: name → { skus, sites, bracketSoh[] }
+  // Entity accumulators: name â†’ { skus, sites, bracketSoh[] }
   type EntAcc = { skus: Set<string>; sites: Set<string>; bracketSoh: number[]; totalSoh: number };
   const mkEnt = (): EntAcc => ({ skus: new Set(), sites: new Set(), bracketSoh: brackets.map(() => 0), totalSoh: 0 });
   const catAcc = new Map<string, EntAcc>();
@@ -725,7 +760,7 @@ export function buildDscSummary(
     const site = String(row["Site"] ?? "").trim();
     const category = String(row["_category"] || "Unknown");
     const skuLabel = `${article || String(row["Article Desc"] ?? "")}`.trim() || "Unknown";
-    const skuName = article && row["Article Desc"] ? `${article} — ${row["Article Desc"]}` : skuLabel;
+    const skuName = article && row["Article Desc"] ? `${article} â€” ${row["Article Desc"]}` : skuLabel;
     const storeName = String(row["_storeName"] || row["Site Name"] || row["Site"] || "Unknown");
 
     totalLines++;
@@ -788,7 +823,7 @@ export function buildDscSummary(
   };
 }
 
-// ── DSC Detail (every in-base SKU×store line, with bracket + Act DSC) ──
+// â”€â”€ DSC Detail (every in-base SKUÃ—store line, with bracket + Act DSC) â”€â”€
 // Sorted by Act DSC descending (overstock first) so the worst cover surfaces;
 // the Excel sheet carries an AutoFilter so a viewer can isolate any bracket.
 
@@ -798,6 +833,7 @@ export interface DscDetailRow {
   category: string;
   brand: string;
   article: string;
+  vendor: string;
   description: string;
   site: string;
   siteName: string;
@@ -819,6 +855,7 @@ export function buildDscDetail(rows: Row[], dateColumns: string[]): DscDetailRow
 
     detail.push({
       subChannel: String(row["_storeSubChannel"] || row["_storeChannel"] || ""),
+      vendor: rowVendor(row),
       province: String(row["_province"] || ""),
       category: String(row["_category"] || ""),
       brand: String(row["_brand"] || ""),
@@ -839,7 +876,7 @@ export function buildDscDetail(rows: Row[], dateColumns: string[]): DscDetailRow
   return detail;
 }
 
-// ── Status (PMF Product Status vs DISPO PR ST) ─────────────────
+// â”€â”€ Status (PMF Product Status vs DISPO PR ST) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //
 // Classification reuses the Status Reference logic: a scenario match
 // (keyed by PR ST + conditions on PMF status / ranging) wins; otherwise
@@ -887,7 +924,7 @@ export interface StatusPmfRow {
 export interface StatusSummary {
   baseCount: number;
   prst: StatusCountRow[];        // Table 1: PR ST breakdown
-  prstByPmf: StatusPmfRow[];     // Table 2: PR ST × PMF Product Status
+  prstByPmf: StatusPmfRow[];     // Table 2: PR ST Ã— PMF Product Status
 }
 
 export function buildStatusSummary(
@@ -902,7 +939,7 @@ export function buildStatusSummary(
 
   for (const row of rows) {
     const { inBase } = classifyOOS(row, dateColumns);
-    if (!inBase) continue; // same SKU×store base as OOS
+    if (!inBase) continue; // same SKUÃ—store base as OOS
     baseCount++;
 
     const prst = prstDisplay(row);
@@ -951,7 +988,7 @@ export function buildStatusSummary(
   return { baseCount, prst, prstByPmf };
 }
 
-// ── Status Detail (negative SKU×store combinations only) ───────
+// â”€â”€ Status Detail (negative SKUÃ—store combinations only) â”€â”€â”€â”€â”€â”€â”€
 
 export interface StatusDetailRow {
   subChannel: string;
@@ -959,6 +996,7 @@ export interface StatusDetailRow {
   category: string;
   brand: string;
   article: string;
+  vendor: string;
   description: string;
   site: string;
   siteName: string;
@@ -981,6 +1019,7 @@ export function buildStatusDetail(
     if (classifyRowStatus(row, statusDefs, scenarios) !== "NEGATIVE") continue;
 
     detail.push({
+      vendor: rowVendor(row),
       subChannel: String(row["_storeSubChannel"] || row["_storeChannel"] || ""),
       province: String(row["_province"] || ""),
       category: String(row["_category"] || ""),
@@ -1005,21 +1044,22 @@ export function buildStatusDetail(
   return detail;
 }
 
-// ── Margin Opportunity & Risk ──────────────────────────────────
+// â”€â”€ Margin Opportunity & Risk â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //
 // For each site/SKU with SOH > 0 and valid costs:
-//   MAC < Nett Cost → OPPORTUNITY (retailer's cost is below ours; we can
+//   MAC < Nett Cost â†’ OPPORTUNITY (retailer's cost is below ours; we can
 //     drop the shelf price while holding our product margin)
-//   MAC > Nett Cost → RISK (retailer's cost is above ours; margin eroded —
+//   MAC > Nett Cost â†’ RISK (retailer's cost is above ours; margin eroded â€”
 //     we either pay margin support or supply free stock)
 //
-// Product Margin (not in DISPO) = ((Incl SP / 1.15) − Nett Cost) / (Incl SP / 1.15)
+// Product Margin (not in DISPO) = ((Incl SP / 1.15) âˆ’ Nett Cost) / (Incl SP / 1.15)
 
 export interface MarginRow {
   site: string;
   siteName: string;
   productCode: string;
   article: string;
+  vendor: string;
   productStatus: string;
   prst: string;
   soh: number;
@@ -1029,11 +1069,11 @@ export interface MarginRow {
   prodMargin: number;   // fraction (e.g. 0.29)
   prodMarginFromDispo: boolean;  // true = taken from DISPO "Prod Marg", false = calculated
   stkMargin: number;    // fraction
-  macVsNett: number;    // Nett Cost − MAC
+  macVsNett: number;    // Nett Cost âˆ’ MAC
   marginStatus: "RISK" | "OPPORTUNITY";
-  marginSupport: number | null;   // RISK: SOH × (MAC − Nett)
+  marginSupport: number | null;   // RISK: SOH Ã— (MAC âˆ’ Nett)
   freeStockUnits: number | null;  // RISK: marginSupport / Nett
-  suggestedSP: number | null;     // OPPORTUNITY: MAC / (1 − prodMargin) × 1.15
+  suggestedSP: number | null;     // OPPORTUNITY: MAC / (1 âˆ’ prodMargin) Ã— 1.15
 }
 
 export interface MarginSummary {
@@ -1050,7 +1090,7 @@ export interface MarginAnalysis {
 }
 
 // Per-row sales metrics + margins for the flat Data sheet.
-// YTD = current year Jan→latest month; PY YTD = previous year Jan→same month.
+// YTD = current year Janâ†’latest month; PY YTD = previous year Janâ†’same month.
 // Values use the report's selling-price-ex-VAT convention (LY uses price snapshots).
 export interface DataRowExtras {
   ytdUnits: number;
@@ -1120,7 +1160,7 @@ export function buildMarginAnalysis(rows: Row[]): MarginAnalysis {
     let status: "RISK" | "OPPORTUNITY" | null = null;
     if (mac < nett) status = "OPPORTUNITY";
     else if (mac > nett) status = "RISK";
-    if (!status) continue; // MAC == Nett → neither
+    if (!status) continue; // MAC == Nett â†’ neither
 
     const inclSP = parseNum(row["Incl SP"], 0);
     const pm = effectiveProdMargin(row);
@@ -1143,6 +1183,7 @@ export function buildMarginAnalysis(rows: Row[]): MarginAnalysis {
     }
 
     out.push({
+      vendor: rowVendor(row),
       site: String(row["Site"] ?? ""),
       siteName: String(row["_storeName"] || row["Site Name"] || ""),
       productCode: String(row["_clientProductId"] || ""),
@@ -1183,7 +1224,7 @@ export function buildMarginAnalysis(rows: Row[]): MarginAnalysis {
   };
 }
 
-// ── Phantom Stock ──────────────────────────────────────────────
+// â”€â”€ Phantom Stock â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //
 // A site/SKU is "phantom" when it shows stock (SOH > 0) but has neither
 // sold nor been received recently. "Recently" is two independent thresholds
@@ -1242,6 +1283,7 @@ export interface PhantomDetailRow {
   siteName: string;
   productCode: string;
   article: string;
+  vendor: string;
   prst: string;
   productStatus: string;
   soh: number;
@@ -1291,6 +1333,7 @@ export function buildPhantomAnalysis(
     phantomLines++;
     phantomByStatus.set(pmf, (phantomByStatus.get(pmf) ?? 0) + 1);
     detail.push({
+      vendor: rowVendor(row),
       site: String(row["Site"] ?? ""),
       siteName: String(row["_storeName"] || row["Site Name"] || ""),
       productCode: String(row["_clientProductId"] || ""),
@@ -1324,14 +1367,14 @@ export function buildPhantomAnalysis(
   };
 }
 
-// ── Numerical Distribution (ND) ────────────────────────────────
+// â”€â”€ Numerical Distribution (ND) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //
 // ND measures, of the SKU/site combinations that SHOULD stock a product,
 // how many actually showed presence (sales in the rolling window OR any
 // stock) over the period.
-//   Scenario 1 — ranging file: universe = ranging rows where RangeIndicator
+//   Scenario 1 â€” ranging file: universe = ranging rows where RangeIndicator
 //     is TRUE.
-//   Scenario 2 — no ranging file: universe = active PMF SKUs × active sites,
+//   Scenario 2 â€” no ranging file: universe = active PMF SKUs Ã— active sites,
 //     assuming every ACTIVE SKU is ranged in every ACTIVE store.
 
 export interface NDRollupRow {
@@ -1348,6 +1391,7 @@ export interface NDDetailRow {
   siteName: string;
   productCode: string;
   article: string;
+  vendor: string;
   description: string;
   prst: string;
   pmfStatus: string;
@@ -1362,6 +1406,7 @@ export interface NDFalseRow {
   siteName: string;
   productCode: string;
   article: string;
+  vendor: string;
   description: string;
   prst: string;
   pmfStatus: string;
@@ -1420,14 +1465,21 @@ export function buildNumericalDistribution(opts: {
   }
   const sortedWin = [...windowCols].sort();
   const windowLabel = sortedWin.length
-    ? `${rollingMonths} months (${sortedWin[0]} … ${sortedWin[sortedWin.length - 1]})`
+    ? `${rollingMonths} months (${sortedWin[0]} â€¦ ${sortedWin[sortedWin.length - 1]})`
     : `${rollingMonths} months`;
 
   // DISPO presence lookup, keyed by site|article and site|cpid.
-  interface Presence { present: boolean; prst: string; article: string; soh: number; }
+  interface Presence { present: boolean; prst: string; article: string; soh: number; vendor: string; }
   const bySiteArticle = new Map<string, Presence>();
   const bySiteCpid = new Map<string, Presence>();
-  const stockRows: { site: string; article: string; cpid: string; soh: number; prst: string }[] = [];
+  const stockRows: { site: string; article: string; cpid: string; soh: number; prst: string; vendor: string }[] = [];
+
+  /* ND's universe is the ranging file / PMF, not the ledger, so a
+     not-distributed combination has no DISPO row to read a vendor off. The
+     vendor is a property of the PRODUCT though, so it can be recovered from
+     any ledger line for the same article/CPID. */
+  const vendorByArticle = new Map<string, string>();
+  const vendorByCpid = new Map<string, string>();
 
   for (const row of rows) {
     const site = String(row["Site"] ?? "").trim().toLowerCase();
@@ -1446,11 +1498,16 @@ export function buildNumericalDistribution(opts: {
     const hasStock = (soh > 0) || (soo > 0) || (sit > 0);
     const present = windowSales > 0 || hasStock;
     const prst = String(row["Status"] ?? row["PR ST"] ?? "").trim();
-    const p: Presence = { present, prst, article, soh: isNaN(soh) ? 0 : soh };
+    const vendor = rowVendor(row);
+    const p: Presence = { present, prst, article, soh: isNaN(soh) ? 0 : soh, vendor };
 
     if (article) bySiteArticle.set(`${site}|${article}`, p);
     if (cpid) bySiteCpid.set(`${site}|${cpid}`, p);
-    if (soh > 0) stockRows.push({ site, article, cpid, soh, prst });
+    if (soh > 0) stockRows.push({ site, article, cpid, soh, prst, vendor });
+    if (vendor) {
+      if (article && !vendorByArticle.has(article)) vendorByArticle.set(article, vendor);
+      if (cpid && !vendorByCpid.has(cpid)) vendorByCpid.set(cpid, vendor);
+    }
   }
 
   // Rollup accumulators
@@ -1490,6 +1547,7 @@ export function buildNumericalDistribution(opts: {
       const pmf = products.get(cpid)?.status ?? "";
 
       detail.push({
+        vendor: p?.vendor || vendorByCpid.get(cpid) || vendorByArticle.get(article) || "",
         subChannel: subCh, province: prov, site, siteName,
         productCode: cpid.toUpperCase(), article: (p?.article || article).toUpperCase(),
         description: desc || products.get(cpid)?.description || "",
@@ -1498,17 +1556,18 @@ export function buildNumericalDistribution(opts: {
 
       bump(subAcc, subCh, subCh, nd);
       bump(provAcc, prov, prov, nd);
-      bump(skuAcc, cpid, `${cpid.toUpperCase()} — ${desc || products.get(cpid)?.description || ""}`, nd);
-      bump(siteAcc, site, `${site.toUpperCase()} — ${siteName}`, nd);
+      bump(skuAcc, cpid, `${cpid.toUpperCase()} â€” ${desc || products.get(cpid)?.description || ""}`, nd);
+      bump(siteAcc, site, `${site.toUpperCase()} â€” ${siteName}`, nd);
     }
 
-    // ND False — SOH>0 in combinations that are NOT ranged TRUE
+    // ND False â€” SOH>0 in combinations that are NOT ranged TRUE
     for (const s of stockRows) {
       const isRanged = (s.article && rangedKeys.has(`${s.site}|${s.article}`)) || (s.cpid && rangedKeys.has(`${s.site}|${s.cpid}`));
       if (isRanged) continue;
       const store = stores.find((st) => st.siteNum.toLowerCase().trim() === s.site);
       const prod = products.get(s.cpid);
       falseDetail.push({
+        vendor: s.vendor,
         subChannel: store?.subChannel || "", province: store?.province || "",
         site: s.site.toUpperCase(), siteName: store?.storeName || "",
         productCode: s.cpid.toUpperCase(), article: s.article.toUpperCase(),
@@ -1516,7 +1575,7 @@ export function buildNumericalDistribution(opts: {
       });
     }
   } else {
-    // Scenario 2 — active SKU × active site, SCOPED to the report's channels
+    // Scenario 2 â€” active SKU Ã— active site, SCOPED to the report's channels
     // (never the entire store master, which would explode the cartesian).
     const chSet = new Set((channelNames ?? []).map((c) => c.trim().toUpperCase()).filter(Boolean));
     let activeSites = stores.filter((st) => String(st.status ?? "").trim().toUpperCase() === "ACTIVE");
@@ -1546,6 +1605,7 @@ export function buildNumericalDistribution(opts: {
         const prov = st.province || "Unknown";
 
         detail.push({
+          vendor: p?.vendor || vendorByCpid.get(cpid) || "",
           subChannel: subCh, province: prov, site: st.siteNum, siteName: st.storeName,
           productCode: prod.clientProductId, article: (p?.article || "").toUpperCase(),
           description: prod.description || "", prst: p?.prst ?? "",
@@ -1554,8 +1614,8 @@ export function buildNumericalDistribution(opts: {
 
         bump(subAcc, subCh, subCh, nd);
         bump(provAcc, prov, prov, nd);
-        bump(skuAcc, cpid, `${prod.clientProductId} — ${prod.description || ""}`, nd);
-        bump(siteAcc, site, `${st.siteNum} — ${st.storeName}`, nd);
+        bump(skuAcc, cpid, `${prod.clientProductId} â€” ${prod.description || ""}`, nd);
+        bump(siteAcc, site, `${st.siteNum} â€” ${st.storeName}`, nd);
       }
     }
   }
@@ -1581,12 +1641,12 @@ export function buildNumericalDistribution(opts: {
   };
 }
 
-// ── Open to Order (OTO) ─────────────────────────────────────────
+// â”€â”€ Open to Order (OTO) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Suggested replenishment for SKU/site lines that are out of stock AND
 // orderable. A line qualifies only when SOH = 0, nothing is on order or in
 // transit (SOO = SIT = 0), the DISPO status classifies POSITIVE, and the PMF
-// product status is ACTIVE. OTO Units = category multiplier × R. Profile;
-// OTO Value = OTO Units × Nett Cost. (Logic shared with the Vital Signs report
+// product status is ACTIVE. OTO Units = category multiplier Ã— R. Profile;
+// OTO Value = OTO Units Ã— Nett Cost. (Logic shared with the Vital Signs report
 // via calcOpenToOrder.) Because every qualifying line meets the same
 // conditions, the detail sheet omits SOH/SOO/SIT/Status columns.
 
@@ -1603,6 +1663,7 @@ export interface OTODetailRow {
   siteName: string;
   productCode: string;
   article: string;
+  vendor: string;
   rangeIndicator: string; // "TRUE" | "FALSE" | "N/A" (when no ranging file)
   description: string;
   units: number;
@@ -1631,7 +1692,7 @@ export function buildOpenToOrder(opts: {
 }): OTOAnalysis {
   const { rows, statusDefs, statusScenarios, otoMultipliers, hasRanging, rangingRows } = opts;
 
-  // Ranged set (site|article and site|cpid) — only used to label the detail
+  // Ranged set (site|article and site|cpid) â€” only used to label the detail
   // rows' Range Indicator when a ranging file exists.
   const rangedKeys = new Set<string>();
   if (hasRanging) {
@@ -1680,12 +1741,12 @@ export function buildOpenToOrder(opts: {
     const siteName = String(row["_storeName"] || "");
     const desc = String(row["_productDescription"] || row["Article Desc"] || "");
 
-    detail.push({ site, siteName, productCode: cpid, article, rangeIndicator, description: desc, units: oto, value: otoValue });
+    detail.push({ vendor: rowVendor(row), site, siteName, productCode: cpid, article, rangeIndicator, description: desc, units: oto, value: otoValue });
 
     bump(subAcc, subCh, subCh, oto, otoValue);
     bump(catAcc, catName, catName, oto, otoValue);
-    bump(skuAcc, cpidKey || artKey, `${cpid || article}${desc ? ` — ${desc}` : ""}`, oto, otoValue);
-    bump(siteAcc, siteKey, `${site}${siteName ? ` — ${siteName}` : ""}`, oto, otoValue);
+    bump(skuAcc, cpidKey || artKey, `${cpid || article}${desc ? ` â€” ${desc}` : ""}`, oto, otoValue);
+    bump(siteAcc, siteKey, `${site}${siteName ? ` â€” ${siteName}` : ""}`, oto, otoValue);
 
     totalUnits += oto;
     totalValue += otoValue;
@@ -1719,15 +1780,15 @@ export function buildOpenToOrder(opts: {
   };
 }
 
-// ── Charts summary (web dashboard) ──────────────────────────────
+// â”€â”€ Charts summary (web dashboard) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Aggregates the headline metrics + time series for the in-app Charts page.
 // Opportunity values are all in Rands at Nett Cost (the user's definition):
-//   OTO       — total OTO Value (suggested replenishment for orderable OOS).
-//   ND        — 1 unit × Nett Cost for every active SKU/site combo NOT
+//   OTO       â€” total OTO Value (suggested replenishment for orderable OOS).
+//   ND        â€” 1 unit Ã— Nett Cost for every active SKU/site combo NOT
 //               distributed (ND = 0); uses the ranging universe when present.
-//   OOS       — OTO-default order (category multiplier × R. Profile) × Nett
+//   OOS       â€” OTO-default order (category multiplier Ã— R. Profile) Ã— Nett
 //               Cost for every out-of-stock line.
-//   Phantom   — OTO-default order × Nett Cost for every phantom line with
+//   Phantom   â€” OTO-default order Ã— Nett Cost for every phantom line with
 //               SOH < 5 (treated as written off and reordered).
 
 const MON_ABBR = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -1755,7 +1816,7 @@ export interface ChartsData {
   categorySeries: ChartsDimSeries;   // rolling 24 months, value
 }
 
-// Price for a row's units in a given calendar year — uses that year's price
+// Price for a row's units in a given calendar year â€” uses that year's price
 // snapshot if captured, else the current effective selling price ex-VAT.
 function priceForYear(row: Row, year: number, basePrice: number): number {
   return effectivePriceExVat(row, `_inclSP_${year}`, `_promSP_${year}`) || basePrice;
@@ -1813,7 +1874,7 @@ export function buildChartsData(opts: {
 }): ChartsData {
   const { rows, dateColumns, ctx, salesSummary, otoTotalValue, marginSupport, ndDetail, otoMultipliers, referenceDate, phLastSold, phLastReceived } = opts;
 
-  // ── Sales cards (value growth) — from the grand-total summary row ──
+  // â”€â”€ Sales cards (value growth) â€” from the grand-total summary row â”€â”€
   const top = salesSummary[0];
   const vol = top?.volumeTotal;
   const val = top?.valueTotal;
@@ -1826,7 +1887,7 @@ export function buildChartsData(opts: {
     growthSameMonthLyPct: val?.growthVsPymPct ?? null,
   };
 
-  // ── Opportunity: OOS + Phantom (row scan) + Nett-cost lookup for ND ──
+  // â”€â”€ Opportunity: OOS + Phantom (row scan) + Nett-cost lookup for ND â”€â”€
   const cutoffSold = phLastSold != null ? minusMonths(referenceDate, phLastSold) : null;
   const cutoffRec = phLastReceived != null ? minusMonths(referenceDate, phLastReceived) : null;
   const nettByCpid = new Map<string, number>();
@@ -1849,10 +1910,10 @@ export function buildChartsData(opts: {
     const otoUnits = mult * (isNaN(rp) ? 0 : rp);
     if (otoUnits <= 0 || ncost <= 0) continue;
 
-    // OOS opportunity — order the OTO default for every out-of-stock line
+    // OOS opportunity â€” order the OTO default for every out-of-stock line
     if (classifyOOS(row, dateColumns).isOOS) oosOpp += otoUnits * ncost;
 
-    // Phantom opportunity — phantom line (SOH > 0, stale sale + receipt) with SOH < 5
+    // Phantom opportunity â€” phantom line (SOH > 0, stale sale + receipt) with SOH < 5
     const soh = parseNum(row["SOH"], 0);
     if (!isNaN(soh) && soh > 0 && soh < 5) {
       const lastSold = parseDispoDate(row["Last Sold"]);
@@ -1863,7 +1924,7 @@ export function buildChartsData(opts: {
     }
   }
 
-  // ND opportunity — 1 unit × Nett Cost for each not-distributed combo (ND = 0)
+  // ND opportunity â€” 1 unit Ã— Nett Cost for each not-distributed combo (ND = 0)
   let ndOpp = 0;
   for (const d of ndDetail) {
     if (d.nd !== 0) continue;
@@ -1878,7 +1939,7 @@ export function buildChartsData(opts: {
   const phantom = r2(phantomOpp);
   const opportunity = { oto, nd, oos, phantom, total: r2(oto + nd + oos + phantom) };
 
-  // ── Monthly bars: CY vs PY, value + volume ──
+  // â”€â”€ Monthly bars: CY vs PY, value + volume â”€â”€
   const maxYear = ctx.maxYear, pyYear = maxYear - 1;
   const monthlyBars: ChartsData["monthlyBars"] = [];
   for (let m = 1; m <= 12; m++) {
@@ -1895,7 +1956,7 @@ export function buildChartsData(opts: {
     monthlyBars.push({ month: MON_ABBR[m], cyValue: r2(cyVal), pyValue: r2(pyVal), cyVolume: r2(cyVol), pyVolume: r2(pyVol) });
   }
 
-  // ── Rolling 24-month line series by sub-channel + category (value) ──
+  // â”€â”€ Rolling 24-month line series by sub-channel + category (value) â”€â”€
   const window = rollingMonths(maxYear, ctx.maxMonth || 12, 24);
   const subChannelSeries = dimensionSeries(rows, window, (r) => String(r["_storeSubChannel"] || r["_storeChannel"] || ""));
   const categorySeries = dimensionSeries(rows, window, (r) => String(r["_category"] || ""));

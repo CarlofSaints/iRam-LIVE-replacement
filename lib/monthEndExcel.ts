@@ -25,6 +25,7 @@ import type {
 } from "./monthEndReport";
 import { buildDateContext, dataRowExtras } from "./monthEndReport";
 import { analyzeCoverage, coverageMessageLines, formatMonth } from "./dataCoverage";
+import { applyStreamWriterOrderFix } from "./exceljsStreamOrder";
 
 // ── Colors ─────────────────────────────────────────────────────
 
@@ -44,6 +45,7 @@ const MIXED_BG = "FFF2CC";     // amber
 
 // Emoji "icons" prepended to column headings (keyed by lower-cased header text).
 const HEADER_ICONS: Record<string, string> = {
+  vendor: "🏢",
   "sub-channel": "🔗", province: "📍", category: "🏷️", "sub-category": "🏷️",
   site: "🏬", store: "🏬", "site name": "🏬", product: "📦", article: "📦",
   "product code": "#️⃣", description: "📝", brand: "🏷️",
@@ -330,6 +332,10 @@ export async function buildMonthEndWorkbook(
     ? `${formatMonth(coverage.firstMonth)} to ${formatMonth(coverage.lastMonth)}`
     : "";
   const menuSheet = wb.addWorksheet("Menu", sheetOpts());
+  /* First sheet created, nothing committed yet — patch the writer now, or every
+     sheet carrying both a hyperlink and conditional formatting (Sales, OOS, ND)
+     opens EMPTY in Excel. See lib/exceljsStreamOrder.ts. */
+  applyStreamWriterOrderFix(menuSheet);
   buildMenuSheet(wb, menuSheet, {
     clientName, channelLabel, periodLabel, dataGapLines, coverageSpan,
     sheetNames: MENU_SHEET_ORDER.filter((s) => has[s.key]).map((s) => s.name),
@@ -445,23 +451,28 @@ async function buildOosSheet(
   }
   row += 2;
 
-  // Helper: write a section sub-header bar spanning the 6 OOS columns
-  const writeOosTitle = (title: string) => {
+  /* Helper: write a section sub-header bar. The two tables below no longer have
+     the same width — the SKU table gained a Vendor column — so the span is
+     passed in rather than hard-coded at 6. */
+  const writeOosTitle = (title: string, span: number) => {
     const t = oosSheet.getCell(row, 1);
     t.value = title;
     t.font = { name: "Calibri", size: 11, bold: true, color: { argb: HEADER_BG } };
     t.fill = { type: "pattern", pattern: "solid", fgColor: { argb: SUBHEADER_BG } };
-    oosSheet.mergeCells(row, 1, row, 6);
-    for (let c = 1; c <= 6; c++) oosSheet.getCell(row, c).border = thinBorder();
+    oosSheet.mergeCells(row, 1, row, span);
+    for (let c = 1; c <= span; c++) oosSheet.getCell(row, c).border = thinBorder();
     row++;
   };
 
-  // Helper: write an OOS table (header + data rows). Returns nothing; advances `row`.
+  /* Helper: write an OOS table (header + data rows). Returns nothing; advances
+     `row`. `firstNumericIndex` is the first column that holds a number — it
+     differs per table now that the SKU table carries a leading Vendor column. */
   const writeOosTable = (
     headers: string[],
     widths: number[],
     dataRows: (string | number)[][],
     pctColIndex: number,
+    firstNumericIndex: number,
   ) => {
     headers.forEach((h, i) => {
       const cell = oosSheet.getCell(row, i + 1);
@@ -469,7 +480,7 @@ async function buildOosSheet(
       cell.font = headerFont();
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_BG } };
       cell.border = thinBorder();
-      cell.alignment = { horizontal: i <= 2 ? "left" : "center" };
+      cell.alignment = { horizontal: i < firstNumericIndex ? "left" : "center" };
       oosSheet.getColumn(i + 1).width = Math.max(oosSheet.getColumn(i + 1).width ?? 0, widths[i]);
     });
     row++;
@@ -486,7 +497,7 @@ async function buildOosSheet(
           cell.numFmt = "0.0%";
         } else {
           cell.value = val;
-          if (i >= 3) cell.numFmt = "#,##0";
+          if (i >= firstNumericIndex) cell.numFmt = "#,##0";
         }
         cell.font = bodyFont();
         cell.border = thinBorder();
@@ -499,24 +510,27 @@ async function buildOosSheet(
 
   // SKU OOS Summary (per product)
   if (oosSummary.productSummary.length > 0) {
-    writeOosTitle("SKU OOS Summary");
+    writeOosTitle("SKU OOS Summary", 8);
     writeOosTable(
-      ["Article", "Description", "Category", "Product Status", "Total Stores", "OOS Stores", "OOS %"],
-      [14, 32, 18, 14, 12, 12, 10],
-      oosSummary.productSummary.map((p) => [p.article, p.description, p.category, p.productStatus, p.totalStores, p.oosStores, p.oosPct / 100]),
-      6,
+      ["Vendor", "Article", "Description", "Category", "Product Status", "Total Stores", "OOS Stores", "OOS %"],
+      [10, 14, 32, 18, 14, 12, 12, 10],
+      oosSummary.productSummary.map((p) => [p.vendor, p.article, p.description, p.category, p.productStatus, p.totalStores, p.oosStores, p.oosPct / 100]),
+      7,
+      5,
     );
     row += 2; // gap before the next table
   }
 
-  // Store OOS Summary (per store) — mirrors the SKU summary
+  /* Store OOS Summary (per store) — no Vendor column: a store stocks every
+     vendor's range, so the field has no single value at this grain. */
   if (oosSummary.storeSummary.length > 0) {
-    writeOosTitle("Store OOS Summary");
+    writeOosTitle("Store OOS Summary", 6);
     writeOosTable(
       ["Site", "Site Name", "Sub-Channel", "Total SKUs", "OOS SKUs", "OOS %"],
       [12, 28, 16, 12, 12, 10],
       oosSummary.storeSummary.map((s) => [s.site, s.siteName, s.subChannel, s.totalSkus, s.oosSkus, s.oosPct / 100]),
       5,
+      3,
     );
   }
 
@@ -534,6 +548,7 @@ async function buildOosDetailSheet(
 
   let row = 1;
   const detailColDefs = [
+    { header: "Vendor", width: 10, key: "vendor" as const },
     { header: "Sub-Channel", width: 14, key: "subChannel" as const },
     { header: "Province", width: 14, key: "province" as const },
     { header: "Category", width: 16, key: "category" as const },
@@ -621,6 +636,7 @@ async function buildDataSheet(
 
   // Fixed dimension/measure columns: [header, width, accessor]
   const fixedCols: { header: string; width: number; get: (r: Record<string, unknown>) => string | number }[] = [
+    { header: "Vendor", width: 10, get: (r) => String(r["_vendor"] ?? "") },
     { header: "Sub-Channel", width: 14, get: (r) => String(r["_storeSubChannel"] || r["_storeChannel"] || "") },
     { header: "Province", width: 14, get: (r) => String(r["_province"] || "") },
     { header: "Category", width: 16, get: (r) => String(r["_category"] || "") },
@@ -897,6 +913,7 @@ async function buildDscSheet(
 async function buildDscDetailSheet(wb: ExcelJS.Workbook, rows: DscDetailRow[]): Promise<void> {
   const sheet = wb.addWorksheet("DSC Detail", sheetOpts({ state: "frozen", ySplit: 1 }));
   const cols: { header: string; width: number; key: keyof DscDetailRow; num?: boolean }[] = [
+    { header: "Vendor", width: 10, key: "vendor" },
     { header: "Sub-Channel", width: 14, key: "subChannel" },
     { header: "Province", width: 14, key: "province" },
     { header: "Category", width: 16, key: "category" },
@@ -1040,6 +1057,7 @@ async function buildStatusSheet(
 async function buildStatusDetailSheet(wb: ExcelJS.Workbook, rows: StatusDetailRow[]): Promise<void> {
   const sheet = wb.addWorksheet("Status Detail", sheetOpts({ state: "frozen", ySplit: 1 }));
   const cols: { header: string; width: number; key: keyof StatusDetailRow }[] = [
+    { header: "Vendor", width: 10, key: "vendor" },
     { header: "Sub-Channel", width: 14, key: "subChannel" },
     { header: "Province", width: 14, key: "province" },
     { header: "Category", width: 16, key: "category" },
@@ -1094,12 +1112,16 @@ async function buildMarginDetailSheet(
   const MARGIN_SUMMARY_STATUSES = 2;              // OPPORTUNITY + RISK
   const headerRow = 5 + 1 + MARGIN_SUMMARY_STATUSES + 1;   // → 9
   const sheet = wb.addWorksheet("Margin", sheetOpts({ state: "frozen", ySplit: headerRow }));
+  /* Vendor leads, as on every other sheet. NOTE: this grid's live formulas
+     reference columns by LETTER, so the letters below are offset by one from
+     the pre-Vendor layout — SOH is H (not G), MAC I, Nett J, Incl SP K,
+     Prod. Margin L, Margin Status O, Margin Support P. */
   const headers = [
-    "Site", "Site Name", "Product Code", "Article", "Product Status", "PR ST",
+    "Vendor", "Site", "Site Name", "Product Code", "Article", "Product Status", "PR ST",
     "SOH", "MAC", "Nett Cost", "Incl SP", "Prod. Margin", "STK Margin",
     "MAC vs Nett Cost", "Margin Status", "Margin Support (R)", "Free Stock Units", "Suggested SP (Incl VAT)",
   ];
-  const widths = [10, 22, 14, 12, 14, 10, 8, 10, 10, 10, 12, 11, 15, 14, 16, 14, 18];
+  const widths = [10, 10, 22, 14, 12, 14, 10, 8, 10, 10, 10, 12, 11, 15, 14, 16, 14, 18];
 
   let cur = 1;
   // Title
@@ -1170,35 +1192,36 @@ async function buildMarginDetailSheet(
       const c = sheet.getCell(r, col); c.value = { formula: f, result }; c.numFmt = fmt; c.font = bodyFont(); c.border = thinBorder(); c.alignment = { horizontal: "right" }; return c;
     };
 
-    text(1, dr.site);
-    text(2, dr.siteName);
-    text(3, dr.productCode);
-    text(4, dr.article);
-    text(5, dr.productStatus);
-    text(6, dr.prst);
-    num(7, dr.soh, "#,##0");
-    num(8, dr.mac, RAND_FMT);
-    num(9, dr.nettCost, RAND_FMT);
-    num(10, dr.inclSP, RAND_FMT);
+    text(1, dr.vendor);
+    text(2, dr.site);
+    text(3, dr.siteName);
+    text(4, dr.productCode);
+    text(5, dr.article);
+    text(6, dr.productStatus);
+    text(7, dr.prst);
+    num(8, dr.soh, "#,##0");
+    num(9, dr.mac, RAND_FMT);
+    num(10, dr.nettCost, RAND_FMT);
+    num(11, dr.inclSP, RAND_FMT);
     // Prod. Margin — DISPO value if supplied, else calculated from price + cost
     if (dr.prodMarginFromDispo) {
-      num(11, dr.prodMargin, "0.0%").alignment = { horizontal: "center" };
+      num(12, dr.prodMargin, "0.0%").alignment = { horizontal: "center" };
     } else {
-      formula(11, `IF(J${r}=0,0,((J${r}/1.15)-I${r})/(J${r}/1.15))`, dr.prodMargin, "0.0%").alignment = { horizontal: "center" };
+      formula(12, `IF(K${r}=0,0,((K${r}/1.15)-J${r})/(K${r}/1.15))`, dr.prodMargin, "0.0%").alignment = { horizontal: "center" };
     }
-    num(12, dr.stkMargin, "0.0%").alignment = { horizontal: "center" };
+    num(13, dr.stkMargin, "0.0%").alignment = { horizontal: "center" };
     // MAC vs Nett Cost = Nett − MAC
-    formula(13, `I${r}-H${r}`, dr.macVsNett, RAND_FMT);
+    formula(14, `J${r}-I${r}`, dr.macVsNett, RAND_FMT);
     // Margin Status (coloured)
-    const st = text(14, dr.marginStatus);
+    const st = text(15, dr.marginStatus);
     st.font = bodyFont(true); st.alignment = { horizontal: "center" };
     st.fill = { type: "pattern", pattern: "solid", fgColor: { argb: dr.marginStatus === "RISK" ? GROWTH_RED : GROWTH_GREEN } };
     // Margin Support (R) = RISK: SOH × (MAC − Nett)
-    formula(15, `IF(N${r}="RISK",G${r}*(H${r}-I${r}),"")`, dr.marginSupport === null ? "" : dr.marginSupport, RAND_FMT);
+    formula(16, `IF(O${r}="RISK",H${r}*(I${r}-J${r}),"")`, dr.marginSupport === null ? "" : dr.marginSupport, RAND_FMT);
     // Free Stock Units = RISK: Margin Support / Nett
-    formula(16, `IF(AND(N${r}="RISK",I${r}<>0),O${r}/I${r},"")`, dr.freeStockUnits === null ? "" : dr.freeStockUnits, "#,##0.00");
+    formula(17, `IF(AND(O${r}="RISK",J${r}<>0),P${r}/J${r},"")`, dr.freeStockUnits === null ? "" : dr.freeStockUnits, "#,##0.00");
     // Suggested SP (Incl VAT) = OPPORTUNITY: MAC / (1 − Prod. Margin) × 1.15
-    formula(17, `IF(AND(N${r}="OPPORTUNITY",(1-K${r})<>0),H${r}/(1-K${r})*1.15,"")`, dr.suggestedSP === null ? "" : dr.suggestedSP, RAND_FMT);
+    formula(18, `IF(AND(O${r}="OPPORTUNITY",(1-L${r})<>0),I${r}/(1-L${r})*1.15,"")`, dr.suggestedSP === null ? "" : dr.suggestedSP, RAND_FMT);
     r++;
   }
 
@@ -1361,8 +1384,8 @@ async function buildPhantomSheet(
      overall stats (4-6), gap, by-status header, one row per status, gap. */
   const headerRow = 10 + p.byStatus.length;
   const sheet = wb.addWorksheet("Phantom", sheetOpts({ state: "frozen", ySplit: headerRow }));
-  const detailHeaders =["Site", "Site Name", "Product Code", "Article", "PR ST", "Product Status", "SOH", "Date Last Sold", "Date Last Received"];
-  const detailWidths = [14, 22, 14, 12, 10, 14, 8, 15, 17];
+  const detailHeaders =["Vendor", "Site", "Site Name", "Product Code", "Article", "PR ST", "Product Status", "SOH", "Date Last Sold", "Date Last Received"];
+  const detailWidths = [10, 14, 22, 14, 12, 10, 14, 8, 15, 17];
 
   let cur = 1;
   // Title
@@ -1430,17 +1453,18 @@ async function buildPhantomSheet(
     const text = (col: number, val: string) => {
       const c = sheet.getCell(r, col); c.value = val; c.font = bodyFont(); c.border = thinBorder(); return c;
     };
-    text(1, d.site);
-    text(2, d.siteName);
-    text(3, d.productCode);
-    text(4, d.article);
-    text(5, d.prst);
-    text(6, d.productStatus);
-    const soh = sheet.getCell(r, 7); soh.value = d.soh; soh.numFmt = "#,##0"; soh.font = bodyFont(); soh.border = thinBorder(); soh.alignment = { horizontal: "right" };
-    const ls = sheet.getCell(r, 8);
+    text(1, d.vendor);
+    text(2, d.site);
+    text(3, d.siteName);
+    text(4, d.productCode);
+    text(5, d.article);
+    text(6, d.prst);
+    text(7, d.productStatus);
+    const soh = sheet.getCell(r, 8); soh.value = d.soh; soh.numFmt = "#,##0"; soh.font = bodyFont(); soh.border = thinBorder(); soh.alignment = { horizontal: "right" };
+    const ls = sheet.getCell(r, 9);
     if (d.lastSold) { ls.value = d.lastSold; ls.numFmt = "dd/mm/yyyy"; } else { ls.value = d.lastSoldRaw; }
     ls.font = bodyFont(); ls.border = thinBorder(); ls.alignment = { horizontal: "center" };
-    const lr = sheet.getCell(r, 9);
+    const lr = sheet.getCell(r, 10);
     if (d.lastReceived) { lr.value = d.lastReceived; lr.numFmt = "dd/mm/yyyy"; } else { lr.value = d.lastReceivedRaw; }
     lr.font = bodyFont(); lr.border = thinBorder(); lr.alignment = { horizontal: "center" };
     r++;
@@ -1532,6 +1556,7 @@ async function buildNdSheet(
 async function buildNdDetailSheet(wb: ExcelJS.Workbook, nd: NDAnalysis): Promise<void> {
   const sheet = wb.addWorksheet("ND Detail", sheetOpts({ state: "frozen", ySplit: 1 }));
   const cols: { header: string; width: number; key: keyof NDDetailRowLite }[] = [
+    { header: "Vendor", width: 10, key: "vendor" },
     { header: "Sub-Channel", width: 14, key: "subChannel" },
     { header: "Province", width: 14, key: "province" },
     { header: "Site", width: 10, key: "site" },
@@ -1581,6 +1606,7 @@ async function buildNdDetailSheet(wb: ExcelJS.Workbook, nd: NDAnalysis): Promise
 async function buildNdFalseSheet(wb: ExcelJS.Workbook, nd: NDAnalysis): Promise<void> {
   const sheet = wb.addWorksheet("ND False", sheetOpts({ state: "frozen", ySplit: 1 }));
   const cols: { header: string; width: number; key: keyof NDFalseRowLite }[] = [
+    { header: "Vendor", width: 10, key: "vendor" },
     { header: "Sub-Channel", width: 14, key: "subChannel" },
     { header: "Province", width: 14, key: "province" },
     { header: "Site", width: 10, key: "site" },
@@ -1624,8 +1650,8 @@ async function buildNdFalseSheet(wb: ExcelJS.Workbook, nd: NDAnalysis): Promise<
 }
 
 // Helper alias types for keyof access (string-valued columns only)
-type NDDetailRowLite = { subChannel: string; province: string; site: string; siteName: string; productCode: string; article: string; description: string; prst: string; pmfStatus: string; ranging: string };
-type NDFalseRowLite = { subChannel: string; province: string; site: string; siteName: string; productCode: string; article: string; description: string; prst: string; pmfStatus: string };
+type NDDetailRowLite = { vendor: string; subChannel: string; province: string; site: string; siteName: string; productCode: string; article: string; description: string; prst: string; pmfStatus: string; ranging: string };
+type NDFalseRowLite = { vendor: string; subChannel: string; province: string; site: string; siteName: string; productCode: string; article: string; description: string; prst: string; pmfStatus: string };
 
 // ── Open to Order (OTO) sheets ──────────────────────────────────
 const OTO_NOTE =
@@ -1748,6 +1774,7 @@ async function buildOtoDetailSheet(
   const headerRow = 4;
   const sheet = wb.addWorksheet("OTO Detail", sheetOpts({ state: "frozen", ySplit: headerRow }));
   const cols:{ header: string; width: number; key: keyof OTOAnalysis["detail"][number]; fmt?: string; align?: "right" }[] = [
+    { header: "Vendor", width: 10, key: "vendor" },
     { header: "Site Num", width: 12, key: "site" },
     { header: "Site Name", width: 24, key: "siteName" },
     { header: "Product Code", width: 14, key: "productCode" },
