@@ -9,6 +9,7 @@
    ────────────────────────────────────────────────────────────── */
 
 import { classifyDSC, type DSCBrackets } from "./reportConfig";
+import { cleanBuyerName } from "./buyerName";
 import type { StatusDefinition, StatusScenario } from "./types";
 import { evaluateScenarios } from "./statusScenarioData";
 
@@ -465,7 +466,7 @@ export function computeVitalSigns(
       // Trailing columns
       "Composition": row["Compo"] ?? "",
       "Regions": row["_province"] ?? "",
-      "Buyer": row["Buyer"] ?? "",
+      "Buyer": cleanBuyerName(row["Buyer"]),
       "R_Profile": row["R. Profile"] ?? "",
     };
 
