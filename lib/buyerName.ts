@@ -25,12 +25,34 @@
    have helped DISPOs loaded after the change.
    ────────────────────────────────────────────────────────────── */
 
+/* Proper Case, because the source casing is inconsistent for the SAME person
+   — the DISPOs carry both "Mauritz swart" and "Mauritz Swart", "Rowen
+   armstrong" and "Rowen Armstrong". Once the codes are stripped those would
+   read as two different buyers in the report.
+
+   Carl's call (10 Aug 2026) was to case everything rather than maintain a
+   list of exceptions, and the data supports it: none of the 19 real values
+   contain a "McDonald" / "O'Brien" / "van der Merwe" pattern that naive
+   casing would mangle. Word boundaries include hyphen and apostrophe so
+   "anne-marie o'brien" still comes out right — that is standard casing, not
+   an exception list. If a genuinely irregular name ever turns up, this is
+   the one place to special-case it. */
+function properCase(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/(^|[\s\-'’])([a-z])/g, (_m, sep: string, ch: string) => sep + ch.toUpperCase())
+    // Don't turn a possessive into "Mauritz'S".
+    .replace(/(['’])S\b/g, "$1s");
+}
+
 /**
- * Strip the internal buyer code from a DISPO "Buyer" value, keeping the name.
+ * Strip the internal buyer code from a DISPO "Buyer" value and Proper Case
+ * the name that remains.
  *
  * "Vacant" is a real value (post unfilled) and is preserved. If a value is
- * nothing but a code, the original is returned rather than an empty cell —
- * showing the code beats showing blank.
+ * nothing but a code, the original is returned untouched rather than an empty
+ * cell — showing the code beats showing blank, and a code is not a name to
+ * case.
  */
 export function cleanBuyerName(raw: unknown): string {
   if (raw === null || raw === undefined) return "";
@@ -44,5 +66,5 @@ export function cleanBuyerName(raw: unknown): string {
     .trim();
 
   // Nothing but a code — keep what we were given rather than blanking it.
-  return kept || value;
+  return kept ? properCase(kept) : value;
 }
