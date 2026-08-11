@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { resolveReportPeriod, latestStamp } from "@/lib/reportPeriod";
 import { authFetch } from "@/lib/useAuth";
 import SearchSelect from "@/components/SearchSelect";
 import MultiSelect from "@/components/MultiSelect";
@@ -143,13 +144,20 @@ export default function ReportsPage() {
           }
         }
         if (bestY > 0) {
-          // Week: latest week stamped on a ledger for the chosen month/year (blank if none)
+          // Week: latest week stamped on a ledger for the chosen month/year.
           let bestW = 0;
           for (const meta of metas) {
             if (num(meta.reportYear) === bestY && num(meta.reportMonth) === bestM) {
               bestW = Math.max(bestW, num(meta.reportWeek));
             }
           }
+          /* bestY/bestM come from the DATA (date columns) while the stamps come
+             from whatever week a person picked at upload — and those two
+             routinely disagree, so the exact-month match above often finds
+             nothing and left the Week box on "Auto". Fall back to the latest
+             stamped week we have for this client rather than leaving it blank,
+             so the box shows a real week the user can see and correct. */
+          if (!bestW) bestW = num(latestStamp(metas)?.reportWeek);
           const y: number | "" = bestY;
           const mo: number | "" = bestM || "";
           const wk: number | "" = bestW || "";
@@ -201,6 +209,24 @@ export default function ReportsPage() {
       ? [mainChannelId, ...selectedSubIds]
       : [mainChannelId]
     : [];
+
+  /* The period each report will ACTUALLY be labelled with, resolved by the same
+     function the server uses, over the same ledgers. Shown next to each download
+     button: "Wk1 when I picked Wk4" was impossible to diagnose from a support
+     message, because nothing on screen said what the report would use. */
+  const scopedLedgers = useMemo(
+    () => ledgers.filter((m) => effectiveChannelIds.includes(m.channelId)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [ledgers, effectiveChannelIds.join(",")],
+  );
+  const vsPeriod = useMemo(
+    () => resolveReportPeriod(scopedLedgers, { year: reportYear, month: reportMonth, week: reportWeek }),
+    [scopedLedgers, reportYear, reportMonth, reportWeek],
+  );
+  const mePeriod = useMemo(
+    () => resolveReportPeriod(scopedLedgers, { year: meYear, month: meMonth, week: meWeek }),
+    [scopedLedgers, meYear, meMonth, meWeek],
+  );
 
   // Fetch stats when client or effective channels change
   useEffect(() => {
@@ -601,7 +627,14 @@ export default function ReportsPage() {
           </button>
         </div>
 
-        {/* Period selectors */}
+        {/* Period selectors — Vital Signs. Named, because the Month-End card
+            below has an identical Year/Month/Week row and nothing distinguished
+            them. */}
+        {clientId && mainChannelId && (
+          <p className="mb-1 text-xs font-semibold text-[var(--color-text-muted)]">
+            Period — Vital Signs
+          </p>
+        )}
         {clientId && mainChannelId && (
           <div className="mb-4 grid grid-cols-3 gap-3">
             <div>
@@ -652,6 +685,15 @@ export default function ReportsPage() {
               </select>
             </div>
           </div>
+        )}
+        {clientId && mainChannelId && (
+          <p className="mb-4 -mt-2 text-xs text-[var(--color-text-muted)]">
+            Filename will read{" "}
+            <span className="font-semibold text-[var(--color-text)]">{vsPeriod.label}</span>
+            {vsPeriod.source.week !== "chosen" && (
+              <> — week is on <b>Auto</b>, taken from the latest loaded DISPO. Set Week above to label it yourself.</>
+            )}
+          </p>
         )}
 
         {/* Data requirements */}
@@ -776,6 +818,11 @@ export default function ReportsPage() {
 
         {/* Period selectors — Month-End */}
         {clientId && mainChannelId && (
+          <p className="mb-1 text-xs font-semibold text-[var(--color-text-muted)]">
+            Period — Month-End
+          </p>
+        )}
+        {clientId && mainChannelId && (
           <div className="mb-4 grid grid-cols-3 gap-3">
             <div>
               <label className="mb-1 block text-xs font-medium text-[var(--color-text-muted)]">
@@ -825,6 +872,16 @@ export default function ReportsPage() {
               </select>
             </div>
           </div>
+        )}
+
+        {clientId && mainChannelId && (
+          <p className="mb-4 -mt-2 text-xs text-[var(--color-text-muted)]">
+            Sheets and filename will read{" "}
+            <span className="font-semibold text-[var(--color-text)]">{mePeriod.label}</span>
+            {mePeriod.source.week !== "chosen" && (
+              <> — week is on <b>Auto</b>, taken from the latest loaded DISPO. Set Week above to label it yourself.</>
+            )}
+          </p>
         )}
 
         {/* Dimension filters — Sub-Channel + Category (empty = all) */}

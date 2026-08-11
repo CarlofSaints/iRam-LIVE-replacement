@@ -12,6 +12,7 @@ import { analyzeCoverage, coverageMessageLines, formatMonth } from "@/lib/dataCo
 import { addLog } from "@/lib/activityLog";
 import { incrementReportCount } from "@/lib/reportCounts";
 import { saveReportToSharePointSafe } from "@/lib/sharepoint";
+import { resolveReportPeriod } from "@/lib/reportPeriod";
 
 export const maxDuration = 120;
 
@@ -189,13 +190,18 @@ export async function GET(req: NextRequest) {
     const client = await getClientById(clientId);
     const vendorNum = client?.vendorNumbers?.[0] ?? "";
 
-    // Use period from query params, fall back to ledger meta, then current date
-    const latestMeta = ledgerResults.find(({ meta }) => meta?.reportYear)?.meta;
-    const rYear = yearParam ? parseInt(yearParam, 10) : (latestMeta?.reportYear ?? new Date().getFullYear());
-    const rMonth = monthParam ? parseInt(monthParam, 10) : (latestMeta?.reportMonth ?? (new Date().getMonth() + 1));
-    const rWeek = weekParam ? parseInt(weekParam, 10) : (latestMeta?.reportWeek ?? Math.ceil(new Date().getDate() / 7));
-    const datePart = `${rYear}${String(rMonth).padStart(2, "0")}Wk${rWeek}`;
+    // Period from query params, else the LATEST stamped ledger, else today.
+    // This used to take the FIRST stamped ledger (channel order, not time
+    // order) — see lib/reportPeriod.ts for what that did to the labels.
+    const period = resolveReportPeriod(
+      ledgerResults.map(({ meta }) => meta),
+      { year: yearParam, month: monthParam, week: weekParam },
+    );
+    const datePart = period.filePart;
     const fileName = `Vital Signs - ${clientName} - ${vendorNum} - ${datePart}.xlsx`;
+    console.log(
+      `[vital-signs] period ${period.label} — year:${period.source.year} month:${period.source.month} week:${period.source.week}`,
+    );
 
     // 9. Auto-save to the client's Vital Signs SharePoint folder (best-effort)
     const spHeaders = await saveReportToSharePointSafe(config.spUrls?.vital_signs, fileName, buf);

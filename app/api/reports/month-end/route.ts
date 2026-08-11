@@ -28,6 +28,7 @@ import { getMergedStores } from "@/lib/storeFileData";
 import { getProductLookup } from "@/lib/productMasterData";
 import { getControlFileData } from "@/lib/controlFileData";
 import { saveReportToSharePointSafe } from "@/lib/sharepoint";
+import { resolveReportPeriod } from "@/lib/reportPeriod";
 
 /* This report is an order of magnitude heavier than Vital Signs: it reads the
    whole store master, the product lookup and the ranging file on top of the
@@ -197,17 +198,26 @@ export async function GET(req: NextRequest) {
     const dscSummary = buildDscSummary(reportRows, dateColumns, dscBracketLabels(config.dscBrackets));
     const dscDetail = buildDscDetail(reportRows, dateColumns);
 
-    // 7. Build period label
+    // 7. Build period label — see lib/reportPeriod.ts. This used to take the
+    // FIRST stamped ledger rather than the latest, which is what put "Wk1" on
+    // reports across every client.
     const client = await getClientById(clientId);
     const vendorNum = client?.vendorNumbers?.[0] ?? "";
-    const latestMeta = ledgerResults.find(({ meta }) => meta?.reportYear)?.meta;
-    const rYear = yearParam ? parseInt(yearParam, 10) : (latestMeta?.reportYear ?? new Date().getFullYear());
-    const rMonth = monthParam ? parseInt(monthParam, 10) : (latestMeta?.reportMonth ?? (new Date().getMonth() + 1));
-    const rWeek = weekParam ? parseInt(weekParam, 10) : (latestMeta?.reportWeek ?? Math.ceil(new Date().getDate() / 7));
+    const period = resolveReportPeriod(
+      ledgerResults.map(({ meta }) => meta),
+      { year: yearParam, month: monthParam, week: weekParam },
+    );
+    const rYear = period.year;
+    const rMonth = period.month;
+    const rWeek = period.week;
 
-    const monthNames = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    const periodLabel = `${monthNames[rMonth] || rMonth} ${rYear} Wk${rWeek}`;
+    const periodLabel = period.label;
     const channelLabel = channelNames.join(", ") || channelIds.join(", ");
+
+    // So "why does it say Wk1?" is answerable from the logs without a redeploy.
+    console.log(
+      `[month-end] period ${periodLabel} — year:${period.source.year} month:${period.source.month} week:${period.source.week}`,
+    );
 
     // Phantom: reference date = last day of the report month (UTC, relative "months ago")
     const referenceDate = new Date(Date.UTC(rYear, rMonth, 0));
@@ -313,7 +323,7 @@ export async function GET(req: NextRequest) {
     if (clientId) incrementReportCount(clientId, "monthEnd").catch(() => {});
 
     // 10. Return as downloadable xlsx
-    const datePart = `${rYear}${String(rMonth).padStart(2, "0")}Wk${rWeek}`;
+    const datePart = period.filePart;
     const fileName = `Month End - ${clientName || "Report"} - ${vendorNum} - ${datePart}.xlsx`;
 
     const fileBytes = new Uint8Array(buf);
