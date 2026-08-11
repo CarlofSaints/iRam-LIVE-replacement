@@ -76,10 +76,13 @@ const COLUMNS: Col[] = [
   { header: "Act DSC",              width: 9,  fmt: "0",     get: (l) => l.actDsc },
   { header: "Stk Margin",           width: 10, fmt: "0%",    get: (l) => l.stockMargin },
   { header: "PR ST",                width: 8,  get: (l) => l.prst === "(blank)" ? "" : l.prst },
-  { header: "SOH",                  width: 8,  fmt: "#,##0.##", get: (l) => l.soh },
+  // No thousands separator on the quantity columns — these are unit counts a rep
+  // reads and writes by hand, and "1,250" invites being read as a decimal comma
+  // in a locale that uses one. Decimals still show when there are any.
+  { header: "SOH",                  width: 8,  fmt: "0.##", get: (l) => l.soh },
   // Decimals are real here — reps count metres of rope, not just whole units.
-  { header: "Count 1", width: 10, fmt: "#,##0.##", entry: true, get: (_l, found) => found },
-  { header: "Count 2", width: 10, fmt: "#,##0.##", entry: true, get: () => null },
+  { header: "Count 1", width: 10, fmt: "0.##", entry: true, get: (_l, found) => found },
+  { header: "Count 2", width: 10, fmt: "0.##", entry: true, get: () => null },
   { header: "Comment", width: 30, entry: true, get: () => null },
 ];
 

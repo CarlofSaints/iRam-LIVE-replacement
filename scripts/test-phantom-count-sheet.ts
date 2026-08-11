@@ -96,6 +96,12 @@ async function main() {
     eq("barcode number format is text", bc.numFmt, "@");
 
     eq("Last Recpt rendered as Y/M", String(ws.getRow(6).getCell(7).value), "2025/05");
+    // Quantity columns carry NO thousands separator — Carl's call. A comma in a
+    // hand-read unit count reads as a decimal separator to half the world.
+    for (const [col, name] of [[11, "SOH"], [12, "Count 1"], [13, "Count 2"]] as const) {
+      const fmt = String(ws.getRow(6).getCell(col).numFmt ?? "");
+      ok(`${name} has no thousands separator`, !fmt.includes(","), `numFmt "${fmt}"`);
+    }
     eq("Stk Margin is a fraction with a % format", ws.getRow(6).getCell(9).numFmt, "0%");
     ok("header block names the store", String(ws.getCell("A2").value).includes("BWH RIVONIA-B50"));
     ok("header block names the vendor scope", String(ws.getCell("A3").value).includes("Vendor: ALL"));
