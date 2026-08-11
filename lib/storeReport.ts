@@ -26,7 +26,7 @@
    ────────────────────────────────────────────────────────────── */
 
 import type { StatusDefinition, StatusScenario } from "./types";
-import { classifyRowStatus, parseDispoDate, VAT_RATE } from "./monthEndReport";
+import { classifyRowStatus, parseDispoDate, marginFraction, VAT_RATE } from "./monthEndReport";
 
 type Row = Record<string, unknown>;
 
@@ -54,6 +54,8 @@ export interface StoreLineFlags {
 export interface StoreLine {
   clientId: string;
   clientName: string;
+  vendor: string;               // DISPO vendor number (_vendor) — filter key on the count sheet
+  vendorProdCode: string;       // DISPO "Vendor Prod Code" — the supplier's own SKU code
   article: string;
   barcode: string;
   productCode: string;          // _clientProductId
@@ -61,6 +63,8 @@ export interface StoreLine {
   category: string;             // product category (from PMF)
 
   soh: number;
+  actDsc: number | null;        // DISPO "Act DSC" — actual days stock cover as the retailer states it
+  stockMargin: number | null;   // DISPO "Stock Margin" as a fraction (their "Stk Margin" column)
   dros: number;                 // Daily Rate Of Sale = YTD units ÷ days elapsed
   daysCover: number | null;     // SOH ÷ DROS (fallback Act DSC)
 
@@ -319,6 +323,8 @@ export function buildStoreReport(
       lines.push({
         clientId: client.clientId,
         clientName: client.clientName,
+        vendor: String(row["_vendor"] ?? "").trim(),
+        vendorProdCode: String(row["Vendor Prod Code"] ?? "").trim(),
         article: String(row["Article"] ?? ""),
         barcode: String(row["_barcode"] || ""),
         productCode: String(row["_clientProductId"] || ""),
@@ -326,6 +332,10 @@ export function buildStoreReport(
         description: String(row["Article Desc"] || row["_productDescription"] || ""),
         category: String(row["_category"] || ""),
         soh,
+        actDsc: isNaN(actDsc) ? null : round2(actDsc),
+        // Blank Stock Margin is genuinely absent, not 0% — marginFraction() maps a
+        // blank to 0, so check for a value first and keep null when there isn't one.
+        stockMargin: String(row["Stock Margin"] ?? "").trim() === "" ? null : marginFraction(row["Stock Margin"]),
         dros: round2(dros),
         daysCover: daysCover === null ? null : round2(daysCover),
         lastSold: String(row["Last Sold"] ?? ""),

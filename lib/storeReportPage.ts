@@ -23,6 +23,10 @@ export interface StoreReportPageMeta {
   outerjoinLogoUrl?: string;
   retailerLogoUrl?: string;
   track?: { url: string; token: string; day: string };  // engagement beacons
+  // Endpoints + signed token for the page's own calls: saving stock counts and
+  // exporting / emailing the phantom count sheet. Absent → those features hide.
+  api?: { countUrl: string; exportUrl: string; token: string };
+  savedCounts?: Record<string, number>;   // `clientId|article` → units already counted
 }
 
 function esc(s: unknown): string {
@@ -104,6 +108,31 @@ export function renderStoreReportPage(report: StoreReport, meta: StoreReportPage
   .item{transition:opacity .25s ease, background-color .25s ease}
   .item.tick{opacity:.7}
   .item.leaving{background:#e9f6ee}
+  .found{display:flex;align-items:center;gap:8px;margin-top:9px}
+  .found label{font-size:11.5px;color:var(--grey);font-weight:600}
+  .found input{width:88px;padding:8px 10px;border:1px solid #d3d9df;border-radius:8px;background:#fffbef;font-size:14px;text-align:right}
+  .found input:focus{outline:2px solid var(--blue);outline-offset:-1px;background:#fff}
+  .found .ok{font-size:11px;color:var(--green);font-weight:600}
+  .found .pend{font-size:11px;color:#b07d1a;font-weight:600}
+  .xp{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px;margin-top:12px}
+  .xp h3{margin:0 0 4px;font-size:14px}
+  .xp .hint{font-size:11.5px;color:var(--grey);line-height:1.5;margin-bottom:12px}
+  .xp .fld{margin-bottom:10px}
+  .xp .fld > span{display:block;font-size:11.5px;color:var(--grey);font-weight:600;margin-bottom:5px}
+  .xp select,.xp input[type=email]{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--ink)}
+  .xp .seg{display:flex;gap:0;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+  .xp .seg button{flex:1;padding:10px 8px;border:0;background:#fff;color:var(--ink);font-size:12.5px;cursor:pointer}
+  .xp .seg button.on{background:var(--navy);color:#fff;font-weight:600}
+  .xp .cb{display:flex;align-items:flex-start;gap:9px;font-size:12.5px;color:#46525e;margin-bottom:12px;cursor:pointer}
+  .xp .cb input{width:18px;height:18px;margin:1px 0 0;flex:0 0 auto;accent-color:var(--navy)}
+  .xp .acts{display:flex;gap:8px}
+  .xp .acts button{flex:1;padding:12px;border:0;border-radius:9px;font-size:14px;font-weight:600;cursor:pointer}
+  .xp .dl{background:var(--navy);color:#fff}
+  .xp .em{background:#e9f0f8;color:var(--navy);border:1px solid #c6d6e8!important}
+  .xp .acts button:disabled{opacity:.55;cursor:default}
+  .xp .msg{margin-top:10px;font-size:12.5px;border-radius:8px;padding:10px 12px;line-height:1.5}
+  .xp .msg.good{background:#e9f6ee;color:#256a41}
+  .xp .msg.bad{background:var(--redbg);color:#b23b35}
   .secttl{padding:18px 6px 2px;font:700 13px Arial;color:var(--grey)}
   .empty{padding:26px 16px;text-align:center;color:#9aa3ad;font-size:13px}
   .disclaimer{margin:14px 16px 0;padding:13px 15px;background:#fff;border:1px solid var(--line);border-radius:10px;color:var(--grey);font-size:11.5px;line-height:1.65}
@@ -137,6 +166,7 @@ export function renderStoreReportPage(report: StoreReport, meta: StoreReportPage
       <input id="search" placeholder="Search article, barcode or client" oninput="render()">
       <button class="sort" onclick="toggleSort()" id="sortBtn">⇅ Most urgent</button>
     </div>
+    <div id="exportPanel"></div>
     <div class="listhead"><span id="countLbl"></span><span id="metricLbl"></span></div>
     <div id="list"></div>
     <div id="completedWrap"></div>
@@ -292,6 +322,7 @@ function itemHtml(l){
       + '<div class="main"><div class="nm">'+esc(l.description||l.article)+'</div>'
         + '<div class="meta">#'+esc(l.article)+(l.barcode?'  '+esc(l.barcode):'')+'  <b>'+esc(l.clientName)+'</b></div>'
         + (chips?'<div class="chips">'+chips+'</div>':'')
+        + foundHtml(l)
       + '</div>'
       + '<div class="metric"><span class="v">'+m.v+'</span> <span class="u">'+m.u+'</span></div>'
       + '<div class="chev">▾</div>'
@@ -324,6 +355,7 @@ function render(){
   renderClientOptionsOnce();
   renderFreshness();
   renderCards();
+  renderExportPanel();
   let lines = visibleLines();
   lines.sort((a,b)=> sortMode==="az" ? (a.description||"").localeCompare(b.description||"") : metricNum(a,active)-metricNum(b,active));
   const open = lines.filter(l=>!ticks[lineId(l)]);
@@ -386,6 +418,269 @@ function claimBeacon(l, on){
     else { fetch(url,{method:"POST",body:body,keepalive:true,mode:"no-cors",headers:{"Content-Type":"text/plain"}}).catch(function(){}); }
   }catch(e){}
 }
+/* ── Stock Found (Phantom lines) ───────────────────────────────────────────
+   The rep types what they physically found. Kept in localStorage FIRST (store
+   floors have poor signal and a lost count means walking the aisle again), then
+   synced to the server debounced. Every sync posts the FULL map with per-entry
+   timestamps, so a dropped request loses nothing and the server can merge. */
+const CKEY = "storeReportCounts:" + M.reportId;
+var counts = {};        // lineKey -> { v: number|null, at: ISO }
+var dirty = {};         // lineKey -> 1 for counts typed on THIS device, not yet acknowledged
+var syncState = "idle"; // idle | pending | error
+var syncTimer = null;
+
+(function initCounts(){
+  // Server values first (so another device's counts show up), then this phone's
+  // own edits on top — the rep's last local entry is the one they just made.
+  var saved = M.savedCounts || {};
+  for(var k in saved){ if(Object.prototype.hasOwnProperty.call(saved,k)) counts[k] = {v: saved[k], at: ""}; }
+  try{
+    var local = JSON.parse(localStorage.getItem(CKEY) || "{}");
+    var any = false;
+    for(var j in local){
+      if(!Object.prototype.hasOwnProperty.call(local,j)) continue;
+      counts[j] = local[j];
+      // Anything this phone holds may never have reached the server — the rep
+      // could have lost signal mid-aisle and closed the page. Treat it as
+      // unsent and push it again, so counts aren't stranded on the device.
+      if(saved[j] === undefined || saved[j] !== local[j].v){ dirty[j] = 1; any = true; }
+    }
+    if(any) setTimeout(scheduleSync, 1200);
+  }catch(e){}
+})();
+
+function countVal(id){ var c = counts[id]; return (c && c.v != null) ? c.v : ""; }
+function countedTotal(){ var n=0; for(var k in counts){ if(counts[k] && counts[k].v != null) n++; } return n; }
+
+function saveLocalCounts(){
+  try{ localStorage.setItem(CKEY, JSON.stringify(counts)); }catch(e){}
+}
+
+function setSyncBadge(id, state){
+  var el = document.getElementById("fs-" + id);
+  if(!el) return;
+  if(state === "ok"){ el.className = "ok"; el.textContent = "Saved"; }
+  else if(state === "pend"){ el.className = "pend"; el.textContent = "Saving…"; }
+  else if(state === "err"){ el.className = "pend"; el.textContent = "Not saved — will retry"; }
+  else { el.textContent = ""; }
+}
+
+function onFoundInput(id, raw, el){
+  var v = String(raw).trim();
+  var num = v === "" ? null : Number(v);
+  if(v !== "" && (!isFinite(num) || num < 0)){ setSyncBadge(id, "err"); return; }
+  // null is kept, not deleted — an emptied box is an explicit "no count", and the
+  // server needs to be told to clear it rather than left holding a stale figure.
+  counts[id] = { v: num, at: new Date().toISOString() };
+  dirty[id] = 1;
+  saveLocalCounts();
+  setSyncBadge(id, "pend");
+  scheduleSync();
+  updatePanelCounted();
+}
+
+function scheduleSync(){
+  if(!M.api || !M.api.countUrl) return;
+  if(syncTimer) clearTimeout(syncTimer);
+  // Long enough that keying "12" isn't two requests, short enough that a rep who
+  // moves straight on to the next aisle has already been saved.
+  syncTimer = setTimeout(syncCounts, 900);
+}
+
+function syncCounts(){
+  if(!M.api || !M.api.countUrl) return;
+  var payload = [];
+  for(var k in counts){
+    if(!Object.prototype.hasOwnProperty.call(counts,k)) continue;
+    var l = R.lines.find(function(x){ return lineId(x) === k; });
+    if(!l) continue;
+    payload.push({
+      clientId: l.clientId, clientName: l.clientName, vendor: l.vendor || "",
+      article: l.article, description: l.description,
+      found: counts[k].v, at: counts[k].at || new Date().toISOString()
+    });
+  }
+  if(!payload.length) return;
+  syncState = "pending";
+  fetch(M.api.countUrl, {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ r: M.api.token, t: M.track && M.track.token, d: M.track && M.track.day, counts: payload })
+  }).then(function(res){
+    if(!res.ok) throw new Error("save failed");
+    syncState = "idle";
+    // Badge only what THIS device typed. A count loaded from the server was
+    // never at risk, and flagging it "not saved" would send a rep to re-count
+    // something that is already safely recorded.
+    for(var k in dirty){ if(Object.prototype.hasOwnProperty.call(dirty,k)) setSyncBadge(k, "ok"); }
+    dirty = {};
+  }).catch(function(){
+    // Keep it visible and keep the local copy — the next edit retries, and the
+    // counts still export because the sheet can be built from what's on screen.
+    syncState = "error";
+    for(var k in dirty){ if(Object.prototype.hasOwnProperty.call(dirty,k)) setSyncBadge(k, "err"); }
+    setTimeout(function(){ if(syncState === "error") syncCounts(); }, 15000);
+  });
+}
+
+function foundHtml(l){
+  if(!l.flags.phantom) return "";
+  var id = lineId(l);
+  var v = countVal(id);
+  return '<div class="found" onclick="event.stopPropagation()">'
+    + '<label for="f-' + esc(id) + '">Stock found</label>'
+    + '<input id="f-' + esc(id) + '" type="number" inputmode="decimal" step="any" min="0" placeholder="—" '
+    +   'value="' + esc(v) + '" oninput="onFoundInput(\\'' + esc(id) + '\\', this.value, this)">'
+    + '<span id="fs-' + esc(id) + '"></span>'
+  + '</div>';
+}
+
+/* ── Phantom export panel ──────────────────────────────────────────────────── */
+var xpVendor = "all", xpMode = "empty", xpOneSheet = true, xpBusy = false, xpPanelFor = null;
+
+function phantomLines(){
+  var cl = curClient();
+  return R.lines.filter(function(l){ return l.flags.phantom && (cl === "all" || l.clientId === cl); });
+}
+function phantomVendors(){
+  var seen = {}, out = [];
+  phantomLines().forEach(function(l){ var v = l.vendor || ""; if(v && !seen[v]){ seen[v] = 1; out.push(v); } });
+  out.sort(function(a,b){ var na=Number(a), nb=Number(b); return (!isNaN(na)&&!isNaN(nb)) ? na-nb : a.localeCompare(b); });
+  return out;
+}
+
+function renderExportPanel(){
+  var host = document.getElementById("exportPanel");
+  if(!host) return;
+  // Only on the Phantom list, and only when the server gave us the endpoints.
+  var show = active === "phantom" && M.api && M.api.exportUrl;
+  if(!show){ host.innerHTML = ""; xpPanelFor = null; return; }
+  // Rebuild only when the context changes — a rebuild mid-typing would throw the
+  // rep out of the email box.
+  var sig = "phantom|" + curClient();
+  if(xpPanelFor === sig) { updatePanelCounted(); return; }
+  xpPanelFor = sig;
+
+  var vendors = phantomVendors();
+  var opts = '<option value="all">All vendors (' + phantomLines().length + ' lines)</option>';
+  vendors.forEach(function(v){
+    var n = phantomLines().filter(function(l){ return l.vendor === v; }).length;
+    opts += '<option value="' + esc(v) + '"' + (xpVendor === v ? " selected" : "") + '>Vendor ' + esc(v) + ' (' + n + ')</option>';
+  });
+
+  host.innerHTML =
+    '<div class="xp">'
+    + '<h3>Stock count sheet</h3>'
+    + '<div class="hint">Export these phantom lines to Excel to count them in store, or email the sheet out.</div>'
+    + '<div class="fld"><span>Vendor</span><select id="xpVendor" onchange="xpSetVendor(this.value)">' + opts + '</select></div>'
+    + '<div class="fld"><span>What to send</span><div class="seg">'
+      + '<button id="xpModeEmpty" class="' + (xpMode === "empty" ? "on" : "") + '" onclick="xpSetMode(\\'empty\\')">Download empty</button>'
+      + '<button id="xpModeCounts" class="' + (xpMode === "counts" ? "on" : "") + '" onclick="xpSetMode(\\'counts\\')">With count submissions</button>'
+    + '</div><div class="hint" id="xpCounted" style="margin:6px 0 0"></div></div>'
+    + '<label class="cb" id="xpOneWrap"><input type="checkbox" id="xpOne"' + (xpOneSheet ? " checked" : "") + ' onchange="xpOneSheet=this.checked">'
+      + '<span>All vendors on one sheet<br><span style="color:var(--grey)">Untick to get a separate tab per vendor.</span></span></label>'
+    + '<div class="fld"><span>Email to (optional)</span><input type="email" id="xpTo" inputmode="email" autocomplete="email" placeholder="store contact\\'s email"></div>'
+    + '<div class="hint" style="margin:-4px 0 12px">Sending also copies you and the client\\'s CAM.</div>'
+    + '<div class="acts">'
+      + '<button class="dl" id="xpDl" onclick="xpRun(\\'download\\')">Download</button>'
+      + '<button class="em" id="xpEm" onclick="xpRun(\\'email\\')">Email</button>'
+    + '</div>'
+    + '<div id="xpMsg"></div>'
+  + '</div>';
+  xpSyncOneVisibility();
+  updatePanelCounted();
+}
+
+function xpSetVendor(v){ xpVendor = v; xpSyncOneVisibility(); updatePanelCounted(); }
+function xpSetMode(m){
+  xpMode = m;
+  var a = document.getElementById("xpModeEmpty"), b = document.getElementById("xpModeCounts");
+  if(a) a.className = (m === "empty" ? "on" : "");
+  if(b) b.className = (m === "counts" ? "on" : "");
+  updatePanelCounted();
+}
+function xpSyncOneVisibility(){
+  // One vendor is one sheet by definition — hide the choice rather than offer a
+  // tickbox that does nothing.
+  var wrap = document.getElementById("xpOneWrap");
+  if(wrap) wrap.style.display = (xpVendor === "all") ? "" : "none";
+}
+function updatePanelCounted(){
+  var el = document.getElementById("xpCounted");
+  if(!el) return;
+  var scoped = phantomLines().filter(function(l){ return xpVendor === "all" || l.vendor === xpVendor; });
+  var counted = scoped.filter(function(l){ return countVal(lineId(l)) !== ""; }).length;
+  // The vendor picker scopes the SHEET, not the list on screen — so say outright
+  // how many lines the sheet will hold, or a rep who picked one vendor wonders
+  // why they got fewer rows than they can see.
+  var lead = "Sheet will have " + scoped.length + " line" + (scoped.length === 1 ? "" : "s") + ". ";
+  el.textContent = lead + (xpMode === "counts"
+    ? (counted ? counted + " already counted — these fill Count 1." : "No counts captured yet, so Count 1 will be blank.")
+    : "Count 1 blank for writing in store.");
+}
+function xpMsg(kind, text){
+  var el = document.getElementById("xpMsg");
+  if(el) el.innerHTML = text ? '<div class="msg ' + kind + '">' + esc(text) + '</div>' : "";
+}
+function xpSetBusy(on, label){
+  xpBusy = on;
+  var d = document.getElementById("xpDl"), e = document.getElementById("xpEm");
+  if(d){ d.disabled = on; d.textContent = (on && label === "download") ? "Building…" : "Download"; }
+  if(e){ e.disabled = on; e.textContent = (on && label === "email") ? "Sending…" : "Email"; }
+}
+
+function xpRun(action){
+  if(xpBusy) return;
+  var toEl = document.getElementById("xpTo");
+  var to = toEl ? toEl.value.trim() : "";
+  if(action === "email" && !to && !(M.track && M.track.token)){
+    xpMsg("bad", "Enter an email address — this report has no rep on file to copy.");
+    return;
+  }
+  xpMsg("", "");
+  xpSetBusy(true, action);
+  // Flush any pending counts first so "with count submissions" can't export a
+  // count the server hasn't been told about yet.
+  if(syncTimer){ clearTimeout(syncTimer); syncTimer = null; }
+  var pre = (xpMode === "counts") ? new Promise(function(res){ syncCounts(); setTimeout(res, 600); }) : Promise.resolve();
+
+  pre.then(function(){
+    return fetch(M.api.exportUrl, {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        r: M.api.token, t: M.track && M.track.token, d: M.track && M.track.day,
+        vendor: xpVendor, mode: xpMode, oneSheet: (xpVendor !== "all") ? true : xpOneSheet,
+        action: action, to: to
+      })
+    });
+  }).then(function(res){
+    if(action === "download"){
+      if(!res.ok) return res.json().catch(function(){ return {}; }).then(function(j){ throw new Error(j.error || "Could not build the sheet."); });
+      var name = "Phantom Stock Count.xlsx";
+      var cd = res.headers.get("Content-Disposition") || "";
+      var m = cd.match(/filename="([^"]+)"/);
+      if(m) name = m[1];
+      return res.blob().then(function(blob){
+        // A header-authenticated URL can't be used as a plain href, so the file is
+        // fetched and handed over as a blob URL.
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement("a");
+        a.href = url; a.download = name;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        setTimeout(function(){ URL.revokeObjectURL(url); }, 4000);
+        xpMsg("good", "Downloaded " + name);
+      });
+    }
+    return res.json().catch(function(){ return {}; }).then(function(j){
+      if(!res.ok || j.error) throw new Error(j.error || "Could not send the email.");
+      var who = (j.to || []).join(", ");
+      xpMsg("good", "Sent to " + who + (j.lines != null ? (" — " + j.lines + " line(s).") : "."));
+      if(toEl) toEl.value = "";
+    });
+  }).catch(function(err){
+    xpMsg("bad", (err && err.message) ? err.message : "Something went wrong. Please try again.");
+  }).then(function(){ xpSetBusy(false, action); });
+}
+
 function setCat(k){ active=k; beacon("card", k); render(); }
 function toggleOpen(el){ el.parentElement.classList.toggle("open"); }
 function toggleSort(){ sortMode = sortMode==="urgent"?"az":"urgent"; document.getElementById("sortBtn").textContent = sortMode==="urgent"?"⇅ Most urgent":"⇅ A–Z"; render(); }
@@ -421,6 +716,7 @@ function buildInfo(){
   let h='<div class="note">An article can appear in more than one list when it matches several rules — its chips show the others (e.g. + Margin Risk). Tick it off in any list and it\\'s ticked off everywhere. A card turns <b style="color:#2e9e5b">green</b> once every item in its list is ticked.</div>';
   for(const [c,t,p] of INFO){ h+='<div class="def"><div class="t"><span class="dot" style="background:'+c+'"></span>'+t+'</div><p>'+p+'</p></div>'; }
   h+='<div class="def"><div class="t">DROS</div><p>Daily Rate Of Sale = this year\\'s units ÷ days elapsed in the year. We work from monthly DISPO data, so it\\'s an average daily rate, not an exact day-by-day figure.</p></div>';
+  h+='<div class="def"><div class="t">Stock found</div><p>On Phantom lines, type what you physically counted on the shelf. Decimals are fine (e.g. 3.5 metres of rope). It saves as you type \\u2014 to this phone first, so a weak signal in-store can\\'t lose it, then to iRam. From the Phantom list you can download or email a stock count sheet, either blank to write on or already filled in with what you captured here.</p></div>';
   h+='<div class="def"><div class="t">Tick boxes</div><p>Tick an item to mark it done; it drops into the Completed list at the bottom.</p></div>';
   document.getElementById("infoBody").innerHTML=h;
 }

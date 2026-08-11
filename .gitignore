@@ -41,3 +41,7 @@ next-env.d.ts
 # local data
 /data/
 .env*
+
+# generated report samples (npx tsx scripts/make-sample-store-report.ts)
+sample-store-report-*.html
+SAMPLE - *.xlsx

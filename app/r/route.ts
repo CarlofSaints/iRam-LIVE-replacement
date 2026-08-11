@@ -1,7 +1,8 @@
 import { NextRequest } from "next/server";
 import { loadStoreReport, formatGeneratedAt, storeReportLogos } from "@/lib/storeReportLoad";
 import { renderStoreReportPage } from "@/lib/storeReportPage";
-import { verifyReportLink, legacyLinksAllowed, ReportLinkPayload } from "@/lib/reportLink";
+import { verifyReportLink, signReportLink, legacyLinksAllowed, ReportLinkPayload } from "@/lib/reportLink";
+import { getPhantomCounts } from "@/lib/phantomCounts";
 
 // PUBLIC hosted action-list page — reps open this from the email link, so it is
 // intentionally not behind a login (any rep may view any store's report). The
@@ -97,6 +98,34 @@ export async function GET(req: NextRequest) {
 
     const token = u.searchParams.get("t") || "";
     const day = u.searchParams.get("d") || "";
+
+    // Token the PAGE uses for its own API calls (saving stock counts, exporting
+    // the phantom sheet). Minted here rather than reusing the incoming `r` so it
+    // (a) exists even when the rep arrived on a legacy plain-param link and
+    // (b) pins the period we actually RESOLVED, so a count can never be filed
+    // against a different period from the one on screen.
+    const apiToken = signReportLink({
+      site: target.site,
+      clientId: target.clientId,
+      year: loaded.year,
+      month: loaded.month,
+      week: loaded.week,
+    });
+
+    // Counts already captured for this store+period, so reopening the report (or
+    // opening it on another device) shows what was entered rather than a blank grid.
+    let savedCounts: Record<string, number> = {};
+    try {
+      const file = await getPhantomCounts({
+        siteCode: target.site, year: loaded.year, month: loaded.month, week: loaded.week,
+      });
+      for (const [key, c] of Object.entries(file.lines)) savedCounts[key] = c.found;
+    } catch (err) {
+      // Never let a counts read stop the report rendering — the rep can re-enter.
+      console.error("store-report: phantom counts read failed", err);
+      savedCounts = {};
+    }
+
     const html = renderStoreReportPage(loaded.report, {
       periodLabel: loaded.periodLabel,
       generatedAt: formatGeneratedAt(),
@@ -104,6 +133,12 @@ export async function GET(req: NextRequest) {
       reportId: `${target.site}-${loaded.year}-${loaded.month}-${loaded.week}`,
       ...storeReportLogos(u.origin, loaded.report.subChannel),
       ...(token && day ? { track: { url: `${u.origin}/api/store-reports/track`, token, day } } : {}),
+      api: {
+        countUrl: `${u.origin}/api/store-reports/phantom-count`,
+        exportUrl: `${u.origin}/api/store-reports/phantom-export`,
+        token: apiToken,
+      },
+      savedCounts,
     });
 
     return new Response(html, {
