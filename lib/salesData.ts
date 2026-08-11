@@ -1,3 +1,4 @@
+import { periodScore, snapshotWins, isInternalField, SNAPSHOT_PERIOD_FIELD } from "./dispoSnapshot";
 import type { SalesLedgerMeta } from "./types";
 import { readJson, readJsonStrict, writeJson, deleteBlob } from "./blob";
 import { DATE_COL_REGEX } from "./headers";
@@ -218,6 +219,14 @@ export async function mergeDispo(params: MergeDispoParams): Promise<MergeResult>
   // freshness is gated by this stamp downstream.
   const loadStamp = new Date().toISOString();
 
+  /* Which period THIS upload speaks for. Snapshot fields (stock, prices, status)
+     may only be overwritten by a period that is the same or newer — see
+     lib/dispoSnapshot.ts. Sales columns are unaffected and still merge from any
+     period, which is what makes back-loading history safe. */
+  const incomingPeriod = periodScore(reportYear, reportMonth, reportWeek);
+  let snapshotsApplied = 0;
+  let snapshotsSkipped = 0;
+
   for (const row of rows) {
     const key = buildRowKey(row);
     if (!key) continue; // skip rows with no Article or Site
@@ -259,11 +268,19 @@ export async function mergeDispo(params: MergeDispoParams): Promise<MergeResult>
       // INSERT — new combination
       normalizedRow["_vendor"] = rowVendor;
       normalizedRow["_lastLoadedAt"] = loadStamp;
+      normalizedRow[SNAPSHOT_PERIOD_FIELD] = incomingPeriod;
       ledgerMap.set(key, normalizedRow);
       inserted++;
     } else {
       // MERGE — compare each field
       let changed = false;
+
+      /* Snapshot columns describe stock and prices AS AT this DISPO's period.
+         An older DISPO loaded later must NOT roll them back — that is what put
+         stale SOH into reports while sales still matched. Sales columns below
+         are untouched by this, so back-loading history still works. */
+      const takeSnapshot = snapshotWins(existingRow[SNAPSHOT_PERIOD_FIELD], incomingPeriod);
+      if (takeSnapshot) snapshotsApplied++; else snapshotsSkipped++;
 
       for (const [col, newVal] of Object.entries(normalizedRow)) {
         const existingVal = existingRow[col];
@@ -281,14 +298,24 @@ export async function mergeDispo(params: MergeDispoParams): Promise<MergeResult>
             existingRow[col] = newVal;
             changed = true;
           }
+        } else if (isInternalField(col)) {
+          // Our own bookkeeping (`_nettCost_2025`, …) — already year-scoped in
+          // the key, so it is not a snapshot and keeps its previous behaviour.
+          if (existingVal !== newVal) {
+            existingRow[col] = newVal;
+            changed = true;
+          }
         } else {
-          // Non-date column: overwrite with new value (latest snapshot)
+          // Snapshot column — only a same-or-newer period may write it.
+          if (!takeSnapshot) continue;
           if (existingVal !== newVal) {
             existingRow[col] = newVal;
             changed = true;
           }
         }
       }
+
+      if (takeSnapshot) existingRow[SNAPSHOT_PERIOD_FIELD] = incomingPeriod;
 
       // Always re-stamp: this row WAS in the current upload, so it's part of the
       // latest load even if no field value changed.
@@ -301,6 +328,16 @@ export async function mergeDispo(params: MergeDispoParams): Promise<MergeResult>
         unchanged++;
       }
     }
+  }
+
+  /* Visible in the Vercel logs, because "this load didn't change the stock" is
+     otherwise indistinguishable from "the load did nothing". A large skip count
+     is EXPECTED and correct when back-loading history. */
+  if (snapshotsSkipped > 0) {
+    console.log(
+      `[mergeDispo] ${clientName}/${channelName} period ${reportYear}-${reportMonth}Wk${reportWeek}: ` +
+      `kept ${snapshotsSkipped} newer snapshot(s), applied ${snapshotsApplied} — sales merged for all rows.`,
+    );
   }
 
   // Convert map back to array
