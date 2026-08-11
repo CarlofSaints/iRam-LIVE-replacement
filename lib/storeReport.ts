@@ -55,6 +55,7 @@ export interface StoreLine {
   clientId: string;
   clientName: string;
   vendor: string;               // DISPO vendor number (_vendor) — filter key on the count sheet
+  vendorName: string;           // DISPO "Name" — nobody knows every vendor number by heart
   vendorProdCode: string;       // DISPO "Vendor Prod Code" — the supplier's own SKU code
   article: string;
   barcode: string;
@@ -205,6 +206,27 @@ function emptyFlags(): StoreLineFlags {
   return { oos: false, lowCover: false, phantom: false, status: false, marginRisk: false, marginOpp: false };
 }
 
+// A DSC we can always show. The retailer leaves "Act DSC" BLANK when it has no
+// rate of sale to divide by — but a blank next to real stock on hand reads as
+// "no data" when the truth is the opposite: nothing is selling, so the cover is
+// effectively endless. That is exactly the signal a phantom count is chasing.
+//
+//   1. the DISPO's own Act DSC, whenever it gave us one
+//   2. else our own SOH ÷ DROS — we have both, so we can do the division the
+//      retail system couldn't
+//   3. else NO_COVER (9999) — no stock movement at all, so cover is unbounded
+//
+// Values are clamped to NO_COVER so "never going to sell" and "we couldn't
+// work it out" read the same on the sheet, which is what they mean in practice.
+export const NO_COVER = 9999;
+
+export function effectiveDsc(line: Pick<StoreLine, "actDsc" | "soh" | "dros">): number {
+  if (line.actDsc != null && !isNaN(line.actDsc)) return line.actDsc;
+  if (line.soh <= 0) return 0;                       // no stock is no cover, not endless cover
+  if (line.dros > 0) return Math.min(NO_COVER, Math.round(line.soh / line.dros));
+  return NO_COVER;
+}
+
 export function buildStoreReport(
   clients: ClientStoreInput[],
   opts: BuildStoreReportOpts,
@@ -228,6 +250,15 @@ export function buildStoreReport(
   let storeType = "";
   let subChannel = "";
   let province = "";
+
+  // vendor number → vendor name, keyed per client (a number is only meaningful
+  // within its own retailer/client context).
+  //
+  // ⚠️ Only trust the "Name" on a row whose OWN Vendor column is the vendor we
+  // resolved. `_vendor` is inherited on DC lines — those carry the DC's name,
+  // not the vendor's, so reading Name off any matching row would label a whole
+  // vendor with a DC's name.
+  const vendorNames = new Map<string, string>();
 
   for (const client of clients) {
     let clientHasLines = false;
@@ -318,12 +349,23 @@ export function buildStoreReport(
       if (flags.marginOpp) counts.marginOpp++;
 
       const prst = prstDisplay(row);
+      const rowVendor = String(row["_vendor"] ?? "").trim();
+
+      // Record the vendor's name only from a row that genuinely belongs to it.
+      const ownVendor = String(row["Vendor"] ?? "").trim().match(/^(\d+)/);
+      if (ownVendor && ownVendor[1] === rowVendor) {
+        const nm = String(row["Name"] ?? "").trim();
+        const key = `${client.clientId}|${rowVendor}`;
+        if (nm && !vendorNames.has(key)) vendorNames.set(key, nm);
+      }
 
       clientHasLines = true;
       lines.push({
         clientId: client.clientId,
         clientName: client.clientName,
-        vendor: String(row["_vendor"] ?? "").trim(),
+        vendor: rowVendor,
+        vendorName: "",          // filled in below, once every row has been seen
+
         vendorProdCode: String(row["Vendor Prod Code"] ?? "").trim(),
         article: String(row["Article"] ?? ""),
         barcode: String(row["_barcode"] || ""),
@@ -363,6 +405,13 @@ export function buildStoreReport(
     if (clientHasLines) {
       participating.push({ clientId: client.clientId, clientName: client.clientName });
     }
+  }
+
+  // Second pass: a vendor's name may only appear on a row we met after some of
+  // its lines were already pushed, so this can't be done inline.
+  for (const l of lines) {
+    if (!l.vendor) continue;
+    l.vendorName = vendorNames.get(`${l.clientId}|${l.vendor}`) ?? "";
   }
 
   const totalActions = lines.filter((l) =>

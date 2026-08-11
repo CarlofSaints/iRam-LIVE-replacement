@@ -22,6 +22,7 @@ function line(p: Partial<StoreLine> & { article: string; description: string }):
     clientId: CLIENT_ID,
     clientName: CLIENT_NAME,
     vendor: "1063",
+    vendorName: "USABCO HOMEWARE",
     vendorProdCode: "VP" + p.article.slice(-5),
     barcode: "600" + Math.abs(hash(p.article)).toString().padStart(10, "0").slice(0, 10),
     productCode: p.article,
@@ -107,30 +108,33 @@ const lines: StoreLine[] = [
   }),
 
   // ── Phantom stock (SOH on hand, nothing moving) ───────────────
+  // actDsc null = the retailer couldn't work out a DSC. This one still has a
+  // trickle of sale, so we compute 11 ÷ 0.02 = 550 ourselves.
   line({
     article: "40009911", description: "ENAMEL BAKE DISH 32CM",
     soh: 11, dros: 0.02, daysCover: 550, lastSold: "2026-04-02", lastSoldDays: 131,
-    lastReceived: "2026-03-15", lastReceivedDays: 149,
+    lastReceived: "2026-03-15", lastReceivedDays: 149, actDsc: null,
     mac: 132.0, nett: 128.0, sellPrice: 239.99,
     flags: { ...noFlags, phantom: true },
   }),
+  // No rate of sale at all → the 9999 placeholder.
   line({
     article: "40008120", description: "SERVING PLATTER OVAL WHITE",
-    soh: 7, dros: 0.01, daysCover: 700, lastSold: "2026-03-21", lastSoldDays: 143,
-    lastReceived: "2026-02-28", lastReceivedDays: 164,
+    soh: 7, dros: 0, daysCover: null, lastSold: "2026-03-21", lastSoldDays: 143,
+    lastReceived: "2026-02-28", lastReceivedDays: 164, actDsc: null,
     mac: 74.0, nett: 70.0, sellPrice: 139.99,
     flags: { ...noFlags, phantom: true },
   }),
   // A second vendor, so the sample exercises the vendor picker + the tab-per-vendor split.
   line({
-    article: "40021002", description: "GARDEN HOSE 20M REINFORCED", vendor: "1449",
+    article: "40021002", description: "GARDEN HOSE 20M REINFORCED", vendor: "1449", vendorName: "GARDENPRO SA",
     soh: 14, dros: 0.03, daysCover: 466, lastSold: "2026-02-11", lastSoldDays: 181,
     lastReceived: "2026-01-30", lastReceivedDays: 193, actDsc: 999, stockMargin: 0.26,
     mac: 289.0, nett: 275.0, sellPrice: 549.99,
     flags: { ...noFlags, phantom: true },
   }),
   line({
-    article: "40021777", description: "ROPE POLY 12MM (PER METRE)", vendor: "1449",
+    article: "40021777", description: "ROPE POLY 12MM (PER METRE)", vendor: "1449", vendorName: "GARDENPRO SA",
     soh: 62.5, dros: 0.04, daysCover: 999, lastSold: "2026-03-02", lastSoldDays: 162,
     lastReceived: "2026-01-14", lastReceivedDays: 209, actDsc: 999, stockMargin: 0.31,
     mac: 18.5, nett: 17.2, sellPrice: 34.99,

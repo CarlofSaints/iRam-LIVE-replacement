@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { resolvePublicContext } from "@/lib/storeReportPublicAuth";
 import { loadStoreReport, formatGeneratedAt } from "@/lib/storeReportLoad";
 import { getPhantomCounts, phantomLineKey } from "@/lib/phantomCounts";
-import { buildPhantomCountWorkbook, phantomSheetFileName, type CountMode } from "@/lib/phantomCountSheet";
+import { buildPhantomCountWorkbook, phantomSheetFileName, vendorLabelFor, type CountMode } from "@/lib/phantomCountSheet";
 import { getClients } from "@/lib/clientData";
 import { getCamById } from "@/lib/camData";
 import { sendPhantomCountEmail } from "@/lib/email";
@@ -73,7 +73,9 @@ export async function POST(req: NextRequest) {
       province: loaded.report.province,
       periodLabel: loaded.periodLabel,
       generatedAt: formatGeneratedAt(),
-      vendorLabel: allVendors ? "ALL" : vendorSel,
+      // Name the vendor, not just its number — this label heads the sheet and
+      // the email subject, and nobody knows every vendor number by heart.
+      vendorLabel: allVendors ? "ALL" : vendorLabelFor(vendorSel, lines[0]?.vendorName || ""),
       repName: ctx.repName || undefined,
       mode,
     };

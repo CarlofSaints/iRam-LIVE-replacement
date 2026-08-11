@@ -541,10 +541,22 @@ function phantomLines(){
   var cl = curClient();
   return R.lines.filter(function(l){ return l.flags.phantom && (cl === "all" || l.clientId === cl); });
 }
+// Distinct vendors on the phantom list, each with its name — reps do not know
+// every vendor number by heart, and the number alone makes the picker a guess.
 function phantomVendors(){
   var seen = {}, out = [];
-  phantomLines().forEach(function(l){ var v = l.vendor || ""; if(v && !seen[v]){ seen[v] = 1; out.push(v); } });
-  out.sort(function(a,b){ var na=Number(a), nb=Number(b); return (!isNaN(na)&&!isNaN(nb)) ? na-nb : a.localeCompare(b); });
+  phantomLines().forEach(function(l){
+    var v = l.vendor || "";
+    if(!v) return;
+    if(!seen[v]){ seen[v] = {code:v, name:l.vendorName || "", n:0}; out.push(seen[v]); }
+    // Take a name off whichever row has one — some rows can be blank.
+    if(!seen[v].name && l.vendorName) seen[v].name = l.vendorName;
+    seen[v].n++;
+  });
+  out.sort(function(a,b){
+    var na=Number(a.code), nb=Number(b.code);
+    return (!isNaN(na)&&!isNaN(nb)) ? na-nb : a.code.localeCompare(b.code);
+  });
   return out;
 }
 
@@ -563,8 +575,8 @@ function renderExportPanel(){
   var vendors = phantomVendors();
   var opts = '<option value="all">All vendors (' + phantomLines().length + ' lines)</option>';
   vendors.forEach(function(v){
-    var n = phantomLines().filter(function(l){ return l.vendor === v; }).length;
-    opts += '<option value="' + esc(v) + '"' + (xpVendor === v ? " selected" : "") + '>Vendor ' + esc(v) + ' (' + n + ')</option>';
+    var label = v.name ? (v.code + " — " + v.name) : v.code;
+    opts += '<option value="' + esc(v.code) + '"' + (xpVendor === v.code ? " selected" : "") + '>' + esc(label) + ' (' + v.n + ')</option>';
   });
 
   host.innerHTML =

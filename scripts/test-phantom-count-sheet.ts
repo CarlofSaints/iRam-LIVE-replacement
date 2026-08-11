@@ -2,8 +2,8 @@
    Run: npx tsx scripts/test-phantom-count-sheet.ts                          */
 
 import ExcelJS from "exceljs";
-import type { StoreLine, StoreLineFlags } from "../lib/storeReport";
-import { buildPhantomCountWorkbook, phantomSheetFileName, type PhantomSheetMeta } from "../lib/phantomCountSheet";
+import { effectiveDsc, NO_COVER, type StoreLine, type StoreLineFlags } from "../lib/storeReport";
+import { buildPhantomCountWorkbook, phantomSheetFileName, vendorLabelFor, type PhantomSheetMeta } from "../lib/phantomCountSheet";
 
 let pass = 0, fail = 0;
 function ok(label: string, cond: boolean, detail = "") {
@@ -18,7 +18,7 @@ const noFlags: StoreLineFlags = { oos: false, lowCover: false, phantom: true, st
 
 function line(p: Partial<StoreLine> & { article: string; vendor: string }): StoreLine {
   return {
-    clientId: "c1", clientName: "USABCO", vendorProdCode: "9514",
+    clientId: "c1", clientName: "USABCO", vendorName: "ADDIS", vendorProdCode: "9514",
     barcode: "6001246617315", productCode: p.article,
     description: "ADDIS FLOOR MOP REFILL TWIST", category: "HOUSEWARE",
     soh: 4, dros: 0, daysCover: null, actDsc: 360, stockMargin: 0.48,
@@ -34,9 +34,9 @@ function line(p: Partial<StoreLine> & { article: string; vendor: string }): Stor
 const LINES: StoreLine[] = [
   line({ article: "850023056", vendor: "1063", soh: 1 }),
   line({ article: "192247", vendor: "1063", soh: 4 }),
-  line({ article: "620983", vendor: "1449", soh: 3, prst: "(blank)" }),
-  line({ article: "457882", vendor: "1449", soh: 62.5 }),
-  line({ article: "999001", vendor: "", soh: 2 }),          // no vendor — must still be counted
+  line({ article: "620983", vendor: "1449", vendorName: "RUSTOLEUM", soh: 3, prst: "(blank)" }),
+  line({ article: "457882", vendor: "1449", vendorName: "RUSTOLEUM", soh: 62.5 }),
+  line({ article: "999001", vendor: "", vendorName: "", soh: 2 }),   // no vendor — must still be counted
 ];
 
 const META: PhantomSheetMeta = {
@@ -45,11 +45,14 @@ const META: PhantomSheetMeta = {
   vendorLabel: "ALL", repName: "J. Nkosi", mode: "empty",
 };
 
+// Column order, 1-indexed, matching the sheet the teams already print —
+// plus Vendor / Vendor Name at the front, minus STO.
 const HEADERS = [
-  "Vendor", "Article", "Barcode", "Vend. Prod.", "Material Description",
+  "Vendor", "Vendor Name", "Article", "Barcode", "Vend. Prod.", "Material Description",
   "Date Last Sold", "Last Recpt Y/M", "Act DSC", "Stk Margin", "PR ST", "SOH",
   "Count 1", "Count 2", "Comment",
 ];
+const C = (name: string) => HEADERS.indexOf(name) + 1;
 
 async function reopen(buf: Buffer): Promise<ExcelJS.Workbook> {
   const wb = new ExcelJS.Workbook();
@@ -58,6 +61,30 @@ async function reopen(buf: Buffer): Promise<ExcelJS.Workbook> {
 }
 
 async function main() {
+  console.log("\n── effectiveDsc: the column must never be blank ─────────");
+  {
+    // The retailer blanks Act DSC when it has no rate of sale to divide by. A
+    // blank beside real stock reads as "no data" when the truth is the opposite.
+    eq("the DISPO's own value wins when present", effectiveDsc({ actDsc: 360, soh: 4, dros: 2 }), 360);
+    eq("blank + a rate of sale → we do the division ourselves", effectiveDsc({ actDsc: null, soh: 40, dros: 2 }), 20);
+    eq("rounds to whole days", effectiveDsc({ actDsc: null, soh: 10, dros: 3 }), 3);
+    eq("blank + NO rate of sale → the placeholder", effectiveDsc({ actDsc: null, soh: 11, dros: 0 }), NO_COVER);
+    eq("placeholder is 9999", NO_COVER, 9999);
+    // A sliver of a rate of sale over real stock computes to tens of thousands
+    // of days; that means the same thing as "never", so it reads the same.
+    eq("absurd cover is clamped to the placeholder", effectiveDsc({ actDsc: null, soh: 5000, dros: 0.01 }), NO_COVER);
+    // Guard the other direction: no stock is NO cover, not endless cover.
+    eq("no stock is zero cover, not 9999", effectiveDsc({ actDsc: null, soh: 0, dros: 0 }), 0);
+    eq("a real zero from the DISPO is kept", effectiveDsc({ actDsc: 0, soh: 4, dros: 0 }), 0);
+  }
+
+  console.log("\n── vendorLabelFor ───────────────────────────────────────");
+  {
+    eq("number and name", vendorLabelFor("1063", "ADDIS"), "1063 — ADDIS");
+    eq("falls back to the bare number", vendorLabelFor("1063", ""), "1063");
+    eq("no vendor at all", vendorLabelFor("", ""), "No vendor");
+  }
+
   console.log("\n── One sheet, empty (no counts) ─────────────────────────");
   {
     const buf = await buildPhantomCountWorkbook(LINES, META, { oneSheet: true });
@@ -68,7 +95,8 @@ async function main() {
 
     const head = ws.getRow(5);
     const got = HEADERS.map((_, i) => String(head.getCell(i + 1).value ?? ""));
-    ok("column headers match the legacy sheet (+Vendor, −STO)", JSON.stringify(got) === JSON.stringify(HEADERS), got.join("|"));
+    ok("column headers match the legacy sheet (+Vendor/Vendor Name, −STO)",
+      JSON.stringify(got) === JSON.stringify(HEADERS), got.join("|"));
     ok("STO column is absent", !got.includes("STO"));
 
     eq("row count = lines", ws.rowCount - 5, LINES.length);
@@ -77,34 +105,44 @@ async function main() {
     // (999 thousand is less than 850 million). A plain string sort would put the
     // 9-digit code first, which reads wrong on a sheet of mixed-length articles.
     const articles = [];
-    for (let r = 6; r <= ws.rowCount; r++) articles.push(String(ws.getRow(r).getCell(2).value ?? ""));
+    for (let r = 6; r <= ws.rowCount; r++) articles.push(String(ws.getRow(r).getCell(C("Article")).value ?? ""));
     ok("sorted by article ascending, numerically",
       JSON.stringify(articles) === JSON.stringify(["192247", "457882", "620983", "999001", "850023056"]),
       articles.join(","));
 
+    eq("vendor number present", String(ws.getRow(6).getCell(C("Vendor")).value ?? ""), "1063");
+    eq("vendor NAME present beside it", String(ws.getRow(6).getCell(C("Vendor Name")).value ?? ""), "ADDIS");
+
+    // Act DSC must be populated on EVERY row — that is the whole point.
+    let blankDsc = 0;
+    for (let r = 6; r <= ws.rowCount; r++) if (ws.getRow(r).getCell(C("Act DSC")).value == null) blankDsc++;
+    eq("Act DSC is never blank", blankDsc, 0);
+
     // Count 1 must be EMPTY in "empty" mode — this is the whole point of that mode.
-    let count1Filled = 0;
-    for (let r = 6; r <= ws.rowCount; r++) if (ws.getRow(r).getCell(12).value != null) count1Filled++;
+    let count1Filled = 0, count2Filled = 0;
+    for (let r = 6; r <= ws.rowCount; r++) {
+      if (ws.getRow(r).getCell(C("Count 1")).value != null) count1Filled++;
+      if (ws.getRow(r).getCell(C("Count 2")).value != null) count2Filled++;
+    }
     eq("Count 1 blank on every row", count1Filled, 0);
-    let count2Filled = 0;
-    for (let r = 6; r <= ws.rowCount; r++) if (ws.getRow(r).getCell(13).value != null) count2Filled++;
     eq("Count 2 blank on every row", count2Filled, 0);
 
     // Barcode must survive as TEXT, not 6.00E+12.
-    const bc = ws.getRow(6).getCell(3);
+    const bc = ws.getRow(6).getCell(C("Barcode"));
     eq("barcode kept as text", String(bc.value), "6001246617315");
     eq("barcode number format is text", bc.numFmt, "@");
 
-    eq("Last Recpt rendered as Y/M", String(ws.getRow(6).getCell(7).value), "2025/05");
+    eq("Last Recpt rendered as Y/M", String(ws.getRow(6).getCell(C("Last Recpt Y/M")).value), "2025/05");
     // Quantity columns carry NO thousands separator — Carl's call. A comma in a
     // hand-read unit count reads as a decimal separator to half the world.
-    for (const [col, name] of [[11, "SOH"], [12, "Count 1"], [13, "Count 2"]] as const) {
-      const fmt = String(ws.getRow(6).getCell(col).numFmt ?? "");
+    for (const name of ["SOH", "Count 1", "Count 2"]) {
+      const fmt = String(ws.getRow(6).getCell(C(name)).numFmt ?? "");
       ok(`${name} has no thousands separator`, !fmt.includes(","), `numFmt "${fmt}"`);
     }
-    eq("Stk Margin is a fraction with a % format", ws.getRow(6).getCell(9).numFmt, "0%");
+    eq("Stk Margin is a fraction with a % format", ws.getRow(6).getCell(C("Stk Margin")).numFmt, "0%");
     ok("header block names the store", String(ws.getCell("A2").value).includes("BWH RIVONIA-B50"));
     ok("header block names the vendor scope", String(ws.getCell("A3").value).includes("Vendor: ALL"));
+    ok("note explains the 9999 placeholder", String(ws.getCell("A4").value).includes("9999"));
     // exceljs types `views` as a union; only the frozen variant carries ySplit.
     // Reading it back off a REOPENED file is the point — a freeze that only
     // existed in memory would read as undefined here.
@@ -113,7 +151,27 @@ async function main() {
       JSON.stringify(view));
     ok("header row repeats when printed", ws.pageSetup?.printTitlesRow === "5:5");
     ok("autofilter set over the table", !!ws.autoFilter);
-    ok("(blank) PR ST is emptied, not printed", String(ws.getRow(8).getCell(10).value ?? "") !== "(blank)");
+    ok("(blank) PR ST is emptied, not printed",
+      String(ws.getRow(8).getCell(C("PR ST")).value ?? "") !== "(blank)");
+  }
+
+  console.log("\n── Act DSC on the sheet, computed and placeholder ───────");
+  {
+    const mixed: StoreLine[] = [
+      line({ article: "100", vendor: "1063", actDsc: 360, soh: 4, dros: 1 }),      // from the DISPO
+      line({ article: "200", vendor: "1063", actDsc: null, soh: 40, dros: 2 }),    // computed → 20
+      line({ article: "300", vendor: "1063", actDsc: null, soh: 11, dros: 0 }),    // nothing selling → 9999
+    ];
+    const ws = (await reopen(await buildPhantomCountWorkbook(mixed, META, { oneSheet: true }))).worksheets[0];
+    const dscFor = (article: string) => {
+      for (let r = 6; r <= ws.rowCount; r++) {
+        if (String(ws.getRow(r).getCell(C("Article")).value ?? "") === article) return ws.getRow(r).getCell(C("Act DSC")).value;
+      }
+      return "ROW NOT FOUND";
+    };
+    eq("DISPO value passes through", dscFor("100"), 360);
+    eq("blank becomes our own SOH ÷ DROS", dscFor("200"), 20);
+    eq("no rate of sale becomes 9999", dscFor("300"), NO_COVER);
   }
 
   console.log("\n── One sheet, WITH count submissions ────────────────────");
@@ -125,7 +183,7 @@ async function main() {
     // when the sort changes and then tests the wrong line.
     const count1For = (article: string) => {
       for (let r = 6; r <= ws.rowCount; r++) {
-        if (String(ws.getRow(r).getCell(2).value ?? "") === article) return ws.getRow(r).getCell(12).value;
+        if (String(ws.getRow(r).getCell(C("Article")).value ?? "") === article) return ws.getRow(r).getCell(C("Count 1")).value;
       }
       return "ROW NOT FOUND";
     };
@@ -142,11 +200,15 @@ async function main() {
     const buf = await buildPhantomCountWorkbook(LINES, META, { oneSheet: false });
     const wb = await reopen(buf);
     const names = wb.worksheets.map((w) => w.name);
-    ok("one tab per vendor, vendor order", JSON.stringify(names) === JSON.stringify(["1063", "1449", "No vendor"]), names.join(","));
-    eq("vendor 1063 has its 2 lines", wb.getWorksheet("1063")!.rowCount - 5, 2);
-    eq("vendor 1449 has its 2 lines", wb.getWorksheet("1449")!.rowCount - 5, 2);
+    // Tabs carry the vendor NAME, not just the number — a row of bare numbers
+    // along the bottom of Excel tells nobody which vendor they are looking at.
+    ok("a tab per vendor, named and in vendor order",
+      JSON.stringify(names) === JSON.stringify(["1063 — ADDIS", "1449 — RUSTOLEUM", "No vendor"]), names.join(","));
+    eq("vendor 1063 has its 2 lines", wb.getWorksheet("1063 — ADDIS")!.rowCount - 5, 2);
+    eq("vendor 1449 has its 2 lines", wb.getWorksheet("1449 — RUSTOLEUM")!.rowCount - 5, 2);
     eq("the vendorless line is not lost", wb.getWorksheet("No vendor")!.rowCount - 5, 1);
-    ok("each tab names its own vendor in the header", String(wb.getWorksheet("1449")!.getCell("A3").value).includes("Vendor: 1449"));
+    ok("each tab names its own vendor in the header",
+      String(wb.getWorksheet("1449 — RUSTOLEUM")!.getCell("A3").value).includes("Vendor: 1449 — RUSTOLEUM"));
   }
 
   console.log("\n── Edge cases ───────────────────────────────────────────");
@@ -159,6 +221,12 @@ async function main() {
 
     const split = await reopen(await buildPhantomCountWorkbook([], META, { oneSheet: false }));
     eq("empty selection, split → still a sheet", split.worksheets.length, 1);
+
+    // A vendor name long enough to blow Excel's 31-char sheet-name cap.
+    const longName = [line({ article: "1", vendor: "1063", vendorName: "A VERY LONG VENDOR NAME INDEED PTY LTD" })];
+    const longWb = await reopen(await buildPhantomCountWorkbook(longName, META, { oneSheet: false }));
+    ok("a long vendor name is truncated to a legal sheet name",
+      longWb.worksheets[0].name.length <= 31, `"${longWb.worksheets[0].name}" (${longWb.worksheets[0].name.length})`);
 
     const f = phantomSheetFileName({ ...META, vendorLabel: "1063" }, new Date("2026-08-11T10:00:00Z"));
     ok("filename is safe + descriptive", f === "Phantom Stock Count - BWH RIVONIA-B50 - 1063 - 2026-08-11.xlsx", f);

@@ -21,8 +21,14 @@
    ────────────────────────────────────────────────────────────── */
 
 import ExcelJS from "exceljs";
-import type { StoreLine } from "./storeReport";
+import { effectiveDsc, NO_COVER, type StoreLine } from "./storeReport";
 import { parseDispoDate } from "./monthEndReport";
+
+// "1063 — ADDIS", or just the number when we have no name for it.
+export function vendorLabelFor(vendor: string, name: string): string {
+  if (!vendor) return name || "No vendor";
+  return name ? `${vendor} — ${name}` : vendor;
+}
 
 export type CountMode = "empty" | "counts";
 
@@ -65,6 +71,7 @@ function yearMonth(raw: string): string {
 
 const COLUMNS: Col[] = [
   { header: "Vendor",               width: 10, get: (l) => l.vendor || "" },
+  { header: "Vendor Name",          width: 22, get: (l) => l.vendorName || "" },
   { header: "Article",              width: 13, get: (l) => l.article || "" },
   // Barcodes are 13 digits — as a number Excel shows 6.00123E+12 and drops the
   // leading zero, so this column is text on purpose.
@@ -73,7 +80,9 @@ const COLUMNS: Col[] = [
   { header: "Material Description", width: 40, get: (l) => l.description || "" },
   { header: "Date Last Sold",       width: 14, get: (l) => l.lastSold || "" },
   { header: "Last Recpt Y/M",       width: 14, get: (l) => yearMonth(l.lastReceived) },
-  { header: "Act DSC",              width: 9,  fmt: "0",     get: (l) => l.actDsc },
+  // Never blank — the retailer leaves it empty when it has no rate of sale, but
+  // we have SOH and DROS and can do that division ourselves. See effectiveDsc().
+  { header: "Act DSC",              width: 9,  fmt: "0",     get: (l) => effectiveDsc(l) },
   { header: "Stk Margin",           width: 10, fmt: "0%",    get: (l) => l.stockMargin },
   { header: "PR ST",                width: 8,  get: (l) => l.prst === "(blank)" ? "" : l.prst },
   // No thousands separator on the quantity columns — these are unit counts a rep
@@ -150,9 +159,10 @@ function buildSheet(
 
   ws.mergeCells(span(4));
   const r4 = ws.getCell("A4");
-  r4.value = meta.mode === "counts"
+  r4.value = (meta.mode === "counts"
     ? "Count 1 = what was captured on the report. Recount in Count 2 and note anything unusual in Comment."
-    : "Write what you physically find in Count 1. Count 2 is for a recount; use Comment for anything unusual.";
+    : "Write what you physically find in Count 1. Count 2 is for a recount; use Comment for anything unusual.")
+    + `   ·   Act DSC ${NO_COVER} = nothing is selling, so cover is effectively endless.`;
   r4.font = { size: 10, italic: true, color: { argb: SUBTLE } };
 
   // ── Column headings ───────────────────────────────────────────
@@ -237,7 +247,13 @@ export async function buildPhantomCountWorkbook(
     if (vendors.length === 0) {
       buildSheet(wb, "Stock Count", [], meta, meta.vendorLabel, counts);
     } else {
-      for (const v of vendors) buildSheet(wb, v, byVendor.get(v)!, meta, v, counts);
+      for (const v of vendors) {
+        const group = byVendor.get(v)!;
+        // Tab named for the vendor AND its name — a row of bare numbers along
+        // the bottom of Excel tells nobody which vendor they are looking at.
+        const label = v === "No vendor" ? "No vendor" : vendorLabelFor(v, group[0]?.vendorName || "");
+        buildSheet(wb, label, group, meta, label, counts);
+      }
     }
   }
 
