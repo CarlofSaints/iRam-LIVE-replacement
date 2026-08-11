@@ -578,8 +578,12 @@ function renderExportPanel(){
     + '</div><div class="hint" id="xpCounted" style="margin:6px 0 0"></div></div>'
     + '<label class="cb" id="xpOneWrap"><input type="checkbox" id="xpOne"' + (xpOneSheet ? " checked" : "") + ' onchange="xpOneSheet=this.checked">'
       + '<span>All vendors on one sheet<br><span style="color:var(--grey)">Untick to get a separate tab per vendor.</span></span></label>'
-    + '<div class="fld"><span>Email to (optional)</span><input type="email" id="xpTo" inputmode="email" autocomplete="email" placeholder="store contact\\'s email"></div>'
-    + '<div class="hint" style="margin:-4px 0 12px">Sending also copies you and the client\\'s CAM.</div>'
+    // The "multiple" attribute lets the browser accept a comma-separated list in
+    // an email input; without it the field rejects a perfectly good list.
+    // (No backticks in this file's generated-JS comments — they would close the
+    // template literal this whole page is built from.)
+    + '<div class="fld"><span>Email to (optional)</span><input type="email" id="xpTo" multiple inputmode="email" autocomplete="email" placeholder="name@store.co.za, buyer@store.co.za"></div>'
+    + '<div class="hint" style="margin:-4px 0 12px"><b>You can enter more than one address — separate them with commas.</b><br>Sending also copies you and the client\\'s CAM.</div>'
     + '<div class="acts">'
       + '<button class="dl" id="xpDl" onclick="xpRun(\\'download\\')">Download</button>'
       + '<button class="em" id="xpEm" onclick="xpRun(\\'email\\')">Email</button>'

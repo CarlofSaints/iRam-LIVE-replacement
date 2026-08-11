@@ -6,6 +6,7 @@ import { buildPhantomCountWorkbook, phantomSheetFileName, type CountMode } from 
 import { getClients } from "@/lib/clientData";
 import { getCamById } from "@/lib/camData";
 import { sendPhantomCountEmail } from "@/lib/email";
+import { parseEmailList, isEmail } from "@/lib/emailList";
 
 /* PUBLIC endpoint — "Download" / "Email" on the Phantom list of the hosted /r page.
 
@@ -19,9 +20,10 @@ import { sendPhantomCountEmail } from "@/lib/email";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-function validEmail(s: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
-}
+// This endpoint is PUBLIC (the /r page has no login), so the typed recipient
+// list must be capped — uncapped, it is a usable way to send mail to anyone
+// from our domain. Ten covers a store team.
+const MAX_TYPED_RECIPIENTS = 10;
 
 export async function POST(req: NextRequest) {
   try {
@@ -93,13 +95,16 @@ export async function POST(req: NextRequest) {
     // Recipients: the store address the rep typed, the rep themselves, and the
     // CAM of every client on the sheet.
     const typed = String(body.to ?? "").trim();
-    if (typed && !validEmail(typed)) {
-      return Response.json({ error: `"${typed}" doesn't look like an email address.` }, { status: 400 });
+    let typedList: string[] = [];
+    if (typed) {
+      const parsed = parseEmailList(typed, MAX_TYPED_RECIPIENTS);
+      if (!parsed.ok) return Response.json({ error: parsed.error }, { status: 400 });
+      typedList = parsed.list;
     }
 
     const recipients = new Set<string>();
-    if (typed) recipients.add(typed.toLowerCase());
-    if (ctx.repEmail && validEmail(ctx.repEmail)) recipients.add(ctx.repEmail.toLowerCase());
+    for (const addr of typedList) recipients.add(addr.toLowerCase());
+    if (ctx.repEmail && isEmail(ctx.repEmail)) recipients.add(ctx.repEmail.toLowerCase());
 
     const camNames: string[] = [];
     try {
@@ -108,7 +113,7 @@ export async function POST(req: NextRequest) {
       const camIds = [...new Set(clients.map((c) => c.camId).filter(Boolean) as string[])];
       for (const camId of camIds) {
         const cam = await getCamById(camId);
-        if (cam?.active && cam.email && validEmail(cam.email)) {
+        if (cam?.active && cam.email && isEmail(cam.email)) {
           recipients.add(cam.email.toLowerCase());
           camNames.push([cam.name, cam.surname].filter(Boolean).join(" "));
         }
