@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState, FormEvent } from "react";
+import { useTableTools } from "@/lib/useTableTools";
+import { SortableTh, TableSearch } from "@/components/TableTools";
 import { authFetch, useAuth } from "@/lib/useAuth";
 import { ROLE_DEFINITIONS } from "@/lib/types";
 import type { User } from "@/lib/types";
@@ -183,6 +185,23 @@ export default function UsersPage() {
     });
     load();
   }
+
+
+  const alertCount = (u: UserSafe) =>
+    [u.receiveStoreAlerts, u.receiveProductAlerts, u.receiveStoreReportDigest,
+     u.receiveActionReport, u.receiveLoadStatus].filter(Boolean).length;
+  const userTools = useTableTools<UserSafe>(
+    users,
+    {
+      name: (u) => u.name,
+      email: (u) => u.email,
+      role: (u) => u.role,
+      status: (u) => (u.active ? 'Active' : 'Inactive'),
+      alerts: (u) => alertCount(u),
+    },
+    'name',
+    (u) => [u.name, u.email, u.role, u.active ? 'active' : 'inactive'].join(' '),
+  );
 
   return (
     <div className="p-8">
@@ -369,6 +388,8 @@ export default function UsersPage() {
         </div>
       )}
 
+      <div className="mb-4"><TableSearch value={userTools.query} onChange={userTools.setQuery} count={userTools.rows.length} total={userTools.total} placeholder="Search users…" /></div>
+
       <div className="rounded-xl border border-[var(--color-border)] bg-white">
         {loading ? (
           <div className="px-6 py-8 text-center text-sm text-[var(--color-text-muted)]">Loading...</div>
@@ -377,16 +398,15 @@ export default function UsersPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-[var(--color-border)] text-left text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
-                  <th className="px-6 py-3">Name</th>
-                  <th className="px-6 py-3">Email</th>
-                  <th className="px-6 py-3">Role</th>
-                  <th className="px-6 py-3">Status</th>
-                  <th className="px-6 py-3">Alerts</th>
+                  {[["Name", "name"], ["Email", "email"], ["Role", "role"], ["Status", "status"], ["Alerts", "alerts"]].map(([label, key]) => (
+                    <SortableTh key={key} label={label} sortKey={key} className="px-6"
+                      current={userTools.sortKey} dir={userTools.sortDir} onSort={userTools.toggleSort} />
+                  ))}
                   <th className="px-6 py-3">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {users.map((u) => (
+                {userTools.rows.map((u) => (
                   <tr key={u.id} className="border-b border-[var(--color-border)] last:border-0">
                     <td className="px-6 py-3 font-medium text-[var(--color-text)]">{u.name}</td>
                     <td className="px-6 py-3 text-[var(--color-text-muted)]">{u.email}</td>

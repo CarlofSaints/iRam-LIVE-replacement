@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { useTableTools } from "@/lib/useTableTools";
+import { SortableTh, TableSearch } from "@/components/TableTools";
 import { authFetch } from "@/lib/useAuth";
 
 interface LedgerDescIssue {
@@ -37,6 +39,18 @@ export default function DataHealthPage() {
     }
     setLoading(false);
   }
+
+  const tools = useTableTools<LedgerDescIssue>(
+    report?.issues ?? [],
+    {
+      clientName: (i) => i.clientName,
+      channelName: (i) => i.channelName,
+      flaggedRows: (i) => i.flaggedRows,
+    },
+    "flaggedRows",
+    (i) => [i.clientName, i.channelName, i.samples.join(" ")].join(" "),
+    "desc", // worst offenders first
+  );
 
   return (
     <div className="p-8">
@@ -81,18 +95,25 @@ export default function DataHealthPage() {
                 <div className="mt-1 text-sm text-amber-700">{report.affectedClients.join(", ")}</div>
               </div>
 
+              <div className="mb-3">
+                <TableSearch value={tools.query} onChange={tools.setQuery}
+                  count={tools.rows.length} total={tools.total} placeholder="Search clients, channels, samples…" />
+              </div>
               <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-white">
                 <table className="w-full text-sm">
                   <thead className="bg-zinc-50 text-xs uppercase tracking-wider text-[var(--color-text-muted)]">
                     <tr>
-                      <th className="px-4 py-2.5 text-left font-semibold">Client</th>
-                      <th className="px-4 py-2.5 text-left font-semibold">Channel</th>
-                      <th className="px-4 py-2.5 text-right font-semibold">Bad / Total</th>
+                      {[["Client", "clientName"], ["Channel", "channelName"]].map(([label, key]) => (
+                        <SortableTh key={key} label={label} sortKey={key} className="px-4 py-2.5"
+                          current={tools.sortKey} dir={tools.sortDir} onSort={tools.toggleSort} />
+                      ))}
+                      <SortableTh label="Bad / Total" sortKey="flaggedRows" className="px-4 py-2.5" align="right"
+                        current={tools.sortKey} dir={tools.sortDir} onSort={tools.toggleSort} />
                       <th className="px-4 py-2.5 text-left font-semibold">Sample bad descriptions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--color-border)]">
-                    {report.issues.map((i) => (
+                    {tools.rows.map((i) => (
                       <tr key={`${i.clientId}-${i.channelId}`} className="align-top hover:bg-zinc-50/50">
                         <td className="px-4 py-2.5 font-medium text-[var(--color-text)]">{i.clientName}</td>
                         <td className="px-4 py-2.5 text-[var(--color-text-muted)]">{i.channelName}</td>

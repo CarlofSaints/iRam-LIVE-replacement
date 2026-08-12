@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { authFetch, usePermissions } from "@/lib/useAuth";
+import { useTableTools } from "@/lib/useTableTools";
+import { SortArrow, TableSearch } from "@/components/TableTools";
 
 interface Period { year: number; month: number; week: number; key: string; label: string }
 type CellState = "loaded" | "excluded" | "outstanding" | "na";
@@ -160,16 +162,33 @@ export default function DispoChecklistPage() {
   const disarm = (p: Period) =>
     mutate({ action: "disarm", year: p.year, month: p.month, week: p.week }, `Disarmed ${p.label}`);
 
+  // Sorting a period column brings the outstanding streams to the top; the
+  // client grouping below is computed from adjacency, so it still reads
+  // correctly however the rows are ordered.
+  const CELL_RANK: Record<string, number> = { outstanding: 0, excluded: 1, na: 2, loaded: 3 };
+  const periodKeys = data?.periods.map((p) => p.key) ?? [];
+  const tools = useTableTools<ChecklistRow>(
+    data?.rows ?? [],
+    {
+      client: (r) => `${r.clientName} ${r.channelName} ${r.vendorNumber}`,
+      ...Object.fromEntries(
+        periodKeys.map((k) => [k, (r: ChecklistRow) => CELL_RANK[r.cells[k]?.state ?? "na"] ?? 9]),
+      ),
+    },
+    "client",
+    (r) => [r.clientName, r.channelName, r.vendorNumber, r.neverLoaded ? "never loaded" : ""].join(" "),
+  );
+
   const rowsWithGroup = useMemo(() => {
-    if (!data) return [];
+    const src = tools.rows;
     let clientIndex = -1;
-    return data.rows.map((r, i) => {
-      const firstOfClient = i === 0 || data.rows[i - 1].clientId !== r.clientId;
+    return src.map((r, i) => {
+      const firstOfClient = i === 0 || src[i - 1].clientId !== r.clientId;
       if (firstOfClient) clientIndex++;
-      const lastOfClient = i === data.rows.length - 1 || data.rows[i + 1].clientId !== r.clientId;
+      const lastOfClient = i === src.length - 1 || src[i + 1].clientId !== r.clientId;
       return { row: r, firstOfClient, lastOfClient, clientIndex };
     });
-  }, [data]);
+  }, [tools.rows]);
 
   // How many declared vendors per client have never been loaded (for a header alert).
   const missingByClient = useMemo(() => {
@@ -187,10 +206,14 @@ export default function DispoChecklistPage() {
     <div className="p-8">
       <div className="mb-2 flex items-center justify-between">
         <h1 className="text-2xl font-bold text-[var(--color-text)]">DISPO Load Checklist</h1>
+        <div className="flex items-center gap-2">
+        <TableSearch value={tools.query} onChange={tools.setQuery}
+          count={tools.rows.length} total={tools.total} placeholder="Search client, channel, vendor…" />
         <button onClick={load} disabled={loading || busy}
           className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-sm font-medium text-[var(--color-text-muted)] hover:border-zinc-400 disabled:opacity-50">
           {loading ? "Refreshing…" : "Refresh"}
         </button>
+        </div>
       </div>
       <p className="mb-4 max-w-3xl text-sm text-[var(--color-text-muted)]">
         Which DISPOs are loaded for each client, by vendor, across the most recent 8 weeks. <strong>Every vendor number on a
@@ -302,14 +325,23 @@ export default function DispoChecklistPage() {
             <thead>
               <tr className="border-b border-[var(--color-border)]">
                 <th className="sticky left-0 z-10 px-4 py-3 text-left font-semibold text-[var(--color-text)]" style={{ background: "white" }}>
-                  Client / Vendor
+                  <button type="button" onClick={() => tools.toggleSort("client")}
+                    className="group flex items-center gap-0.5 font-semibold hover:text-[var(--color-primary)]"
+                    title="Sort by client">
+                    Client / Vendor
+                    <SortArrow active={tools.sortKey === "client"} dir={tools.sortDir} />
+                  </button>
                 </th>
                 {data.periods.map((p) => {
                   const armed = data.perPeriod[p.key]?.armed;
                   return (
                     <th key={p.key} className={`min-w-[92px] px-3 py-3 text-center font-semibold ${armed ? "bg-green-50 text-green-800" : "text-[var(--color-text)]"}`}>
-                      <div>{`Wk${p.week}`}</div>
-                      <div className="text-xs font-normal text-[var(--color-text-muted)]">{p.label.replace(`Wk${p.week} `, "")}</div>
+                      <button type="button" onClick={() => tools.toggleSort(p.key)}
+                        className="group mx-auto flex flex-col items-center font-semibold hover:text-[var(--color-primary)]"
+                        title={`Sort by ${p.label} — outstanding first`}>
+                        <span>{`Wk${p.week}`}<SortArrow active={tools.sortKey === p.key} dir={tools.sortDir} /></span>
+                        <span className="text-xs font-normal text-[var(--color-text-muted)]">{p.label.replace(`Wk${p.week} `, "")}</span>
+                      </button>
                       {armed && <div className="text-[10px] font-bold uppercase text-green-700">Armed</div>}
                     </th>
                   );

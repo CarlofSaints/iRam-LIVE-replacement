@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { authFetch } from "@/lib/useAuth";
+import { useTableTools } from "@/lib/useTableTools";
+import { SortableTh, TableSearch } from "@/components/TableTools";
 
 /* SharePoint filing — the companion to the DISPO Load Checklist.
    That page answers "was it loaded?"; this one answers "was it also filed?"
@@ -41,6 +43,12 @@ const TONE: Record<string, string> = {
   "no DISPO folder": "bg-red-100 text-red-700 border-red-200",
   "no client folder": "bg-zinc-200 text-zinc-700 border-zinc-300",
 };
+// Worst-last ordering for the period column sort; mirrors the server ranking.
+const RANK: Record<string, number> = {
+  "no client folder": 0, "no DISPO folder": 1, "no year folder": 2, "no month folder": 3,
+  "no week folder": 4, "empty week folder": 5, "missing files": 6, "filed": 7,
+};
+
 const LABEL: Record<string, string> = {
   "filed": "✓",
   "missing files": "short",
@@ -64,6 +72,25 @@ export default function DispoFilingPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [detail, setDetail] = useState<{ client: string; period: string; cell: Cell } | null>(null);
+
+  // A period column sorts by how bad its cell is, so one click brings the
+  // clients that need chasing to the top. VERDICT_RANK is the same order the
+  // server uses when picking between a client's several DISPO folders.
+  const periodKeys = data?.periods.map((p) => p.key) ?? [];
+  const tools = useTableTools<Row>(
+    data?.rows ?? [],
+    {
+      clientName: (r) => r.clientName,
+      ...Object.fromEntries(
+        periodKeys.map((k) => [k, (r: Row) => (r.cells[k] ? RANK[r.cells[k]!.verdict] ?? 99 : 100)]),
+      ),
+    },
+    "clientName",
+    (r) => [
+      r.clientName,
+      ...Object.values(r.cells).filter(Boolean).flatMap((c) => [c!.verdict, ...(c!.files ?? [])]),
+    ].join(" "),
+  );
 
   async function load() {
     setLoading(true);
@@ -94,10 +121,14 @@ export default function DispoFilingPage() {
             The same check goes out in the weekday 16:00 load-status email.
           </p>
         </div>
-        <button type="button" onClick={load} disabled={loading}
-          className="shrink-0 rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-sm font-medium text-[var(--color-text)] hover:border-zinc-400 disabled:opacity-50">
-          {loading ? "Checking…" : "Re-check"}
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <TableSearch value={tools.query} onChange={tools.setQuery}
+            count={tools.rows.length} total={tools.total} placeholder="Search clients, files…" />
+          <button type="button" onClick={load} disabled={loading}
+            className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-sm font-medium text-[var(--color-text)] hover:border-zinc-400 disabled:opacity-50">
+            {loading ? "Checking…" : "Re-check"}
+          </button>
+        </div>
       </div>
 
       {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
@@ -122,27 +153,33 @@ export default function DispoFilingPage() {
           <table className="w-full min-w-[720px] border-collapse text-sm">
             <thead>
               <tr className="border-b border-[var(--color-border)]">
-                <th className="sticky left-0 z-10 bg-white px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
-                  Client
-                </th>
+                <SortableTh label="Client" sortKey="clientName" className="sticky left-0 z-10 bg-white"
+                  current={tools.sortKey} dir={tools.sortDir} onSort={tools.toggleSort} />
                 {data.periods.map((p) => {
                   const s = data.perPeriod[p.key];
                   return (
-                    <th key={p.key} className="px-3 py-3 text-center text-xs font-semibold text-[var(--color-text-muted)]">
-                      <div className="text-[var(--color-text)]">{p.label}</div>
-                      {s && (
-                        <div className="mt-0.5 font-normal">
-                          <span className="text-green-700">{s.filed} filed</span>
-                          {s.problems > 0 && <span className="text-red-600"> · {s.problems} not</span>}
-                        </div>
-                      )}
-                    </th>
+                    <SortableTh
+                      key={p.key} sortKey={p.key} align="center" className="px-3"
+                      current={tools.sortKey} dir={tools.sortDir} onSort={tools.toggleSort}
+                      title={`Sort by ${p.label} — worst first`}
+                      label={
+                        <span className="block">
+                          <span className="block text-[var(--color-text)]">{p.label}</span>
+                          {s && (
+                            <span className="mt-0.5 block font-normal normal-case">
+                              <span className="text-green-700">{s.filed} filed</span>
+                              {s.problems > 0 && <span className="text-red-600"> · {s.problems} not</span>}
+                            </span>
+                          )}
+                        </span>
+                      }
+                    />
                   );
                 })}
               </tr>
             </thead>
             <tbody>
-              {data.rows.map((r) => (
+              {tools.rows.map((r) => (
                 <tr key={r.clientName} className="border-b border-[var(--color-border)] last:border-0 hover:bg-zinc-50">
                   <td className="sticky left-0 z-10 bg-white px-4 py-2.5 font-semibold text-[var(--color-text)]">
                     {r.clientName}

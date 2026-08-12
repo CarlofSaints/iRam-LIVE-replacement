@@ -12,8 +12,19 @@ const EMPTY_CONTROL_FILES: Record<ControlFileType, ControlFileMeta | null> = {
   promotions: null,
 };
 
+/**
+ * Every client, ALWAYS alphabetical by name.
+ *
+ * Sorted here rather than in each page: clients are listed in dropdowns and
+ * grids on a dozen surfaces, and the blob returns them in creation order, so
+ * sorting at the source is what keeps every one of them consistent — including
+ * any added later. Locale compare so case and punctuation don't split the list.
+ */
 export async function getClients(): Promise<Client[]> {
-  return readJson<Client[]>(KEY, []);
+  const clients = await readJson<Client[]>(KEY, []);
+  return [...clients].sort((a, b) =>
+    (a.name ?? "").localeCompare(b.name ?? "", undefined, { sensitivity: "base" }),
+  );
 }
 
 /**

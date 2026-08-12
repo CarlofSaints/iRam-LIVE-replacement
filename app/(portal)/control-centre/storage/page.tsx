@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useTableTools } from "@/lib/useTableTools";
+import { SortableTh, TableSearch } from "@/components/TableTools";
 import { authFetch } from "@/lib/useAuth";
 
 interface ClientStorage {
@@ -51,6 +53,20 @@ export default function StoragePage() {
   const rateNum = parseFloat(rate);
   const showCost = !isNaN(rateNum) && rateNum > 0;
   const cost = (bytes: number) => `R ${(gb(bytes) * rateNum).toFixed(2)}`;
+
+  // "% of total" is derived, so it sorts on the underlying bytes.
+  const tools = useTableTools<ClientStorage>(
+    report?.clients ?? [],
+    {
+      clientName: (c) => c.clientName,
+      blobCount: (c) => c.blobCount,
+      bytes: (c) => c.bytes,
+      pct: (c) => c.bytes,
+    },
+    "bytes",
+    (c) => c.clientName,
+    "desc", // largest first, as it has always opened
+  );
 
   return (
     <div className="p-8">
@@ -112,19 +128,25 @@ export default function StoragePage() {
           </div>
 
           {/* Per-client table */}
+          <div className="mb-3">
+            <TableSearch value={tools.query} onChange={tools.setQuery}
+              count={tools.rows.length} total={tools.total} placeholder="Search clients…" />
+          </div>
           <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-white">
             <table className="w-full text-sm">
               <thead className="bg-zinc-50 text-xs uppercase tracking-wider text-[var(--color-text-muted)]">
                 <tr>
-                  <th className="px-4 py-2.5 text-left font-semibold">Client</th>
-                  <th className="px-4 py-2.5 text-right font-semibold">Objects</th>
-                  <th className="px-4 py-2.5 text-right font-semibold">Size</th>
-                  <th className="px-4 py-2.5 text-right font-semibold">% of total</th>
+                  <SortableTh label="Client" sortKey="clientName" className="px-4 py-2.5"
+                    current={tools.sortKey} dir={tools.sortDir} onSort={tools.toggleSort} />
+                  {[["Objects", "blobCount"], ["Size", "bytes"], ["% of total", "pct"]].map(([label, key]) => (
+                    <SortableTh key={key} label={label} sortKey={key} className="px-4 py-2.5" align="right"
+                      current={tools.sortKey} dir={tools.sortDir} onSort={tools.toggleSort} />
+                  ))}
                   {showCost && <th className="px-4 py-2.5 text-right font-semibold">Est. cost/mo</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--color-border)]">
-                {report.clients.map((c) => (
+                {tools.rows.map((c) => (
                   <tr key={c.clientId} className="hover:bg-zinc-50/50">
                     <td className="px-4 py-2.5 font-medium text-[var(--color-text)]">{c.clientName}</td>
                     <td className="px-4 py-2.5 text-right text-[var(--color-text-muted)]">{c.blobCount.toLocaleString()}</td>

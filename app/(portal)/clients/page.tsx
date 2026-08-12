@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState, FormEvent } from "react";
+import { useTableTools } from "@/lib/useTableTools";
+import { SortableTh, TableSearch } from "@/components/TableTools";
 import Link from "next/link";
 import { authFetch, usePermissions } from "@/lib/useAuth";
 import type { Client, Channel, CAM } from "@/lib/types";
@@ -31,7 +33,6 @@ export default function ClientsPage() {
   const [cams, setCams] = useState<CAM[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [search, setSearch] = useState("");
   const [form, setForm] = useState({
     name: "", vendorNumbers: "", camId: "", channelIds: [] as string[], notes: "",
   });
@@ -149,12 +150,31 @@ export default function ClientsPage() {
   const activeCount = clients.filter((c) => c.active).length;
   const archivedCount = clients.length - activeCount;
 
-  const filtered = clients
-    .filter((c) => (view === "archived" ? !c.active : c.active))
-    .filter((c) =>
-      c.name.toLowerCase().includes(search.toLowerCase()) ||
-      c.vendorNumbers.some((v) => v.includes(search))
-    );
+  const inView = clients.filter((c) => (view === "archived" ? !c.active : c.active));
+
+  // Search reaches the CAM and channel names too, which are joined in from
+  // other lists rather than stored on the client — searching what you can see
+  // is the whole point.
+  const tools = useTableTools<Client>(
+    inView,
+    {
+      name: (c) => c.name,
+      vendors: (c) => c.vendorNumbers.join(", "),
+      channels: (c) => clientMainChannelNames(c).join(", "),
+      cam: (c) => {
+        const cam = cams.find((cm) => cm.id === c.camId);
+        return cam ? `${cam.name} ${cam.surname}` : "";
+      },
+      controlFiles: (c) => Object.values(c.controlFiles).filter(Boolean).length,
+    },
+    "name",
+    (c) => {
+      const cam = cams.find((cm) => cm.id === c.camId);
+      return [c.name, c.vendorNumbers.join(" "), clientMainChannelNames(c).join(" "),
+        cam ? `${cam.name} ${cam.surname}` : "", c.notes ?? ""].join(" ");
+    },
+  );
+  const filtered = tools.rows;
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -235,7 +255,8 @@ export default function ClientsPage() {
             </button>
           ))}
         </div>
-        <input placeholder="Search clients..." value={search} onChange={(e) => setSearch(e.target.value)} className="w-full max-w-sm rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm" />
+        <TableSearch value={tools.query} onChange={tools.setQuery} count={filtered.length} total={tools.total}
+          placeholder="Search clients, vendors, channels, CAM…" />
       </div>
 
       <div className="rounded-xl border border-[var(--color-border)] bg-white">
@@ -251,11 +272,13 @@ export default function ClientsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-[var(--color-border)] text-left text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
-                <th className="px-6 py-3">Client</th>
-                <th className="px-6 py-3">Vendor Numbers</th>
-                <th className="px-6 py-3">Channels</th>
-                <th className="px-6 py-3">CAM</th>
-                <th className="px-6 py-3">Control Files</th>
+                {[
+                  ["Client", "name"], ["Vendor Numbers", "vendors"], ["Channels", "channels"],
+                  ["CAM", "cam"], ["Control Files", "controlFiles"],
+                ].map(([label, key]) => (
+                  <SortableTh key={key} label={label} sortKey={key} className="px-6"
+                    current={tools.sortKey} dir={tools.sortDir} onSort={tools.toggleSort} />
+                ))}
                 {canManage && <th className="px-6 py-3 text-right">Actions</th>}
               </tr>
             </thead>

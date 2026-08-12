@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useTableTools } from "@/lib/useTableTools";
+import { SortableTh, TableSearch } from "@/components/TableTools";
 import { authFetch } from "@/lib/useAuth";
 import UploadZone from "@/components/UploadZone";
 import type { Channel, StoreControlFile } from "@/lib/types";
@@ -69,6 +71,21 @@ export default function StoreFilesPage() {
     return ids.map((id) => channels.find((c) => c.id === id)?.name ?? id);
   }
 
+  const fileTools = useTableTools<StoreControlFile>(
+    files,
+    {
+      fileName: (f) => f.fileName,
+      channels: (f) => resolveChannelNames(f.mainChannelIds).join(", "),
+      rows: (f) => f.rowCount,
+      // Sort on the instant, not the rendered date string, or "01 Feb" would
+      // sort before "02 Jan".
+      uploaded: (f) => Date.parse(f.uploadedAt) || 0,
+    },
+    "uploaded",
+    (f) => [f.fileName, resolveChannelNames(f.mainChannelIds).join(" "), f.rowCount,
+      new Date(f.uploadedAt).toLocaleDateString(), f.uploadedBy ?? ""].join(" "),
+  );
+
   return (
     <div className="p-8">
       <h1 className="mb-6 text-2xl font-bold text-[var(--color-text)]">
@@ -108,8 +125,10 @@ export default function StoreFilesPage() {
 
       {/* Current files table */}
       <div className="rounded-xl border border-[var(--color-border)] bg-white">
-        <div className="border-b border-[var(--color-border)] px-6 py-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--color-border)] px-6 py-4">
           <h2 className="text-sm font-semibold text-[var(--color-text)]">Uploaded Files</h2>
+          <TableSearch value={fileTools.query} onChange={fileTools.setQuery}
+            count={fileTools.rows.length} total={fileTools.total} placeholder="Search files…" />
         </div>
         {loading ? (
           <div className="px-6 py-8 text-center text-sm text-[var(--color-text-muted)]">Loading...</div>
@@ -119,15 +138,15 @@ export default function StoreFilesPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-[var(--color-border)] text-left text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
-                <th className="px-6 py-3">File Name</th>
-                <th className="px-6 py-3">Channels</th>
-                <th className="px-6 py-3">Rows</th>
-                <th className="px-6 py-3">Uploaded</th>
+                {[["File Name", "fileName"], ["Channels", "channels"], ["Rows", "rows"], ["Uploaded", "uploaded"]].map(([label, key]) => (
+                  <SortableTh key={key} label={label} sortKey={key} className="px-6"
+                    current={fileTools.sortKey} dir={fileTools.sortDir} onSort={fileTools.toggleSort} />
+                ))}
                 <th className="px-6 py-3">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {files.map((f) => (
+              {fileTools.rows.map((f) => (
                 <tr key={f.id} className="border-b border-[var(--color-border)] last:border-0">
                   <td className="px-6 py-3 font-medium text-[var(--color-text)]">{f.fileName}</td>
                   <td className="px-6 py-3">

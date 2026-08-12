@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useTableTools } from "@/lib/useTableTools";
+import { SortableTh, TableSearch } from "@/components/TableTools";
 import { authFetch, usePermissions } from "@/lib/useAuth";
 import type { LogEntry } from "@/lib/types";
 import SearchSelect from "@/components/SearchSelect";
@@ -113,7 +115,7 @@ export default function ActivityLogPage() {
     return d.includes(name.toLowerCase());
   }
 
-  const filtered = useMemo(() => {
+  const preFiltered = useMemo(() => {
     return logs.filter(
       (l) =>
         (!actionFilter || l.action === actionFilter) &&
@@ -121,6 +123,24 @@ export default function ActivityLogPage() {
         matchesClient(l, clientFilter),
     );
   }, [logs, actionFilter, userFilter, clientFilter]);
+
+  // Search and sort sit on top of the existing dropdown filters rather than
+  // replacing them: the dropdowns narrow to a known action/user, the box is
+  // for anything else in the row.
+  const tools = useTableTools<LogEntry>(
+    preFiltered,
+    {
+      time: (l) => Date.parse(l.timestamp) || 0,
+      user: (l) => l.userName,
+      action: (l) => actionLabel(l.action),
+      details: (l) => l.details ?? "",
+      status: (l) => l.status,
+    },
+    "time",
+    (l) => [l.userName, actionLabel(l.action), l.action, l.details ?? "", l.status].join(" "),
+    "desc", // newest first, as it has always opened
+  );
+  const filtered = tools.rows;
 
   const hasFilters = !!(actionFilter || clientFilter || userFilter);
 
@@ -147,6 +167,12 @@ export default function ActivityLogPage() {
 
       {/* Filters */}
       <div className="mb-4 flex flex-wrap items-end gap-3">
+        <label className="flex flex-col gap-1">
+          <span className="text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
+            Search
+          </span>
+          <TableSearch value={tools.query} onChange={tools.setQuery} placeholder="Search all columns…" />
+        </label>
         <label className="flex flex-col gap-1">
           <span className="text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
             Action
@@ -214,11 +240,10 @@ export default function ActivityLogPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-[var(--color-border)] text-left text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
-                  <th className="px-6 py-3">Time</th>
-                  <th className="px-6 py-3">User</th>
-                  <th className="px-6 py-3">Action</th>
-                  <th className="px-6 py-3">Details</th>
-                  <th className="px-6 py-3">Status</th>
+                  {[["Time", "time"], ["User", "user"], ["Action", "action"], ["Details", "details"], ["Status", "status"]].map(([label, key]) => (
+                    <SortableTh key={key} label={label} sortKey={key} className="px-6"
+                      current={tools.sortKey} dir={tools.sortDir} onSort={tools.toggleSort} />
+                  ))}
                 </tr>
               </thead>
               <tbody>

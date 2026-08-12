@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState, FormEvent } from "react";
+import { useTableTools } from "@/lib/useTableTools";
+import { SortableTh, TableSearch } from "@/components/TableTools";
 import { authFetch } from "@/lib/useAuth";
 import type { CAM } from "@/lib/types";
 
@@ -53,6 +55,17 @@ export default function CamsPage() {
     load();
   }
 
+  const camTools = useTableTools<CAM>(
+    cams,
+    {
+      name: (c) => `${c.name} ${c.surname}`,
+      email: (c) => c.email,
+      cell: (c) => c.cell,
+    },
+    "name",
+    (c) => [c.name, c.surname, c.email, c.cell].join(" "),
+  );
+
   return (
     <div className="p-8">
       <div className="mb-6 flex items-center justify-between">
@@ -60,6 +73,11 @@ export default function CamsPage() {
         <button onClick={() => { setShowForm(!showForm); setEditId(null); setError(""); setForm(blankForm); }} className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)]">
           {showForm ? "Cancel" : "+ Add CAM"}
         </button>
+      </div>
+
+      <div className="mb-4">
+        <TableSearch value={camTools.query} onChange={camTools.setQuery}
+          count={camTools.rows.length} total={camTools.total} placeholder="Search CAMs…" />
       </div>
 
       {notice && (
@@ -118,14 +136,15 @@ export default function CamsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-[var(--color-border)] text-left text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
-                <th className="px-6 py-3">Name</th>
-                <th className="px-6 py-3">Email</th>
-                <th className="px-6 py-3">Cell</th>
+                {[["Name", "name"], ["Email", "email"], ["Cell", "cell"]].map(([label, key]) => (
+                  <SortableTh key={key} label={label} sortKey={key} className="px-6"
+                    current={camTools.sortKey} dir={camTools.sortDir} onSort={camTools.toggleSort} />
+                ))}
                 <th className="px-6 py-3">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {cams.map((c) => (
+              {camTools.rows.map((c) => (
                 <tr key={c.id} className="border-b border-[var(--color-border)] last:border-0">
                   <td className="px-6 py-3 font-medium text-[var(--color-text)]">{c.name} {c.surname}</td>
                   <td className="px-6 py-3 text-[var(--color-text-muted)]">{c.email}</td>

@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useTableTools } from "@/lib/useTableTools";
+import { SortableTh, TableSearch } from "@/components/TableTools";
 import { authFetch } from "@/lib/useAuth";
 import type { Client, Channel, StoreRecord } from "@/lib/types";
 
@@ -56,6 +58,26 @@ export default function DashboardPage() {
     })();
   }, []);
 
+  // Declared above the loading early-return: a hook may not sit after a
+  // conditional return, so it reads from `data` rather than `d` below.
+  const gridTools = useTableTools<DashboardClientRow>(
+    data?.clientRows ?? [],
+    {
+      clientName: (r) => r.clientName,
+      skuCount: (r) => r.skuCount,
+      ytdUnits: (r) => r.ytdUnits,
+      ytdValue: (r) => r.ytdValue,
+      contributionPct: (r) => r.contributionPct,
+      dispoCount: (r) => r.dispoCount,
+      agedStockCount: (r) => r.agedStockCount,
+      vitalSignsRuns: (r) => r.vitalSignsRuns,
+      monthEndRuns: (r) => r.monthEndRuns,
+    },
+    "ytdValue",
+    (r) => r.clientName,
+    "desc", // biggest clients first, as the grid has always opened
+  );
+
   if (loading) {
     return (
       <div className="p-8">
@@ -85,10 +107,12 @@ export default function DashboardPage() {
 
       {/* Client grid */}
       <div className="rounded-xl border border-[var(--color-border)] bg-white">
-        <div className="border-b border-[var(--color-border)] px-6 py-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--color-border)] px-6 py-4">
           <h2 className="text-sm font-semibold text-[var(--color-text)]">
             Clients
           </h2>
+          <TableSearch value={gridTools.query} onChange={gridTools.setQuery}
+            count={gridTools.rows.length} total={gridTools.total} placeholder="Search clients…" />
         </div>
         {d.clientRows.length === 0 ? (
           <div className="px-6 py-8 text-center text-sm text-[var(--color-text-muted)]">
@@ -99,19 +123,21 @@ export default function DashboardPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-[var(--color-border)] text-left text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
-                  <th className="px-4 py-3">Client</th>
-                  <th className="px-4 py-3 text-right">SKUs</th>
-                  <th className="px-4 py-3 text-right">YTD Units</th>
-                  <th className="px-4 py-3 text-right">YTD Value</th>
-                  <th className="px-4 py-3 text-right">Contribution</th>
-                  <th className="px-4 py-3 text-right">DISPOs</th>
-                  <th className="px-4 py-3 text-right">Aged Stock</th>
-                  <th className="px-4 py-3 text-right">Vital Signs</th>
-                  <th className="px-4 py-3 text-right">Month-End</th>
+                  <SortableTh label="Client" sortKey="clientName" className="px-4"
+                    current={gridTools.sortKey} dir={gridTools.sortDir} onSort={gridTools.toggleSort} />
+                  {[
+                    ["SKUs", "skuCount"], ["YTD Units", "ytdUnits"], ["YTD Value", "ytdValue"],
+                    ["Contribution", "contributionPct"], ["DISPOs", "dispoCount"],
+                    ["Aged Stock", "agedStockCount"], ["Vital Signs", "vitalSignsRuns"],
+                    ["Month-End", "monthEndRuns"],
+                  ].map(([label, key]) => (
+                    <SortableTh key={key} label={label} sortKey={key} className="px-4" align="right"
+                      current={gridTools.sortKey} dir={gridTools.sortDir} onSort={gridTools.toggleSort} />
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {d.clientRows.map((r) => (
+                {gridTools.rows.map((r) => (
                   <tr
                     key={r.clientId}
                     className="border-b border-[var(--color-border)] last:border-0"
