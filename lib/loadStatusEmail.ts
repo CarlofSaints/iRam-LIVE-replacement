@@ -71,9 +71,10 @@ export function renderLoadStatusEmail(params: {
   const s = params.status;
   const allIn = s.outstandingVendors === 0;
 
+  const period = s.periodLabel ?? "this week";
   const subject = allIn
-    ? `DISPO Load Status — all ${s.vendorCount} vendors loaded — ${s.asAtLabel}`
-    : `DISPO Load Status — ${s.outstandingVendors} of ${s.vendorCount} ${plural(s.outstandingVendors, "vendor", "vendors")} outstanding — ${s.asAtLabel}`;
+    ? `DISPO Load Status — all ${s.vendorCount} vendors loaded for ${period} — ${s.asAtLabel}`
+    : `DISPO Load Status — ${s.outstandingVendors} of ${s.vendorCount} ${plural(s.outstandingVendors, "vendor", "vendors")} outstanding for ${period} — ${s.asAtLabel}`;
 
   const TH = "padding:8px 10px;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#718096;text-align:left;border-bottom:2px solid #E2E8F0;";
 
@@ -86,10 +87,10 @@ export function renderLoadStatusEmail(params: {
 
   const listBlock = allIn
     ? `<p style="margin:0;padding:14px 16px;background:#F0FFF4;border-left:4px solid #7CC042;border-radius:4px;font-size:14px;color:#276749;">
-         Every vendor has a DISPO loaded for this week — nothing outstanding.
+         Every vendor has a DISPO loaded for ${esc(period)} — nothing outstanding.
        </p>`
     : `<p style="font-size:14px;color:#2D3748;margin:0 0 10px;font-weight:600;">
-         Clients and vendors with no DISPO loaded this week:
+         Clients and vendors with no DISPO loaded for ${esc(period)}:
        </p>
        <table style="width:100%;border-collapse:collapse;margin:0 0 4px;">
          <thead>
@@ -103,7 +104,7 @@ export function renderLoadStatusEmail(params: {
          <tbody>${outstandingRows(s.outstanding)}</tbody>
        </table>
        <p style="font-size:12px;color:#A0AEC0;margin:10px 0 0;line-height:1.6;">
-         <strong>(partial)</strong> means some of that vendor&rsquo;s channels came in this week and the ones listed did not.
+         <strong>(partial)</strong> means some of that vendor&rsquo;s channels came in for ${esc(period)} and the ones listed did not.
          A vendor counts as loaded only once every channel it normally loads on has come in.
        </p>`;
 
@@ -121,21 +122,30 @@ export function renderLoadStatusEmail(params: {
           covering <strong>${s.vendorCount}</strong> vendor ${plural(s.vendorCount, "number", "numbers")}.
         </p>
         <p style="font-size:14px;color:#4A5568;margin:0 0 14px;line-height:1.7;">
-          So far this week, DISPOs have been loaded for <strong>${s.loadedVendors}</strong>
+          For <strong>${esc(period)}</strong>, DISPOs have been loaded for <strong>${s.loadedVendors}</strong>
           ${plural(s.loadedVendors, "vendor", "vendors")}, which means
           <strong style="color:${allIn ? "#276749" : "#C53030"};">${s.outstandingVendors}</strong>
           ${plural(s.outstandingVendors, "has", "have")} not been loaded.
+        </p>
+        <p style="font-size:13px;color:#718096;margin:0 0 14px;line-height:1.7;">
           ${s.loadsThisWeek > 0
-            ? `(${s.loadsThisWeek} DISPO ${plural(s.loadsThisWeek, "file", "files")} received since Monday.)`
-            : `(No DISPO files have been received since Monday.)`}
+            ? `${s.loadsThisWeek} DISPO ${plural(s.loadsThisWeek, "file", "files")} ${plural(s.loadsThisWeek, "was", "were")} received since Monday
+               &mdash; <strong>${s.currentPeriodLoads}</strong> for ${esc(period)}${
+                 s.historicalLoads > 0
+                   ? ` and <strong>${s.historicalLoads}</strong> ${plural(s.historicalLoads, "back-load", "back-loads")} for earlier periods.
+                       Back-loads do not count towards the figures above.`
+                   : `.`
+               }`
+            : `No DISPO files have been received since Monday.`}
         </p>
         ${excludedNote}
 
         <div style="margin:22px 0 0;">${listBlock}</div>
 
         <p style="font-size:12px;color:#A0AEC0;margin:22px 0 0;line-height:1.6;">
-          Counted on the actual upload time, from Monday 00:00 to ${esc(s.asAtLabel)} (SAST) &mdash; not on the
-          week stamped on the file.
+          Counted on the period stamped on the file, not on when it was uploaded${
+            s.periodOpenedLabel ? ` &mdash; ${esc(period)} opened when its first DISPO was loaded on ${esc(s.periodOpenedLabel)}` : ""
+          }. This matches the newest column of the DISPO Load Checklist. As at ${esc(s.asAtLabel)} (SAST).
         </p>
         <div style="margin-top:24px;padding-top:18px;border-top:1px solid #E2E8F0;text-align:center;">
           <p style="font-size:12px;color:#A0AEC0;margin:0;">Powered by <strong style="color:#718096;">OuterJoin</strong></p>

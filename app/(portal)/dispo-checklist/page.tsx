@@ -26,17 +26,20 @@ interface ChecklistData {
   activePeriodKey: string | null;
 }
 
-// Weekday 16:00 status email — computed on upload TIMESTAMP (Mon 00:00 → now),
-// so it's independent of the hand-stamped week the grid above is keyed on.
+// Weekday 16:00 status email — keyed on the newest STAMPED period, the same
+// basis as the grid above, so the two always agree.
 interface LoadStatus {
   windowLabel: string;
   asAtLabel: string;
+  periodLabel: string | null;
   clientCount: number;
   vendorCount: number;
   loadedVendors: number;
   outstandingVendors: number;
   excludedVendors: number;
   loadsThisWeek: number;
+  currentPeriodLoads: number;
+  historicalLoads: number;
   recipients: string[];
   emailed?: number;
   failures?: { email: string; error: string }[];
@@ -212,10 +215,11 @@ export default function DispoChecklistPage() {
             <h2 className="text-sm font-semibold text-[var(--color-text)]">Load status email</h2>
             <p className="mt-1 text-xs text-[var(--color-text-muted)]">
               Goes out automatically <strong>every weekday at 16:00</strong> to each user ticked
-              &ldquo;Receive DISPO load status&rdquo; in Control Centre &rarr; Users. It counts loads by
-              their actual upload time from <strong>Monday 00:00 to the moment it sends</strong>, so it
-              doesn&apos;t depend on the week stamped on the file. A vendor only counts as loaded once
-              every channel it normally loads on has come in.
+              &ldquo;Receive DISPO load status&rdquo; in Control Centre &rarr; Users. It reports on the
+              <strong> newest period stamped on a DISPO</strong> &mdash; the week opens as soon as its
+              first DISPO is loaded &mdash; so it matches the last column of the grid below. A vendor
+              only counts as loaded once every channel it normally loads on has come in, and a
+              back-load for an earlier period does not count.
             </p>
           </div>
           <div className="flex shrink-0 gap-2">
@@ -235,14 +239,17 @@ export default function DispoChecklistPage() {
 
         {status && (
           <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-[var(--color-border)] pt-3 text-xs text-[var(--color-text-muted)]">
-            <span><strong className="text-[var(--color-text)]">{status.windowLabel}</strong></span>
+            <span><strong className="text-[var(--color-text)]">{status.periodLabel ?? "No period stamped yet"}</strong></span>
             <span>{status.clientCount} clients · {status.vendorCount} vendors</span>
             <span className="text-green-700">{status.loadedVendors} loaded</span>
             <span className={status.outstandingVendors > 0 ? "font-semibold text-red-600" : "text-zinc-400"}>
               {status.outstandingVendors} outstanding
             </span>
             {status.excludedVendors > 0 && <span className="text-amber-600">{status.excludedVendors} skipped</span>}
-            <span>{status.loadsThisWeek} DISPO file(s) since Monday</span>
+            <span>
+              {status.loadsThisWeek} file(s) since Monday
+              {status.historicalLoads > 0 && ` · ${status.historicalLoads} back-load(s)`}
+            </span>
             <span>
               {status.recipients.length > 0
                 ? `Recipients: ${status.recipients.join(", ")}`

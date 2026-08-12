@@ -1,17 +1,29 @@
 /* ──────────────────────────────────────────────────────────────
    Weekly DISPO load status — "who hasn't loaded yet this week"
 
-   Deliberately measured on the UPLOAD TIMESTAMP, not on the hand-picked
-   reportYear/Month/Week stamp the uploader chooses. The window is
-   Monday 00:00 SAST → now, so the answer is always "so far this week",
-   and a load that was stamped with the wrong week still counts.
-   (The DISPO Load Checklist in lib/dispoChecklist.ts is the other view:
-   it grids by stamped period, which is what store-report arming needs.)
+   Measured on the PERIOD STAMPED ON THE FILE, not on the upload timestamp.
+   The current period is simply the newest (year, month, week) anyone has
+   stamped — "the new week starts when the first DISPO for that week is
+   loaded" — and a vendor counts as loaded once it has a DISPO stamped with
+   that period, whenever it happened to be uploaded.
+
+   It used to count anything uploaded since Monday 00:00 regardless of the
+   stamp, which sidestepped mis-stamping but broke the moment the team ran a
+   back-load: on 12 Aug 2026 the mail reported 50 of 51 vendors loaded while
+   the checklist showed 27 streams with no current-week DISPO, because 52 of
+   that week's 109 files were historical (Jun 2025, Dec 2025, Jan 2026).
+   Crediting a December file as "this week's DISPO" defeats the purpose of
+   the mail, so the stamp now decides. Back-loads are still counted and
+   reported separately, as context rather than as compliance.
+
+   This is the same basis as the DISPO Load Checklist (lib/dispoChecklist.ts),
+   so the mail and the newest column of that grid now always agree — the mail
+   is just rolled up from load streams to vendors.
 
    Rollup is at VENDOR level: a vendor is only "loaded" once every channel
-   it normally loads on has come in this week. A vendor with one channel in
-   and another missing is still outstanding, and the missing channel(s) are
-   named so the list is actionable.
+   it normally loads on has come in for the current period. A vendor with one
+   channel in and another missing is still outstanding, and the missing
+   channel(s) are named so the list is actionable.
 
    Shared by the 16:00 weekday cron and the manual preview / send-now buttons.
    ────────────────────────────────────────────────────────────── */
@@ -69,19 +81,29 @@ export interface LoadStatusResult {
   windowLabel: string;
   /** e.g. "Thu 30 Jul 16:00" */
   asAtLabel: string;
+  /** The period being reported on, e.g. "Wk1 Aug 2026". Null when nothing is stamped yet. */
+  periodLabel: string | null;
+  /** When the first DISPO for this period was loaded — the moment the week "opened". */
+  periodOpenedLabel?: string;
   clientCount: number;      // active clients
   vendorCount: number;      // vendor numbers in scope (declared ∪ ever-loaded), active clients only
-  loadedVendors: number;    // every expected channel in this week
+  loadedVendors: number;    // every expected channel in for the current period
   outstandingVendors: number;
   excludedVendors: number;  // every expected channel marked Skip on the checklist
   excludedPeriodLabel?: string;
-  loadsThisWeek: number;    // DISPO uploads inside the window
+  loadsThisWeek: number;    // DISPO uploads since Monday 00:00 (all periods)
+  /** Of those, the ones stamped for the current period. */
+  currentPeriodLoads: number;
+  /** Of those, the ones stamped for an OLDER period — back-loads, which no longer count as loaded. */
+  historicalLoads: number;
   outstanding: OutstandingVendor[];
   recipients: string[];
   emailed: number;          // how many recipients were actually mailed
   failures: { email: string; error: string }[];
 }
 
+// Orders (year, month, week) chronologically — same scheme as the checklist.
+const periodScore = (y: number, m: number, w: number) => y * 10000 + m * 100 + w;
 const vendorKey = (clientId: string, vendor: string) => `${clientId}|${vendor}`;
 const streamId = (clientId: string, channelId: string, vendor: string) => `${clientId}|${channelId}|${vendor}`;
 
@@ -99,8 +121,35 @@ export function computeLoadStatus(
   const activeClients = clients.filter((c) => c.active);
   const activeById = new Map(activeClients.map((c) => [c.id, c]));
 
-  // Timestamp basis, so an un-stamped (or mis-stamped) load still counts.
   const dispos = uploads.filter((u) => u.fileType === "dispo" && u.status === "processed");
+
+  // The current period is the newest stamp anyone has used — the week opens as
+  // soon as its first DISPO lands. Only fully-stamped loads on an active client
+  // can define it, so a stray unstamped upload can't move the goalposts.
+  const stamped = dispos.filter(
+    (u) =>
+      activeById.has(u.clientId) &&
+      u.reportYear != null && u.reportMonth != null && u.reportWeek != null,
+  );
+  let current: { year: number; month: number; week: number } | null = null;
+  for (const u of stamped) {
+    const score = periodScore(u.reportYear!, u.reportMonth!, u.reportWeek!);
+    if (!current || score > periodScore(current.year, current.month, current.week)) {
+      current = { year: u.reportYear!, month: u.reportMonth!, week: u.reportWeek! };
+    }
+  }
+  const currentKey = current ? periodKey(current.year, current.month, current.week) : null;
+  const periodLabel = current ? `Wk${current.week} ${MON[current.month] ?? current.month} ${current.year}` : null;
+  const isCurrent = (u: UploadMeta) =>
+    currentKey != null &&
+    u.reportYear != null && u.reportMonth != null && u.reportWeek != null &&
+    periodKey(u.reportYear, u.reportMonth, u.reportWeek) === currentKey;
+
+  // When the week "opened" — the earliest upload carrying the current stamp.
+  let openedIso: string | undefined;
+  for (const u of stamped) {
+    if (isCurrent(u) && (!openedIso || u.uploadDate < openedIso)) openedIso = u.uploadDate;
+  }
 
   // Expected load streams per vendor: every channel that vendor has EVER loaded on.
   // channels stays empty for a declared vendor with no history at all.
@@ -143,45 +192,40 @@ export function computeLoadStatus(
     if (!e.lastLoadedAt || u.uploadDate > e.lastLoadedAt) e.lastLoadedAt = u.uploadDate;
   }
 
-  // 3. What actually landed inside the window, per vendor → channelIds.
-  const loadedInWindow = new Map<string, Set<string>>();
-  let loadsThisWeek = 0;
-  const periodTally = new Map<string, number>();
+  // 3. What has come in FOR THE CURRENT PERIOD, per vendor → channelIds.
+  //    Upload time is irrelevant here: a file stamped for this week counts
+  //    whenever it was loaded, and a file stamped for December does not count
+  //    however recently it was loaded.
+  const loadedForPeriod = new Map<string, Set<string>>();
+  for (const u of dispos) {
+    if (!activeById.has(u.clientId) || !isCurrent(u)) continue;
+    const v = (u.vendorNumber || "").trim();
+    if (!v) continue;
+    const k = vendorKey(u.clientId, v);
+    const set = loadedForPeriod.get(k) ?? new Set<string>();
+    if (u.channelId) set.add(u.channelId);
+    loadedForPeriod.set(k, set);
+  }
+
+  // Upload activity since Monday — reported as context only, split so a busy
+  // week of back-loading can never read as "everyone is up to date".
+  let loadsThisWeek = 0, currentPeriodLoads = 0, historicalLoads = 0;
   for (const u of dispos) {
     const t = Date.parse(u.uploadDate);
     if (isNaN(t) || t < startMs || t > nowMs) continue;
     if (!activeById.has(u.clientId)) continue;
     loadsThisWeek++;
-    if (u.reportYear != null && u.reportMonth != null && u.reportWeek != null) {
-      const pk = periodKey(u.reportYear, u.reportMonth, u.reportWeek);
-      periodTally.set(pk, (periodTally.get(pk) ?? 0) + 1);
-    }
-    const v = (u.vendorNumber || "").trim();
-    if (!v) continue;
-    const k = vendorKey(u.clientId, v);
-    const set = loadedInWindow.get(k) ?? new Set<string>();
-    if (u.channelId) set.add(u.channelId);
-    loadedInWindow.set(k, set);
+    if (isCurrent(u)) currentPeriodLoads++;
+    else historicalLoads++;
   }
 
-  // Honour the checklist's "Skip this vendor this week" marks. Those are keyed by
-  // the STAMPED period, which this timestamp window doesn't have — so use the
-  // period this week's loads are being stamped with (the most-loaded stamp).
-  // No loads yet ⇒ no stamp to infer ⇒ no exclusions applied.
-  let excludePeriod: string | null = null;
-  let excludedPeriodLabel: string | undefined;
-  for (const [pk, n] of periodTally) {
-    if (!excludePeriod || n > (periodTally.get(excludePeriod) ?? 0) || (n === periodTally.get(excludePeriod) && pk > excludePeriod)) {
-      excludePeriod = pk;
-    }
-  }
+  // Honour the checklist's "Skip this vendor this week" marks. Both views are
+  // now keyed on the stamped period, so this is simply the current period —
+  // no more inferring it from whatever stamp was most common this week.
   const excludedStreams = new Set(
-    excludePeriod ? state.periods[excludePeriod]?.excludedStreams ?? [] : [],
+    currentKey ? state.periods[currentKey]?.excludedStreams ?? [] : [],
   );
-  if (excludePeriod && excludedStreams.size > 0) {
-    const p = state.periods[excludePeriod];
-    excludedPeriodLabel = `Wk${p.week} ${MON[p.month] ?? p.month} ${p.year}`;
-  }
+  const excludedPeriodLabel = excludedStreams.size > 0 ? periodLabel ?? undefined : undefined;
 
   // 4. Roll up to vendor level.
   let loadedVendors = 0;
@@ -189,7 +233,7 @@ export function computeLoadStatus(
   const outstanding: OutstandingVendor[] = [];
 
   for (const e of expected.values()) {
-    const done = loadedInWindow.get(vendorKey(e.clientId, e.vendor)) ?? new Set<string>();
+    const done = loadedForPeriod.get(vendorKey(e.clientId, e.vendor)) ?? new Set<string>();
 
     if (e.channels.size === 0) {
       // Declared but never loaded on any channel — can't be satisfied this week.
@@ -232,6 +276,8 @@ export function computeLoadStatus(
     asAtIso: now.toISOString(),
     windowLabel: `${sastDateLabel(start)} → ${sastDateLabel(now)}, ${sastTimeLabel(now)}`,
     asAtLabel: `${sastDateLabel(now)} ${sastTimeLabel(now)}`,
+    periodLabel,
+    periodOpenedLabel: openedIso ? `${sastDateLabel(new Date(openedIso))} ${sastTimeLabel(new Date(openedIso))}` : undefined,
     clientCount: activeClients.length,
     vendorCount: expected.size,
     loadedVendors,
@@ -239,6 +285,8 @@ export function computeLoadStatus(
     excludedVendors,
     excludedPeriodLabel,
     loadsThisWeek,
+    currentPeriodLoads,
+    historicalLoads,
     outstanding,
   };
 }

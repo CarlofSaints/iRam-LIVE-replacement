@@ -85,6 +85,36 @@ export const HEADER_ALIASES: Record<string, string> = {
   "r. profile": "R. Profile",
   "r_profile": "R. Profile",
   "r profile": "R. Profile",
+
+  // ── Long-form (verbose) Massbuild/SAP export ──────────────────────────
+  // The same DISPO is exported in two header styles: short codes ("Vendor",
+  // "R. Profile", "Prom SP") and spelled-out names ("Vendor Number",
+  // "Rounding Profile", "Promotion SP"). Only the short style was aliased, so
+  // every long-style file silently lost these columns — most damagingly the
+  // vendor, which left 43 uploads (all Massbuild, from 6 Jul 2026) with no
+  // vendor number at all. Both styles were seen in the same client's files, so
+  // this is a per-export choice, not a client-by-client one.
+  "vendor number": "Vendor",
+  "rounding profile": "R. Profile",
+  "promotion sp": "Prom SP",
+  "last receipt date": "Last Recv",
+  "last sold date": "Last Sold",
+  "base merchandise category": "BMC",
+  "vendor product code": "Vendor Prod Code",
+  "terms of payment": "P Term",
+  "future prom": "Future Promo",
+  // Non-canonical twins — aliased so the ledger doesn't end up holding the same
+  // column under two different keys depending on which export style came in.
+  "company code": "CoCd",
+  "seq number": "Seq No",
+  "article type": "MTyp",
+  "stock in uom": "Stock In U",
+  "zero vat rate": "0 VAT Rate",
+  "comp in buom": "Comp in BU",
+  "export indicator": "Exp Ind",
+  "hazardous chemical": "Haz Chem",
+  "abc indicator": "ABC",
+  "exchange rate": "Exch. Rate",
 };
 
 // Regex to detect date-style columns. Accepts the many shapes retailers export
@@ -93,10 +123,21 @@ export const HEADER_ALIASES: Record<string, string> = {
 //     "Jul26", "Jul-26", "Jul 2026", "July-2026", "September2025"
 //   - Numeric month + separator + 2/4-digit year: "07-2026", "7-26"
 //   - ISO-ish year-first: "2026-07", "2026/7"
+//   - 2-digit year FIRST, then month name: "26-Jul", "25-Jul"
+//   - A full date Excel rendered from a serial: "8/1/25", "12/1/25"
 // The alpha branch is gated on real month prefixes so ordinary text headers
 // (e.g. "Compo", "Curr Y/S") can't be mistaken for date columns.
-export const DATE_COL_REGEX =
-  /^(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s\-/]?\d{2}(?:\d{2})?|\d{1,2}[\s\-/]\d{2}(?:\d{2})?|\d{4}[\s\-/]\d{1,2})$/i;
+const MONTH_ALT = "jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec";
+export const DATE_COL_REGEX = new RegExp(
+  "^(?:" +
+    `(?:${MONTH_ALT})[a-z]*[\\s\\-/]?\\d{2}(?:\\d{2})?` + // Jul26, July-2026
+    `|\\d{2}[\\s\\-/](?:${MONTH_ALT})[a-z]*` +            // 26-Jul  (year first)
+    "|\\d{1,2}[\\s\\-/]\\d{1,2}[\\s\\-/]\\d{2}(?:\\d{2})?" + // 8/1/25
+    "|\\d{1,2}[\\s\\-/]\\d{2}(?:\\d{2})?" +               // 07-2026, 7-26
+    "|\\d{4}[\\s\\-/]\\d{1,2}" +                          // 2026-07
+    ")$",
+  "i",
+);
 
 export function resolveHeader(raw: string): string {
   const lower = raw.toLowerCase().trim();

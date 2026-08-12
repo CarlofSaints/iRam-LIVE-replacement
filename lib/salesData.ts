@@ -29,7 +29,18 @@ const MONTH_MAP: Record<string, string> = {
   january: "01", february: "02", march: "03", april: "04",
   june: "06", july: "07", august: "08", september: "09",
   october: "10", november: "11", december: "12",
+  sept: "09", // "Sept-2025" is common and was silently dropped by the exact-match lookup
 };
+
+/**
+ * Month name → "MM". Falls back to the first three letters so any abbreviation
+ * of a real month resolves ("Sept", "Augu"); an unknown word still returns
+ * undefined, which is what keeps ordinary text headers out of the date path.
+ */
+function monthNumber(name: string): string | undefined {
+  const n = name.toLowerCase();
+  return MONTH_MAP[n] ?? MONTH_MAP[n.slice(0, 3)];
+}
 
 /**
  * Normalize a date column header to canonical MM-YYYY format.
@@ -44,7 +55,7 @@ export function normalizeDateCol(header: string): string | null {
   // "Jul26", "Jul-26", "Jul 2026", "July-2026", "September2025"
   const alpha = h.match(/^([A-Za-z]+)[\s\-/]?(\d{4}|\d{2})$/);
   if (alpha) {
-    const mm = MONTH_MAP[alpha[1].toLowerCase()];
+    const mm = monthNumber(alpha[1]);
     return mm ? `${mm}-${yr4(alpha[2])}` : null;
   }
 
@@ -53,6 +64,30 @@ export function normalizeDateCol(header: string): string | null {
   if (num) {
     const m = parseInt(num[1], 10);
     return m >= 1 && m <= 12 ? `${num[1].padStart(2, "0")}-${yr4(num[2])}` : null;
+  }
+
+  // 2-digit year FIRST, then month name: "26-Jul" = Jul 2026, "25-Jul" = Jul 2025.
+  // Read year-first, not day-first: Vermont's Massbuild DISPO carries
+  // 26-Feb · 26-Mar · 26-Apr · 26-May · 26-Jun · 26-Jul · 25-Jul — six
+  // consecutive months plus the same-month-last-year column, which is the
+  // standard DISPO shape and is impossible to read as days of one month.
+  const yyMon = h.match(/^(\d{2})[\s\-/]([A-Za-z]+)$/);
+  if (yyMon) {
+    const mm = monthNumber(yyMon[2]);
+    return mm ? `${mm}-${yr4(yyMon[1])}` : null;
+  }
+
+  // A monthly column Excel rendered from a date serial: "8/1/25" = Aug 2025.
+  // Month-first (US) when both parts could be a month: Cartoon Candy's file
+  // reads 8/1/25 · Sept-2025 · 10/1/25 · 11/1/25 · 12/1/25, and the one column
+  // that DID parse pins the neighbours to Aug/Oct/Nov/Dec. When the first part
+  // can't be a month (>12) it must be day-first, so take the second.
+  const slash = h.match(/^(\d{1,2})[\s\-/](\d{1,2})[\s\-/](\d{4}|\d{2})$/);
+  if (slash) {
+    const a = parseInt(slash[1], 10);
+    const b = parseInt(slash[2], 10);
+    const m = a >= 1 && a <= 12 ? a : b;
+    return m >= 1 && m <= 12 ? `${String(m).padStart(2, "0")}-${yr4(slash[3])}` : null;
   }
 
   // Year-first: "2026-07", "2026/7"
