@@ -191,6 +191,22 @@ async function runFilingTests() {
   eq(await verdictFor("VERMONT SALES (PTY) LTD"), "filed",
     "month folders directly under the DISPO folder count as filed");
 
+  // ── File count vs DISPOs loaded ──
+  // The folder existing is not the same as the DISPOs being in it. Verigreen's
+  // Wk1 folder holds exactly one file.
+  const one = ["VERIGREEN"];
+  eq((await checkClientFiling("VERIGREEN PTY LTD", AUG_W1, one, listTree, {}, 1)).verdict, "filed",
+    "1 file for 1 DISPO loaded is filed");
+  eq((await checkClientFiling("VERIGREEN PTY LTD", AUG_W1, one, listTree, {}, 3)).verdict, "missing files",
+    "1 file for 3 DISPOs loaded is short");
+  eq((await checkClientFiling("VERIGREEN PTY LTD", AUG_W1, one, listTree, {}, 3)).fileCount, 1,
+    "…and reports how many are actually there");
+  eq((await checkClientFiling("VERIGREEN PTY LTD", AUG_W1, one, listTree)).verdict, "filed",
+    "with no expectation given, any file counts as filed");
+  // An empty folder is still empty, not merely short — it is the worse verdict.
+  eq((await checkClientFiling("TALBORNE URBAN ORGANICS (PTY) LTD", AUG_W1, ["TALBORNE"], listTree, {}, 2)).verdict,
+    "empty week folder", "an empty folder outranks 'missing files'");
+
   // Wrong week in the same month must not pass.
   eq((await checkClientFiling("VERIGREEN PTY LTD", { year: 2026, month: 8, week: 3 }, ["VERIGREEN"], listTree)).verdict,
     "no week folder", "Wk3 is not satisfied by the Wk1 folder");

@@ -109,6 +109,7 @@ export function resolveClientFolder(
 
 export type FilingVerdict =
   | "filed"
+  | "missing files"
   | "empty week folder"
   | "no week folder"
   | "no month folder"
@@ -124,6 +125,12 @@ export interface FilingResult {
   expectedPath: string;
   /** Folder names present at the deepest level reached — helps spot a typo'd week folder. */
   found?: string[];
+  /** Files sitting in the week folder. */
+  fileCount?: number;
+  /** How many were expected — one per DISPO the client loaded for this period. */
+  expectedFiles?: number;
+  /** Their names, so the report can show what IS there. */
+  files?: string[];
 }
 
 export const monthFolderName = (year: number, month: number) =>
@@ -140,6 +147,8 @@ export async function checkClientFiling(
   clientDirs: string[],
   list: ListChildren,
   overrides: Record<string, string> = {},
+  /** How many DISPO files to expect — one per DISPO this client loaded. */
+  expectedFiles?: number,
 ): Promise<FilingResult> {
   const { folder, near } = resolveClientFolder(clientName, clientDirs, overrides);
   if (!folder) {
@@ -165,7 +174,7 @@ export async function checkClientFiling(
 
   let best: FilingResult | null = null;
   for (const dispoDir of candidates) {
-    const r = await checkOneDispoDir(clientName, folder, dispoDir, period, base, list);
+    const r = await checkOneDispoDir(clientName, folder, dispoDir, period, base, list, expectedFiles);
     if (!best || VERDICT_RANK[r.verdict] < VERDICT_RANK[best.verdict]) best = r;
     if (best.verdict === "filed") break;
   }
@@ -175,12 +184,13 @@ export async function checkClientFiling(
 // Best (0) to worst — used to pick between a client's several DISPO folders.
 const VERDICT_RANK: Record<FilingVerdict, number> = {
   "filed": 0,
-  "empty week folder": 1,
-  "no week folder": 2,
-  "no month folder": 3,
-  "no year folder": 4,
-  "no DISPO folder": 5,
-  "no client folder": 6,
+  "missing files": 1,
+  "empty week folder": 2,
+  "no week folder": 3,
+  "no month folder": 4,
+  "no year folder": 5,
+  "no DISPO folder": 6,
+  "no client folder": 7,
 };
 
 async function checkOneDispoDir(
@@ -190,6 +200,7 @@ async function checkOneDispoDir(
   period: { year: number; month: number; week: number },
   base: string,
   list: ListChildren,
+  expectedFiles?: number,
 ): Promise<FilingResult> {
   const monthName = monthFolderName(period.year, period.month);
 
@@ -200,7 +211,7 @@ async function checkOneDispoDir(
   // when their DISPO was filed correctly.
   let best: FilingResult | null = null;
   for (const prefix of [[String(period.year), monthName], [monthName]]) {
-    const r = await checkMonthPath(clientName, folder, dispoDir, prefix, period, base, list);
+    const r = await checkMonthPath(clientName, folder, dispoDir, prefix, period, base, list, expectedFiles);
     if (!best || VERDICT_RANK[r.verdict] < VERDICT_RANK[best.verdict]) best = r;
     if (best.verdict === "filed") break;
   }
@@ -215,6 +226,7 @@ async function checkMonthPath(
   period: { year: number; month: number; week: number },
   base: string,
   list: ListChildren,
+  expectedFiles?: number,
 ): Promise<FilingResult> {
   const nested = prefix.length === 2;
   const shownPath = `${base}/${dispoDir}/${prefix.join("/")}`;
@@ -240,11 +252,20 @@ async function checkMonthPath(
     };
   }
 
-  // A week folder with nothing in it is the same failure as no folder: the
-  // DISPO was loaded into the app but never saved where the team can find it.
+  // The folder existing is not the same as the DISPOs being in it. A week
+  // folder with nothing in it is the same failure as no folder, and one
+  // holding fewer files than the client loaded DISPOs is a partial filing —
+  // the case that would otherwise pass as "filed" on a single stray file.
   const weekKids = await list([folder, dispoDir, ...prefix, weekDir]);
   const path = `${shownPath}/${weekDir}`;
-  return (weekKids ?? []).length === 0
-    ? { clientName, folder, verdict: "empty week folder", expectedPath: path }
-    : { clientName, folder, verdict: "filed", expectedPath: path };
+  const files = (weekKids ?? []).filter((e) => !e.isFolder).map((e) => e.name);
+  const base_: FilingResult = {
+    clientName, folder, expectedPath: path, verdict: "filed",
+    fileCount: files.length, expectedFiles, files: files.slice(0, 12),
+  };
+  if (files.length === 0) return { ...base_, verdict: "empty week folder" };
+  if (expectedFiles != null && files.length < expectedFiles) {
+    return { ...base_, verdict: "missing files" };
+  }
+  return base_;
 }

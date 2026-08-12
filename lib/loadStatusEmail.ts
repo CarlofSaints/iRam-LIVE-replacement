@@ -126,19 +126,26 @@ export function renderLoadStatusEmail(params: {
           All ${f.filed} of ${f.checked} ${plural(f.checked, "client", "clients")} that loaded a DISPO for ${esc(period)} also filed it in SharePoint.
         </p>`;
     } else {
-      const rows = [...f.problems, ...f.unmatched].map((p) => `
+      const rows = [...f.problems, ...f.unmatched].map((p) => {
+        const detail = p.verdict === "missing files"
+          ? `${p.fileCount} file${p.fileCount === 1 ? "" : "s"} for ${p.expectedFiles} DISPO${p.expectedFiles === 1 ? "" : "s"} loaded`
+          : "";
+        return `
         <tr>
           <td style="padding:7px 10px;font-size:13px;border-bottom:1px solid #EDF2F7;font-weight:700;color:#2D3748;">${esc(p.clientName)}</td>
-          <td style="padding:7px 10px;font-size:13px;border-bottom:1px solid #EDF2F7;color:#C05621;">${esc(p.verdict)}</td>
+          <td style="padding:7px 10px;font-size:13px;border-bottom:1px solid #EDF2F7;color:#C05621;">
+            ${esc(p.verdict)}${detail ? `<br><span style="font-size:11px;color:#A0AEC0;">${esc(detail)}</span>` : ""}
+          </td>
           <td style="padding:7px 10px;font-size:12px;border-bottom:1px solid #EDF2F7;color:#718096;font-family:monospace;">${esc(p.expectedPath)}</td>
-        </tr>`).join("");
+        </tr>`;
+      }).join("");
       filingBlock = `
         <p style="font-size:14px;color:#2D3748;margin:0 0 4px;font-weight:600;">
           Loaded into iRam LIVE but not filed in SharePoint:
         </p>
         <p style="font-size:12px;color:#A0AEC0;margin:0 0 10px;line-height:1.6;">
-          ${f.filed} of ${f.checked} ${plural(f.checked, "client", "clients")} filed correctly. Every DISPO loaded for ${esc(period)}
-          should also be saved under its client&rsquo;s
+          ${f.filed} of ${f.checked} ${plural(f.checked, "client", "clients")} filed correctly &mdash; the folder exists and holds at least
+          one file per DISPO loaded. Every DISPO loaded for ${esc(period)} should also be saved under its client&rsquo;s
           <strong>DISPO&rsquo;s &amp; DATA SOURCES/${s.currentPeriod?.year ?? ""}/${s.currentPeriod ? `${s.currentPeriod.year}-${String(s.currentPeriod.month).padStart(2, "0")}` : ""}/W${s.currentPeriod?.week ?? ""}</strong> folder.
         </p>
         <table style="width:100%;border-collapse:collapse;">

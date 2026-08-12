@@ -88,6 +88,8 @@ export interface LoadStatusResult {
   currentPeriod: { year: number; month: number; week: number } | null;
   /** Clients with at least one DISPO loaded for the current period. */
   clientsLoadedThisPeriod: string[];
+  /** client name → distinct vendor+channel DISPOs loaded, i.e. files to expect. */
+  loadsPerClientThisPeriod: Record<string, number>;
   /** When the first DISPO for this period was loaded — the moment the week "opened". */
   periodOpenedLabel?: string;
   clientCount: number;      // active clients
@@ -205,11 +207,17 @@ export function computeLoadStatus(
   //    however recently it was loaded.
   const loadedForPeriod = new Map<string, Set<string>>();
   const clientsThisPeriod = new Set<string>();
+  // Distinct vendor+channel DISPOs per client = how many files should be filed.
+  const streamsPerClient = new Map<string, Set<string>>();
   for (const u of dispos) {
     if (!activeById.has(u.clientId) || !isCurrent(u)) continue;
     // Tracked before the vendor check: a load with no vendor number still
     // means that client filed (or should have filed) a DISPO this week.
-    clientsThisPeriod.add(activeById.get(u.clientId)!.name);
+    const cname = activeById.get(u.clientId)!.name;
+    clientsThisPeriod.add(cname);
+    const st = streamsPerClient.get(cname) ?? new Set<string>();
+    st.add(`${(u.vendorNumber || '?').trim()}|${u.channelName}`);
+    streamsPerClient.set(cname, st);
     const v = (u.vendorNumber || "").trim();
     if (!v) continue;
     const k = vendorKey(u.clientId, v);
@@ -290,6 +298,7 @@ export function computeLoadStatus(
     periodLabel,
     currentPeriod: current,
     clientsLoadedThisPeriod: [...clientsThisPeriod].sort(),
+    loadsPerClientThisPeriod: Object.fromEntries([...streamsPerClient].map(([k, v]) => [k, v.size])),
     periodOpenedLabel: openedIso ? `${sastDateLabel(new Date(openedIso))} ${sastTimeLabel(new Date(openedIso))}` : undefined,
     clientCount: activeClients.length,
     vendorCount: expected.size,
@@ -327,7 +336,10 @@ export async function runLoadStatus(opts: {
   let filing: FilingCheckResult | undefined;
   if (opts.checkFiling !== false && computed.currentPeriod) {
     try {
-      filing = await checkDispoFiling(computed.clientsLoadedThisPeriod, computed.currentPeriod);
+      filing = await checkDispoFiling(
+        computed.clientsLoadedThisPeriod, computed.currentPeriod, {},
+        computed.loadsPerClientThisPeriod,
+      );
     } catch (e) {
       filing = {
         ran: false, error: e instanceof Error ? e.message : String(e),
