@@ -53,18 +53,22 @@ export async function GET(req: NextRequest) {
     if (requested) periods = periods.filter((p) => p.key === requested);
 
     // Which clients loaded in each period, when, and how many DISPO files that
-    // implies. Expected file count is the number of distinct vendor+channel
-    // DISPOs the client actually loaded — not its total vendor count, which
-    // would accuse a client whose other vendors simply didn't load that week.
-    const loadedBy = new Map<string, Map<string, { at: string; by: string; streams: Set<string> }>>();
+    // implies. Expected file count is the number of DISTINCT FILE NAMES the
+    // client uploaded — the file they filed is the file they uploaded.
+    //
+    // Not the vendor count: a client with four vendor numbers where only two
+    // loaded this week would be accused of filing half its files. And not the
+    // vendor×channel count either: Cartoon Candy loads ONE file to both MAKRO
+    // and WALMART, which counted as two and reported every such client "1/2".
+    const loadedBy = new Map<string, Map<string, { at: string; by: string; files: Set<string> }>>();
     for (const u of dispos) {
       const pk = periodKey(u.reportYear!, u.reportMonth!, u.reportWeek!);
       if (!periods.some((p) => p.key === pk)) continue;
       const name = nameById.get(u.clientId)!;
       const forPeriod = loadedBy.get(pk) ?? new Map();
-      const prev = forPeriod.get(name) ?? { at: "", by: "", streams: new Set<string>() };
+      const prev = forPeriod.get(name) ?? { at: "", by: "", files: new Set<string>() };
       if (u.uploadDate > prev.at) { prev.at = u.uploadDate; prev.by = u.uploadedByName; }
-      prev.streams.add(`${(u.vendorNumber || "?").trim()}|${u.channelName}`);
+      if (u.fileName) prev.files.add(u.fileName.trim().toLowerCase());
       forPeriod.set(name, prev);
       loadedBy.set(pk, forPeriod);
     }
@@ -77,7 +81,7 @@ export async function GET(req: NextRequest) {
           period: p,
           clientNames: [...(forPeriod?.keys() ?? [])],
           expectedFiles: Object.fromEntries(
-            [...(forPeriod?.entries() ?? [])].map(([name, v]) => [name, v.streams.size]),
+            [...(forPeriod?.entries() ?? [])].map(([name, v]) => [name, v.files.size]),
           ),
         };
       }),

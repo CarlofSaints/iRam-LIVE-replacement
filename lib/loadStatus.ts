@@ -207,17 +207,18 @@ export function computeLoadStatus(
   //    however recently it was loaded.
   const loadedForPeriod = new Map<string, Set<string>>();
   const clientsThisPeriod = new Set<string>();
-  // Distinct vendor+channel DISPOs per client = how many files should be filed.
-  const streamsPerClient = new Map<string, Set<string>>();
+  // Distinct FILE NAMES per client = how many files should be in SharePoint.
+  // One file loaded to two channels is still one file to file.
+  const filesPerClient = new Map<string, Set<string>>();
   for (const u of dispos) {
     if (!activeById.has(u.clientId) || !isCurrent(u)) continue;
     // Tracked before the vendor check: a load with no vendor number still
     // means that client filed (or should have filed) a DISPO this week.
     const cname = activeById.get(u.clientId)!.name;
     clientsThisPeriod.add(cname);
-    const st = streamsPerClient.get(cname) ?? new Set<string>();
-    st.add(`${(u.vendorNumber || '?').trim()}|${u.channelName}`);
-    streamsPerClient.set(cname, st);
+    const st = filesPerClient.get(cname) ?? new Set<string>();
+    if (u.fileName) st.add(u.fileName.trim().toLowerCase());
+    filesPerClient.set(cname, st);
     const v = (u.vendorNumber || "").trim();
     if (!v) continue;
     const k = vendorKey(u.clientId, v);
@@ -298,7 +299,7 @@ export function computeLoadStatus(
     periodLabel,
     currentPeriod: current,
     clientsLoadedThisPeriod: [...clientsThisPeriod].sort(),
-    loadsPerClientThisPeriod: Object.fromEntries([...streamsPerClient].map(([k, v]) => [k, v.size])),
+    loadsPerClientThisPeriod: Object.fromEntries([...filesPerClient].map(([k, v]) => [k, v.size])),
     periodOpenedLabel: openedIso ? `${sastDateLabel(new Date(openedIso))} ${sastTimeLabel(new Date(openedIso))}` : undefined,
     clientCount: activeClients.length,
     vendorCount: expected.size,
