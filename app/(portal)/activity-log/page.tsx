@@ -45,6 +45,7 @@ const ACTION_LABELS: Record<string, string> = {
   delete_client_logo: "Deleted Client Logo",
   upload_channel_logo: "Uploaded Channel Logo",
   delete_channel_logo: "Deleted Channel Logo",
+  supply_route_alert: "Supply Route Mismatch Alert",
   store_report_arm: "Armed Store Reports",
   store_report_disarm: "Disarmed Store Reports",
 };

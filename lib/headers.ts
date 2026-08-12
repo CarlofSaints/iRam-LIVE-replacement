@@ -44,6 +44,10 @@ export const CANONICAL_HEADERS = [
   "Last Recv",
   "Last Sold",
   "Dist.Prof.",
+  // How the store is supplied — ZL local supplier direct, ZD via DC, ZF
+  // supplier direct across border. Read together with the Vendor column,
+  // which holds either a vendor number or a "D"-prefixed DC code.
+  "Source of Supply",
 ];
 
 export const DATE_COL_INSERT_AFTER = "Order Unit";
@@ -115,6 +119,15 @@ export const HEADER_ALIASES: Record<string, string> = {
   "hazardous chemical": "Haz Chem",
   "abc indicator": "ABC",
   "exchange rate": "Exch. Rate",
+
+  // Source of supply arrives as "SS" in most exports and spelled out in the
+  // verbose one. Aliased to a single canonical key from the start, so it can
+  // never end up stored under two different names the way Vendor Number did.
+  "ss": "Source of Supply",
+  "source of supply": "Source of Supply",
+  "source_of_supply": "Source of Supply",
+  "sourceofsupply": "Source of Supply",
+  "source supply": "Source of Supply",
 };
 
 // Regex to detect date-style columns. Accepts the many shapes retailers export

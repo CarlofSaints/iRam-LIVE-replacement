@@ -10,7 +10,8 @@ import { getMergedStores } from "@/lib/storeFileData";
 import { normalizeSiteKey } from "@/lib/siteCode";
 import { getCamById } from "@/lib/camData";
 import { getUsers } from "@/lib/userData";
-import { sendMissingProductsEmail, sendMissingStoresEmail } from "@/lib/email";
+import { sendMissingProductsEmail, sendMissingStoresEmail, sendSupplyRouteEmail } from "@/lib/email";
+import { scanSupplyRoutes, issueSheetRows } from "@/lib/supplyRoute";
 import { requireLogin, requirePermission, noCacheHeaders, handleAuthError } from "@/lib/auth";
 import { addLog } from "@/lib/activityLog";
 import { acquireUploadLock, releaseUploadLock, lockMessage } from "@/lib/uploadLock";
@@ -461,6 +462,68 @@ export async function POST(req: NextRequest) {
         clientId: client.id,
         clientName: client.name,
       });
+
+      /* Vendor × Source of Supply check. These lines load normally — the data
+         is fine — but the customer's ordering setup means they will never turn
+         into an order, so the CAM and the loader get the list to take back to
+         the customer. Fire-and-forget: never fail an otherwise good upload. */
+      (async () => {
+        try {
+          const nameBySite = new Map<string, string>();
+          for (const s of mergedStores) {
+            if (s.siteNum && s.storeName) nameBySite.set(normalizeSiteKey(s.siteNum), s.storeName);
+          }
+          const scan = scanSupplyRoutes(
+            result.rows,
+            (site) => nameBySite.get(normalizeSiteKey(site)) ?? "",
+          );
+          if (scan.mismatches.length === 0) return;
+
+          const recipients = [session.email];
+          if (client.camId) {
+            const cam = await getCamById(client.camId);
+            if (cam?.email && !recipients.includes(cam.email)) recipients.push(cam.email);
+          }
+
+          const MON = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+          const periodLabel = reportYear && reportMonth
+            ? `Wk${reportWeek ?? "?"} ${MON[reportMonth] ?? reportMonth} ${reportYear}`
+            : "this load";
+
+          await sendSupplyRouteEmail({
+            to: recipients,
+            clientName: client.name,
+            channelName: mainChannelName,
+            periodLabel,
+            uploaderName: session.name,
+            rows: issueSheetRows(scan.mismatches),
+            blankCount: scan.blank,
+            siteCount: new Set(scan.mismatches.map((m) => m.siteNum)).size,
+          });
+
+          await addLog({
+            userId: session.userId,
+            userName: session.name,
+            action: "supply_route_alert",
+            details: `${scan.mismatches.length} vendor/source-of-supply mismatch(es) across ${new Set(scan.mismatches.map((m) => m.siteNum)).size} store(s) in ${client.name} / ${mainChannelName}. Emailed ${recipients.join(", ")}.`,
+            status: "success",
+            clientId: client.id,
+            clientName: client.name,
+          });
+        } catch (e) {
+          // A failed alert must never look like a failed load, but it must not
+          // vanish either — the activity log is where it surfaces.
+          await addLog({
+            userId: session.userId,
+            userName: session.name,
+            action: "supply_route_alert",
+            details: `Supply-route check failed for ${client.name}: ${e instanceof Error ? e.message : String(e)}`,
+            status: "error",
+            clientId: client.id,
+            clientName: client.name,
+          }).catch(() => {});
+        }
+      })();
 
       // Fire-and-forget: verify rep action-claims against this fresh DISPO
       // (e.g. a claimed Phantom write-off should show SOH → 0). Best-effort;
