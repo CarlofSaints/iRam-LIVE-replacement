@@ -170,6 +170,123 @@ async function resolveFolder(
   }
 }
 
+// ── Browsing ──────────────────────────────────────────────────────
+// Read-only folder listing, used by the weekly DISPO filing check.
+
+export interface SpChild {
+  name: string;
+  isFolder: boolean;
+  childCount: number;
+}
+
+/** Resolve a folder URL to its drive item — exported for the browse helpers. */
+export async function resolveFolderRef(folderUrl: string): Promise<{ driveId: string; itemId: string }> {
+  return resolveFolder(folderUrl, await getGraphToken());
+}
+
+async function listChildrenOf(driveId: string, itemId: string, token: string): Promise<SpChild[]> {
+  const out: SpChild[] = [];
+  // A client folder can hold more than one page of children, and a missed page
+  // reads as a missing folder — so follow @odata.nextLink to the end.
+  let url: string | undefined =
+    `${GRAPH}/drives/${driveId}/items/${itemId}/children?$select=name,folder&$top=200`;
+  while (url) {
+    const res: Response = await fetch(url, { headers: authHeaders(token) });
+    if (!res.ok) throw new Error(`/children ${res.status}: ${await errText(res)}`);
+    const json = (await res.json()) as {
+      value?: { name: string; folder?: { childCount?: number } }[];
+      "@odata.nextLink"?: string;
+    };
+    for (const v of json.value ?? []) {
+      out.push({ name: v.name, isFolder: !!v.folder, childCount: v.folder?.childCount ?? 0 });
+    }
+    url = json["@odata.nextLink"];
+  }
+  return out;
+}
+
+/** Children of a folder given by its drive item. */
+export async function listChildren(driveId: string, itemId: string): Promise<SpChild[]> {
+  return listChildrenOf(driveId, itemId, await getGraphToken());
+}
+
+/**
+ * Children of a path relative to a resolved root folder. Returns null when the
+ * path does not exist (a 404 is the ANSWER here, not a failure), and throws on
+ * anything else so a permissions problem can't read as "the team didn't file".
+ */
+export async function listChildrenAtPath(
+  driveId: string,
+  rootItemId: string,
+  relPath: string[],
+): Promise<SpChild[] | null> {
+  const token = await getGraphToken();
+  if (relPath.length === 0) return listChildrenOf(driveId, rootItemId, token);
+  const encoded = relPath.map(encodeURIComponent).join("/");
+  const res = await fetch(
+    `${GRAPH}/drives/${driveId}/items/${rootItemId}:/${encoded}:/children?$select=name,folder&$top=200`,
+    { headers: authHeaders(token) },
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`/children ${res.status}: ${await errText(res)}`);
+  const json = (await res.json()) as { value?: { name: string; folder?: { childCount?: number } }[] };
+  return (json.value ?? []).map((v) => ({
+    name: v.name, isFolder: !!v.folder, childCount: v.folder?.childCount ?? 0,
+  }));
+}
+
+/**
+ * Prove the Graph credentials work and show what the app can see. Used by the
+ * diagnostic endpoint — "the env var is set" is not the same as "it works",
+ * and these are marked Sensitive so they read back blank everywhere else.
+ */
+export async function probeSharePoint(folderUrl?: string): Promise<{
+  configured: boolean;
+  host?: string;
+  tokenOk: boolean;
+  tokenError?: string;
+  drives?: { name: string; webUrl: string }[];
+  folder?: { ok: boolean; error?: string; children?: string[] };
+}> {
+  const configured = isSharePointConfigured();
+  const host = process.env.IRAM_SP_HOST;
+  if (!configured) return { configured, host, tokenOk: false, tokenError: "IRAM_TENANT_ID / IRAM_CLIENT_ID / IRAM_CLIENT_SECRET not all set" };
+
+  let token: string;
+  try {
+    token = await getGraphToken();
+  } catch (e) {
+    return { configured, host, tokenOk: false, tokenError: e instanceof Error ? e.message : String(e) };
+  }
+
+  // What document libraries can the app see on the tenant host? This is how to
+  // find the right root URL without guessing.
+  let drives: { name: string; webUrl: string }[] | undefined;
+  if (host) {
+    try {
+      const siteRes = await fetch(`${GRAPH}/sites/${host}?$select=id`, { headers: authHeaders(token) });
+      if (siteRes.ok) {
+        const siteId = ((await siteRes.json()) as { id?: string }).id;
+        const dRes = await fetch(`${GRAPH}/sites/${siteId}/drives?$select=name,webUrl`, { headers: authHeaders(token) });
+        if (dRes.ok) drives = ((await dRes.json()) as { value?: { name: string; webUrl: string }[] }).value ?? [];
+      }
+    } catch { /* listing is best-effort — the token result is what matters */ }
+  }
+
+  let folder: { ok: boolean; error?: string; children?: string[] } | undefined;
+  if (folderUrl) {
+    try {
+      const ref = await resolveFolder(folderUrl, token);
+      const kids = await listChildrenOf(ref.driveId, ref.itemId, token);
+      folder = { ok: true, children: kids.filter((k) => k.isFolder).map((k) => k.name).slice(0, 120) };
+    } catch (e) {
+      folder = { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  return { configured, host, tokenOk: true, drives, folder };
+}
+
 /**
  * Upload a report file into a client's SharePoint folder, overwriting any
  * existing file of the same name. Returns the uploaded file's webUrl.
