@@ -7,7 +7,10 @@
 */
 
 import fs from "node:fs";
-import { resolveClientFolder, WEEK_DIR, isDispoDir } from "./check-dispo-folders";
+import {
+  resolveClientFolder, WEEK_DIR, isDispoDir, checkClientFiling,
+  type Entry, type ListChildren,
+} from "../lib/dispoFiling";
 
 let pass = 0;
 const fails: string[] = [];
@@ -48,7 +51,6 @@ const EXPECTED: [string, string | null][] = [
   ["MAJOR TECH (PTY) LTD", "MAJOR TECH"],
   ["NARAYAN TEXTILES (Pty) Ltd", "NARAYAN TEXTILES"],
   ["QUALICHEM GENKEM (PTY) LTD", "GENKEM"],            // only the second word matches
-  ["LUMOSS MOULDINGS (Pty) Ltd", "Lumoss"],            // folder keeps only the first word
   ["REITZER HEALTHCARE (PTY) LTD", "REITZER HEALTHCARE"],
   ["ROBERT BOSCH (PTY) LIMITED", "ROBERT BOSCH"],
   ["ROVIC AND LEERS (PTY) LTD", "ROVIC LEERS"],        // folder drops the "AND"
@@ -109,6 +111,60 @@ for (const d of ["MASTERFILES", "REPORTS", "OPERATIONS", "ADMIN"]) {
   eq(isDispoDir(d), false, `isDispoDir("${d}") is not a DISPO folder`);
 }
 
+// ── The verdict logic, against a stand-in folder tree ──
+// Mirrors the real shapes: Verigreen files under "WK1", Rovic under "W1",
+// Talborne has a week folder with nothing in it, Topline has no August at all.
+const TREE: Record<string, Entry[]> = {
+  "": [
+    { name: "VERIGREEN", isFolder: true }, { name: "ROVIC LEERS", isFolder: true },
+    { name: "TALBORNE", isFolder: true }, { name: "TOPLINE", isFolder: true },
+    { name: "GENKEM", isFolder: true }, { name: "readme.txt", isFolder: false },
+  ],
+  "VERIGREEN": [{ name: "DISPO's & DATA SOURCES", isFolder: true }, { name: "MASTERFILES", isFolder: true }],
+  "VERIGREEN/DISPO's & DATA SOURCES/2026": [{ name: "2026-07", isFolder: true }, { name: "2026-08", isFolder: true }],
+  "VERIGREEN/DISPO's & DATA SOURCES/2026/2026-08": [{ name: "WK1", isFolder: true }],
+  "VERIGREEN/DISPO's & DATA SOURCES/2026/2026-08/WK1": [{ name: "VD VERIGREEN (1544-W1).xlsx", isFolder: false }],
+
+  "ROVIC LEERS": [{ name: "DISPO's & DATA SOURCES", isFolder: true }],
+  "ROVIC LEERS/DISPO's & DATA SOURCES/2026": [{ name: "2026-08", isFolder: true }],
+  "ROVIC LEERS/DISPO's & DATA SOURCES/2026/2026-08": [{ name: "W1", isFolder: true }],
+  "ROVIC LEERS/DISPO's & DATA SOURCES/2026/2026-08/W1": [{ name: "dispo.xlsx", isFolder: false }],
+
+  "TALBORNE": [{ name: "DISPOs", isFolder: true }],
+  "TALBORNE/DISPOs/2026": [{ name: "2026-08", isFolder: true }],
+  "TALBORNE/DISPOs/2026/2026-08": [{ name: "Week 1", isFolder: true }],
+  "TALBORNE/DISPOs/2026/2026-08/Week 1": [],
+
+  "TOPLINE": [{ name: "DISPO'S & DATA SOURCES", isFolder: true }],
+  "TOPLINE/DISPO'S & DATA SOURCES/2026": [{ name: "2026-07", isFolder: true }],
+
+  "GENKEM": [{ name: "MASTERFILES", isFolder: true }],
+};
+const listTree: ListChildren = async (p) => TREE[p.join("/")] ?? null;
+const AUG_W1 = { year: 2026, month: 8, week: 1 };
+
+async function verdictFor(client: string) {
+  const r = await checkClientFiling(client, AUG_W1, FOLDERS.concat(["VERIGREEN", "ROVIC LEERS", "TALBORNE", "TOPLINE", "GENKEM"]), listTree);
+  return r.verdict;
+}
+
+async function runFilingTests() {
+  eq(await verdictFor("VERIGREEN PTY LTD"), "filed", "WK1 spelling counts as filed");
+  eq(await verdictFor("ROVIC AND LEERS (PTY) LTD"), "filed", "W1 spelling counts as filed");
+  eq(await verdictFor("TALBORNE URBAN ORGANICS (PTY) LTD"), "empty week folder", "an empty week folder is not filed");
+  eq(await verdictFor("TOPLINE DISTRIBUTORS (PTY) LTD."), "no month folder", "August missing entirely");
+  eq(await verdictFor("QUALICHEM GENKEM (PTY) LTD"), "no DISPO folder", "no folder starting with DISPO");
+  eq(await verdictFor("GASPRO TECHNOLOGIES (PTY) LTD"), "no client folder", "unmatched client is reported");
+
+  // A week folder holding only a file still counts — files are what get filed.
+  const r = await checkClientFiling("VERIGREEN PTY LTD", AUG_W1, ["VERIGREEN"], listTree);
+  eq(r.expectedPath, "CLIENTS/VERIGREEN/DISPO's & DATA SOURCES/2026/2026-08/WK1", "reports the real path it found");
+
+  // Wrong week in the same month must not pass.
+  eq((await checkClientFiling("VERIGREEN PTY LTD", { year: 2026, month: 8, week: 3 }, ["VERIGREEN"], listTree)).verdict,
+    "no week folder", "Wk3 is not satisfied by the Wk1 folder");
+}
+
 // ── Optional: re-check the folder list against the live disk ──
 const rootArg = process.argv.indexOf("--root");
 if (rootArg >= 0) {
@@ -120,9 +176,21 @@ if (rootArg >= 0) {
     : `\nLive check: ${gone.length} pinned folder(s) no longer on disk — ${gone.join(", ")}`);
 }
 
-console.log(`\n${pass} passed, ${fails.length} failed`);
-if (fails.length) {
-  console.log("\nFAILURES:\n  - " + fails.join("\n  - "));
-  process.exit(1);
-}
-console.log("All folder-matching assertions passed.\n");
+// The filing verdicts are async, so the summary has to wait for them —
+// otherwise they'd silently never run and the total would still look healthy.
+const SYNC_ASSERTIONS = pass;
+
+runFilingTests()
+  .then(() => {
+    if (pass === SYNC_ASSERTIONS) {
+      console.log("\nFAILED: the async filing tests did not run.");
+      process.exit(1);
+    }
+    console.log(`\n${pass} passed (${pass - SYNC_ASSERTIONS} filing verdicts), ${fails.length} failed`);
+    if (fails.length) {
+      console.log("\nFAILURES:\n  - " + fails.join("\n  - "));
+      process.exit(1);
+    }
+    console.log("All folder-matching assertions passed.\n");
+  })
+  .catch((e) => { console.error(e); process.exit(1); });

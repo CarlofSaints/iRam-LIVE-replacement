@@ -34,6 +34,7 @@ import { getClients } from "./clientData";
 import { getUsers } from "./userData";
 import { getStoreReportState, periodKey, type StoreReportState } from "./storeReportState";
 import { sendLoadStatusEmail } from "./email";
+import { checkDispoFiling, type FilingCheckResult } from "./dispoFilingCheck";
 
 // Africa/Johannesburg is UTC+2 all year (no DST), so a fixed offset is safe.
 const SAST_OFFSET_MS = 2 * 60 * 60 * 1000;
@@ -83,6 +84,10 @@ export interface LoadStatusResult {
   asAtLabel: string;
   /** The period being reported on, e.g. "Wk1 Aug 2026". Null when nothing is stamped yet. */
   periodLabel: string | null;
+  /** The same period as numbers, for the filing check. */
+  currentPeriod: { year: number; month: number; week: number } | null;
+  /** Clients with at least one DISPO loaded for the current period. */
+  clientsLoadedThisPeriod: string[];
   /** When the first DISPO for this period was loaded — the moment the week "opened". */
   periodOpenedLabel?: string;
   clientCount: number;      // active clients
@@ -97,6 +102,8 @@ export interface LoadStatusResult {
   /** Of those, the ones stamped for an OLDER period — back-loads, which no longer count as loaded. */
   historicalLoads: number;
   outstanding: OutstandingVendor[];
+  /** SharePoint filing check for this period — undefined when it wasn't run. */
+  filing?: FilingCheckResult;
   recipients: string[];
   emailed: number;          // how many recipients were actually mailed
   failures: { email: string; error: string }[];
@@ -197,8 +204,12 @@ export function computeLoadStatus(
   //    whenever it was loaded, and a file stamped for December does not count
   //    however recently it was loaded.
   const loadedForPeriod = new Map<string, Set<string>>();
+  const clientsThisPeriod = new Set<string>();
   for (const u of dispos) {
     if (!activeById.has(u.clientId) || !isCurrent(u)) continue;
+    // Tracked before the vendor check: a load with no vendor number still
+    // means that client filed (or should have filed) a DISPO this week.
+    clientsThisPeriod.add(activeById.get(u.clientId)!.name);
     const v = (u.vendorNumber || "").trim();
     if (!v) continue;
     const k = vendorKey(u.clientId, v);
@@ -277,6 +288,8 @@ export function computeLoadStatus(
     windowLabel: `${sastDateLabel(start)} → ${sastDateLabel(now)}, ${sastTimeLabel(now)}`,
     asAtLabel: `${sastDateLabel(now)} ${sastTimeLabel(now)}`,
     periodLabel,
+    currentPeriod: current,
+    clientsLoadedThisPeriod: [...clientsThisPeriod].sort(),
     periodOpenedLabel: openedIso ? `${sastDateLabel(new Date(openedIso))} ${sastTimeLabel(new Date(openedIso))}` : undefined,
     clientCount: activeClients.length,
     vendorCount: expected.size,
@@ -301,11 +314,28 @@ export async function runLoadStatus(opts: {
   now?: Date;
   /** Override recipients (manual test send). Bypasses the receiveLoadStatus flag. */
   to?: string[];
+  /** Skip the SharePoint filing check (it costs ~2 Graph calls per client). */
+  checkFiling?: boolean;
 }): Promise<LoadStatusResult> {
   const [uploads, clients, state] = await Promise.all([
     getUploadIndex(), getClients(), getStoreReportState(),
   ]);
-  const status = computeLoadStatus(uploads, clients, state, opts.now ?? new Date());
+  const computed = computeLoadStatus(uploads, clients, state, opts.now ?? new Date());
+
+  // Is what was loaded also filed in SharePoint? Never allowed to break the
+  // email — a failure is reported inside it as "the check didn't run".
+  let filing: FilingCheckResult | undefined;
+  if (opts.checkFiling !== false && computed.currentPeriod) {
+    try {
+      filing = await checkDispoFiling(computed.clientsLoadedThisPeriod, computed.currentPeriod);
+    } catch (e) {
+      filing = {
+        ran: false, error: e instanceof Error ? e.message : String(e),
+        checked: 0, filed: 0, problems: [], unmatched: [],
+      };
+    }
+  }
+  const status = { ...computed, filing };
 
   let recipients: { email: string; name: string }[];
   if (opts.to?.length) {

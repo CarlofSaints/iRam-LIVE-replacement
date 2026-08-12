@@ -108,6 +108,48 @@ export function renderLoadStatusEmail(params: {
          A vendor counts as loaded only once every channel it normally loads on has come in.
        </p>`;
 
+  // ── SharePoint filing ──
+  // Loaded and filed are two different obligations; a DISPO can be in the app
+  // and nowhere on SharePoint. Reported as its own block so it never dilutes
+  // the outstanding-loads list above.
+  const f = s.filing;
+  let filingBlock = "";
+  if (f) {
+    if (!f.ran) {
+      filingBlock = `
+        <p style="margin:0;padding:12px 14px;background:#FFFAF0;border-left:4px solid #DD6B20;border-radius:4px;font-size:13px;color:#7B341E;">
+          <strong>SharePoint filing check did not run.</strong> ${esc(f.error ?? "Unknown error")}
+        </p>`;
+    } else if (f.problems.length === 0 && f.unmatched.length === 0) {
+      filingBlock = `
+        <p style="margin:0;padding:12px 14px;background:#F0FFF4;border-left:4px solid #7CC042;border-radius:4px;font-size:13px;color:#276749;">
+          All ${f.filed} of ${f.checked} ${plural(f.checked, "client", "clients")} that loaded a DISPO for ${esc(period)} also filed it in SharePoint.
+        </p>`;
+    } else {
+      const rows = [...f.problems, ...f.unmatched].map((p) => `
+        <tr>
+          <td style="padding:7px 10px;font-size:13px;border-bottom:1px solid #EDF2F7;font-weight:700;color:#2D3748;">${esc(p.clientName)}</td>
+          <td style="padding:7px 10px;font-size:13px;border-bottom:1px solid #EDF2F7;color:#C05621;">${esc(p.verdict)}</td>
+          <td style="padding:7px 10px;font-size:12px;border-bottom:1px solid #EDF2F7;color:#718096;font-family:monospace;">${esc(p.expectedPath)}</td>
+        </tr>`).join("");
+      filingBlock = `
+        <p style="font-size:14px;color:#2D3748;margin:0 0 4px;font-weight:600;">
+          Loaded into iRam LIVE but not filed in SharePoint:
+        </p>
+        <p style="font-size:12px;color:#A0AEC0;margin:0 0 10px;line-height:1.6;">
+          ${f.filed} of ${f.checked} ${plural(f.checked, "client", "clients")} filed correctly. Every DISPO loaded for ${esc(period)}
+          should also be saved under its client&rsquo;s
+          <strong>DISPO&rsquo;s &amp; DATA SOURCES/${s.currentPeriod?.year ?? ""}/${s.currentPeriod ? `${s.currentPeriod.year}-${String(s.currentPeriod.month).padStart(2, "0")}` : ""}/W${s.currentPeriod?.week ?? ""}</strong> folder.
+        </p>
+        <table style="width:100%;border-collapse:collapse;">
+          <thead><tr>
+            <th style="${TH}">Client</th><th style="${TH}">Problem</th><th style="${TH}">Expected folder</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    }
+  }
+
   const html = `
     <div style="font-family:Arial,Helvetica,sans-serif;max-width:680px;margin:0 auto;background:#ffffff;">
       <div style="background:#7CC042;padding:24px 32px;text-align:center;border-radius:8px 8px 0 0;">
@@ -141,6 +183,7 @@ export function renderLoadStatusEmail(params: {
         ${excludedNote}
 
         <div style="margin:22px 0 0;">${listBlock}</div>
+        ${filingBlock ? `<div style="margin:26px 0 0;padding-top:20px;border-top:1px solid #E2E8F0;">${filingBlock}</div>` : ""}
 
         <p style="font-size:12px;color:#A0AEC0;margin:22px 0 0;line-height:1.6;">
           Counted on the period stamped on the file, not on when it was uploaded${

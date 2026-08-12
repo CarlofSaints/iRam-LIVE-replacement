@@ -20,6 +20,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { appUrl, login, getDispoUploads, type Upload } from "./appClient";
+import {
+  isDispoDir, resolveClientFolder, monthFolderName, weekFolderNumber,
+} from "../lib/dispoFiling";
 
 const DEFAULT_ROOT = "C:\\Users\\CarlDosSantos-(OUTER\\IRAM\\IRAM - Clients\\CLIENTS";
 const MON = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -34,81 +37,6 @@ const ROOT = arg("root") ?? process.env.IRAM_CLIENTS_ROOT ?? DEFAULT_ROOT;
 const APP = appUrl(arg("app"));
 const SINCE = arg("since"); // "YYYY-MM" — only check periods from this month on
 const CSV = arg("csv");
-
-// ── folder-name helpers ────────────────────────────────────────────────────
-// Every week-folder name that exists in the tree today:
-//   W1..W5 (2199) · "Week 1".."Week 5" (348) · W-1..W-4 (74) · WK1/WK4 (4) · Week-01 (1)
-// so accept W / WK / WEEK, any separator, optional leading zero.
-export const WEEK_DIR = /^W(?:K|EEK)?[\s._-]*0?([1-9])$/i;
-
-// Client folders spell the DISPO directory a dozen ways — "DISPO's & DATA
-// SOURCES", "DISPOS & DATA SOURCES", "DISPO AND DATA", "Dispo", "DISPOs" — so
-// key on the one thing they share: the name starts with "dispo".
-export const isDispoDir = (name: string) => /^dispo/i.test(name);
-
-const LEGAL = /\b(PTY|PROPRIETARY|LTD|LIMITED|CC|INC|SA|AFRICA|GROUP|HOLDINGS|DISTRIBUTORS|INDUSTRIES|TECHNOLOGIES|MARKETING|SALES|RETAIL|URBAN|ORGANICS|PLUS)\b/g;
-const norm = (s: string) =>
-  s.toUpperCase().replace(/[^A-Z0-9\s]/g, " ").replace(LEGAL, " ").replace(/\s+/g, " ").trim();
-
-/**
- * Do two name words refer to the same thing? Allows one trailing character of
- * difference, which covers the real spelling drift ("HELLERMANN" in the app vs
- * "HELLERMAN" on the folder) without letting a word match a longer one that
- * merely starts the same — "TOP" must NOT match "TOPLINE", or SAFE TOP would
- * land in Topline's folder.
- */
-function wordsMatch(a: string, b: string): boolean {
-  if (a === b) return true;
-  let i = 0;
-  while (i < a.length && i < b.length && a[i] === b[i]) i++;
-  return i >= Math.max(a.length, b.length) - 1 && i >= 3;
-}
-
-/**
- * Similarity 0..1 between two names, as the F1 of their matching words. Word
- * overlap beats character overlap here because the two sides drop different
- * words: the app has "ROVIC AND LEERS (PTY) LTD", the folder has "ROVIC LEERS".
- */
-function affinity(a: string, b: string): number {
-  const x = a.split(" ").filter(Boolean), y = b.split(" ").filter(Boolean);
-  if (x.length === 0 || y.length === 0) return 0;
-  const usedY = new Set<number>();
-  let matched = 0;
-  for (const wa of x) {
-    const j = y.findIndex((wb, k) => !usedY.has(k) && wordsMatch(wa, wb));
-    if (j >= 0) { usedY.add(j); matched++; }
-  }
-  if (matched === 0) return 0;
-  const precision = matched / y.length, recall = matched / x.length;
-  return (2 * precision * recall) / (precision + recall);
-}
-
-/**
- * Match an app client name ("HELLERMANN TYTON (PTY) LTD") to its SharePoint
- * folder ("HELLERMAN TYTON"). Returns no folder rather than a wrong one — an
- * unmatched client is reported, never silently skipped.
- */
-export function resolveClientFolder(
-  clientName: string,
-  clientDirs: string[],
-  overrides: Record<string, string> = {},
-): { folder?: string; score: number; near: string } {
-  if (overrides[clientName]) return { folder: overrides[clientName], score: 1, near: "(override)" };
-  const target = norm(clientName);
-  let best = "", bestScore = 0, second = "", secondScore = 0;
-  for (const d of clientDirs) {
-    const s = affinity(target, norm(d));
-    if (s > bestScore) { second = best; secondScore = bestScore; bestScore = s; best = d; }
-    else if (s > secondScore) { second = d; secondScore = s; }
-  }
-  // 0.65 admits the real one-sided names ("QUALICHEM GENKEM" → "GENKEM",
-  // "LUMOSS MOULDINGS" → "Lumoss"), and a clear winner is required so a genuine
-  // toss-up is reported for a human rather than guessed at.
-  const decisive = bestScore >= 0.65 && (bestScore === 1 || bestScore - secondScore >= 0.1);
-  return decisive
-    ? { folder: best, score: bestScore, near: second }
-    : { folder: undefined, score: bestScore, near: best };
-}
 
 function listDirs(dir: string): string[] {
   try {
@@ -188,14 +116,11 @@ async function main() {
     const expectBase = path.join(folder, dispoDir, String(g.y));
     if (!fs.existsSync(yearPath)) { push("NO YEAR FOLDER", expectBase); continue; }
 
-    const monthName = `${g.y}-${String(g.m).padStart(2, "0")}`;
+    const monthName = monthFolderName(g.y, g.m);
     const monthPath = path.join(yearPath, monthName);
     if (!fs.existsSync(monthPath)) { push("NO MONTH FOLDER", path.join(expectBase, monthName)); continue; }
 
-    const weekDir = listDirs(monthPath).find((d) => {
-      const m = d.match(WEEK_DIR);
-      return m != null && parseInt(m[1], 10) === g.w;
-    });
+    const weekDir = listDirs(monthPath).find((d) => weekFolderNumber(d) === g.w);
     if (!weekDir) { push("NO WEEK FOLDER", path.join(expectBase, monthName, `W${g.w}`)); continue; }
 
     const files = listFiles(path.join(monthPath, weekDir));
