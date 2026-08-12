@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import { useTableTools } from "@/lib/useTableTools";
+import { SortableTh, TableSearch } from "@/components/TableTools";
 import { useParams } from "next/navigation";
 import { authFetch, useAuth } from "@/lib/useAuth";
 import UploadZone from "@/components/UploadZone";
@@ -126,6 +128,22 @@ export default function ClientDetailPage() {
   }
 
   useEffect(() => { load(); }, [id]);
+
+  const uploadTools = useTableTools<UploadMeta>(
+    uploads,
+    {
+      channel: (u) => u.channelName,
+      type: (u) => u.fileType,
+      vendor: (u) => u.vendorNumber,
+      rows: (u) => u.rowCount,
+      // Sort on the instant, not the rendered date string.
+      date: (u) => Date.parse(u.uploadDate) || 0,
+      status: (u) => u.status,
+    },
+    "date",
+    (u) => [u.channelName, u.fileType, u.vendorNumber, u.fileName, u.status, u.uploadedByName].join(" "),
+    "desc", // most recent first
+  );
 
   async function handleLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -912,22 +930,26 @@ export default function ClientDetailPage() {
 
       {tab === "uploads" && (
         <div className="rounded-xl border border-[var(--color-border)] bg-white">
+          <div className="border-b border-[var(--color-border)] px-6 py-3">
+            <TableSearch value={uploadTools.query} onChange={uploadTools.setQuery}
+              count={uploadTools.rows.length} total={uploadTools.total}
+              placeholder="Search channel, vendor, file…" />
+          </div>
           {uploads.length === 0 ? (
             <div className="px-6 py-8 text-center text-sm text-[var(--color-text-muted)]">No uploads for this client.</div>
           ) : (
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-[var(--color-border)] text-left text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
-                  <th className="px-6 py-3">Channel</th>
-                  <th className="px-6 py-3">Type</th>
-                  <th className="px-6 py-3">Vendor</th>
-                  <th className="px-6 py-3">Rows</th>
-                  <th className="px-6 py-3">Date</th>
-                  <th className="px-6 py-3">Status</th>
+                  {[["Channel", "channel"], ["Type", "type"], ["Vendor", "vendor"],
+                    ["Rows", "rows"], ["Date", "date"], ["Status", "status"]].map(([label, key]) => (
+                    <SortableTh key={key} label={label} sortKey={key} className="px-6"
+                      current={uploadTools.sortKey} dir={uploadTools.sortDir} onSort={uploadTools.toggleSort} />
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {uploads.map((u) => (
+                {uploadTools.rows.map((u) => (
                   <tr key={u.id} className="border-b border-[var(--color-border)] last:border-0">
                     <td className="px-6 py-3">{u.subChannelName ?? u.channelName}</td>
                     <td className="px-6 py-3"><span className={`rounded-full px-2 py-0.5 text-xs font-medium ${u.fileType === "dispo" ? "bg-blue-50 text-blue-700" : "bg-amber-50 text-amber-700"}`}>{u.fileType === "dispo" ? "DISPO" : "Aged Stock"}</span></td>

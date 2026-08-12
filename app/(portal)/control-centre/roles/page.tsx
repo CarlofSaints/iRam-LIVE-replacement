@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { matchesQuery } from "@/lib/useTableTools";
+import { SortArrow, TableSearch } from "@/components/TableTools";
 import { authFetch } from "@/lib/useAuth";
 import { ALL_PERMISSIONS, ROLE_DEFINITIONS } from "@/lib/types";
 import type { RolePermissions, PermissionKey } from "@/lib/types";
@@ -62,6 +64,24 @@ export default function RolesPage() {
 
   const roles = ROLE_DEFINITIONS;
 
+  /* A permissions matrix has permissions down and roles across, so there is
+     nothing to sort by except the permission name — and with the list this
+     long, finding one by typing matters more than ordering. The search matches
+     the label, the underlying key and the roles that currently hold it, so
+     "cam delete" finds what a CAM can destroy. */
+  const [permQuery, setPermQuery] = useState("");
+  const [permDesc, setPermDesc] = useState(false);
+  const visiblePermissions = ALL_PERMISSIONS
+    .filter((p) => {
+      if (!permQuery.trim()) return true;
+      const holders = roles
+        .filter((rd) => rolePerms.find((r) => r.role === rd.role)?.permissions.includes(p.key))
+        .map((rd) => rd.label)
+        .join(" ");
+      return matchesQuery(`${p.label} ${p.key} ${holders}`, permQuery);
+    })
+    .sort((a, b) => (permDesc ? -1 : 1) * a.label.localeCompare(b.label));
+
   if (loading) {
     return (
       <div className="p-8 text-sm text-[var(--color-text-muted)]">Loading...</div>
@@ -92,6 +112,12 @@ export default function RolesPage() {
         </div>
       )}
 
+      <div className="mb-3">
+        <TableSearch value={permQuery} onChange={setPermQuery}
+          count={visiblePermissions.length} total={ALL_PERMISSIONS.length}
+          placeholder="Search permissions or roles…" />
+      </div>
+
       <div className="rounded-xl border border-[var(--color-border)] bg-white">
         {/* Was a hard-coded 520px, which forced scrolling on any screen and got
             worse with every permission added. Size to the viewport instead: the
@@ -104,7 +130,12 @@ export default function RolesPage() {
             <thead className="sticky top-0 z-10 bg-white">
               <tr className="border-b border-[var(--color-border)]">
                 <th className="sticky left-0 z-20 bg-white px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
-                  Permission
+                  <button type="button" onClick={() => setPermDesc((d) => !d)}
+                    className="group flex items-center gap-0.5 uppercase tracking-wider hover:text-[var(--color-text)]"
+                    title="Sort permissions A–Z / Z–A">
+                    Permission
+                    <SortArrow active dir={permDesc ? "desc" : "asc"} />
+                  </button>
                 </th>
                 {roles.map((rd) => (
                   <th
@@ -120,7 +151,7 @@ export default function RolesPage() {
               </tr>
             </thead>
             <tbody>
-              {ALL_PERMISSIONS.map((perm) => (
+              {visiblePermissions.map((perm) => (
                 <tr
                   key={perm.key}
                   className="border-b border-[var(--color-border)] last:border-0"

@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState, FormEvent } from "react";
+import { useTableTools } from "@/lib/useTableTools";
+import { SortableTh, TableSearch } from "@/components/TableTools";
 import { authFetch, useAuth } from "@/lib/useAuth";
 import MultiSelect from "@/components/MultiSelect";
 import { scenarioClientStatuses, statusSummary } from "@/lib/scenarioConditions";
@@ -30,7 +32,6 @@ export default function StatusReferencePage() {
   const [loading, setLoading] = useState(true);
   const [selectedChannel, setSelectedChannel] = useState<string>("");
   const [filter, setFilter] = useState<StatusClassification | "ALL">("ALL");
-  const [search, setSearch] = useState("");
 
   // Add form
   const [showAdd, setShowAdd] = useState(false);
@@ -134,12 +135,26 @@ export default function StatusReferencePage() {
     if (res.ok) setScenarios(await res.json());
   }
 
-  // Filter + search
-  const filtered = statuses.filter((s) => {
-    if (filter !== "ALL" && s.classification !== filter) return false;
-    if (search && !s.code.toLowerCase().includes(search.toLowerCase()) && !s.description.toLowerCase().includes(search.toLowerCase())) return false;
-    return true;
-  });
+  // The classification chips narrow first; sort and free-text search work on
+  // what's left. Search now reaches notes and source too, not just code and
+  // description as the old hand-rolled filter did.
+  const byClassification = statuses.filter(
+    (s) => filter === "ALL" || s.classification === filter,
+  );
+  const statusTools = useTableTools<StatusDefinition>(
+    byClassification,
+    {
+      code: (s) => s.code,
+      classification: (s) => s.classification,
+      description: (s) => s.description,
+      notes: (s) => s.notes ?? "",
+      source: (s) => (s.autoDetected ? "Auto-detected" : "Manual"),
+    },
+    "code",
+    (s) => [s.code, s.classification, s.description, s.notes ?? "",
+      s.autoDetected ? "auto-detected" : "manual"].join(" "),
+  );
+  const filtered = statusTools.rows;
 
   const unclassifiedCount = statuses.filter((s) => s.classification === "UNCLASSIFIED").length;
 
@@ -333,12 +348,8 @@ export default function StatusReferencePage() {
 
       {/* Filter bar */}
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <input
-          placeholder="Search statuses..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm w-60"
-        />
+        <TableSearch value={statusTools.query} onChange={statusTools.setQuery}
+          count={filtered.length} total={statusTools.total} placeholder="Search statuses…" />
         <div className="flex gap-1.5">
           {(["ALL", ...CLASSIFICATIONS] as const).map((c) => (
             <button
@@ -375,11 +386,11 @@ export default function StatusReferencePage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-[var(--color-border)] text-left text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
-                <th className="px-6 py-3">Status Code</th>
-                <th className="px-6 py-3">Classification</th>
-                <th className="px-6 py-3">Description</th>
-                <th className="px-6 py-3">Notes</th>
-                <th className="px-6 py-3">Source</th>
+                {[["Status Code", "code"], ["Classification", "classification"], ["Description", "description"],
+                  ["Notes", "notes"], ["Source", "source"]].map(([label, key]) => (
+                  <SortableTh key={key} label={label} sortKey={key} className="px-6"
+                    current={statusTools.sortKey} dir={statusTools.sortDir} onSort={statusTools.toggleSort} />
+                ))}
                 {isAdmin && <th className="px-6 py-3">Actions</th>}
               </tr>
             </thead>
