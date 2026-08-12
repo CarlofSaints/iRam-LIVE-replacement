@@ -193,33 +193,57 @@ async function checkOneDispoDir(
 ): Promise<FilingResult> {
   const monthName = monthFolderName(period.year, period.month);
 
-  const yearKids = await list([folder, dispoDir, String(period.year)]);
-  if (yearKids == null) {
-    return { clientName, folder, verdict: "no year folder", expectedPath: `${base}/${dispoDir}/${period.year}` };
+  // TWO layouts are in live use and both are correct:
+  //   …/DISPO's & DATA SOURCES/2026/2026-08/W1   (Verigreen, Bisco)
+  //   …/DISPO's & DATA SOURCES/2026-08/W1        (Vermont, Clippa — no year level)
+  // Checking only the nested one reported five clients as "no year folder"
+  // when their DISPO was filed correctly.
+  let best: FilingResult | null = null;
+  for (const prefix of [[String(period.year), monthName], [monthName]]) {
+    const r = await checkMonthPath(clientName, folder, dispoDir, prefix, period, base, list);
+    if (!best || VERDICT_RANK[r.verdict] < VERDICT_RANK[best.verdict]) best = r;
+    if (best.verdict === "filed") break;
+  }
+  return best!;
+}
+
+async function checkMonthPath(
+  clientName: string,
+  folder: string,
+  dispoDir: string,
+  prefix: string[],
+  period: { year: number; month: number; week: number },
+  base: string,
+  list: ListChildren,
+): Promise<FilingResult> {
+  const nested = prefix.length === 2;
+  const shownPath = `${base}/${dispoDir}/${prefix.join("/")}`;
+
+  if (nested) {
+    const yearKids = await list([folder, dispoDir, prefix[0]]);
+    if (yearKids == null) {
+      return { clientName, folder, verdict: "no year folder", expectedPath: `${base}/${dispoDir}/${prefix[0]}` };
+    }
   }
 
-  const monthKids = await list([folder, dispoDir, String(period.year), monthName]);
+  const monthKids = await list([folder, dispoDir, ...prefix]);
   if (monthKids == null) {
-    return {
-      clientName, folder, verdict: "no month folder",
-      expectedPath: `${base}/${dispoDir}/${period.year}/${monthName}`,
-      found: folderNames(yearKids),
-    };
+    return { clientName, folder, verdict: "no month folder", expectedPath: shownPath };
   }
 
   const weekDir = folderNames(monthKids).find((d) => weekFolderNumber(d) === period.week);
   if (!weekDir) {
     return {
       clientName, folder, verdict: "no week folder",
-      expectedPath: `${base}/${dispoDir}/${period.year}/${monthName}/W${period.week}`,
+      expectedPath: `${shownPath}/W${period.week}`,
       found: folderNames(monthKids),
     };
   }
 
   // A week folder with nothing in it is the same failure as no folder: the
   // DISPO was loaded into the app but never saved where the team can find it.
-  const weekKids = await list([folder, dispoDir, String(period.year), monthName, weekDir]);
-  const path = `${base}/${dispoDir}/${period.year}/${monthName}/${weekDir}`;
+  const weekKids = await list([folder, dispoDir, ...prefix, weekDir]);
+  const path = `${shownPath}/${weekDir}`;
   return (weekKids ?? []).length === 0
     ? { clientName, folder, verdict: "empty week folder", expectedPath: path }
     : { clientName, folder, verdict: "filed", expectedPath: path };

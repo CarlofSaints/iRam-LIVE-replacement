@@ -140,6 +140,14 @@ const TREE: Record<string, Entry[]> = {
 
   "GENKEM": [{ name: "MASTERFILES", isFolder: true }],
 
+  // Vermont files with NO year level — the month folders sit directly under
+  // the DISPO folder. Both layouts are live and both are correct; checking
+  // only the nested one reported five clients as "no year folder" when their
+  // DISPO was filed properly.
+  "VERMONT SALES": [{ name: "DISPO'S & DATA SOURCES", isFolder: true }],
+  "VERMONT SALES/DISPO'S & DATA SOURCES/2026-08": [{ name: "W1", isFolder: true }],
+  "VERMONT SALES/DISPO'S & DATA SOURCES/2026-08/W1": [{ name: "vermont.xlsx", isFolder: false }],
+
   // Clippa really has TWO folders starting with "Dispo". The first one listed
   // is the empty legacy folder; the file is in the other. Checking only the
   // first reported Clippa as unfiled when it was filed correctly.
@@ -159,7 +167,7 @@ const listTree: ListChildren = async (p) => {
 const AUG_W1 = { year: 2026, month: 8, week: 1 };
 
 async function verdictFor(client: string) {
-  const r = await checkClientFiling(client, AUG_W1, FOLDERS.concat(["VERIGREEN", "ROVIC LEERS", "TALBORNE", "TOPLINE", "GENKEM", "CLIPPA SALES"]), listTree);
+  const r = await checkClientFiling(client, AUG_W1, FOLDERS.concat(["VERIGREEN", "ROVIC LEERS", "TALBORNE", "TOPLINE", "GENKEM", "CLIPPA SALES", "VERMONT SALES"]), listTree);
   return r.verdict;
 }
 
@@ -178,6 +186,10 @@ async function runFilingTests() {
   // A client with several "Dispo*" folders must be judged on the best of them.
   eq(await verdictFor("CLIPPA SALES (Pty) Ltd"), "filed",
     "the second DISPO folder is found when the first is empty");
+
+  // The flat layout (no year folder) is just as valid as the nested one.
+  eq(await verdictFor("VERMONT SALES (PTY) LTD"), "filed",
+    "month folders directly under the DISPO folder count as filed");
 
   // Wrong week in the same month must not pass.
   eq((await checkClientFiling("VERIGREEN PTY LTD", { year: 2026, month: 8, week: 3 }, ["VERIGREEN"], listTree)).verdict,
