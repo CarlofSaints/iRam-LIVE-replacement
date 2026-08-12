@@ -12,6 +12,8 @@ import { getCamById } from "@/lib/camData";
 import { getUsers } from "@/lib/userData";
 import { sendMissingProductsEmail, sendMissingStoresEmail, sendSupplyRouteEmail } from "@/lib/email";
 import { scanSupplyRoutes, issueSheetRows } from "@/lib/supplyRoute";
+import { buildPrincipalMap, resolveVendors, principalCoverage } from "@/lib/principalVendor";
+import { getProductMaster } from "@/lib/productMasterData";
 import { requireLogin, requirePermission, noCacheHeaders, handleAuthError } from "@/lib/auth";
 import { addLog } from "@/lib/activityLog";
 import { acquireUploadLock, releaseUploadLock, lockMessage } from "@/lib/uploadLock";
@@ -382,6 +384,20 @@ export async function POST(req: NextRequest) {
       // BOTH vendor streams loaded and stale-row tracking stays per-vendor. Each
       // row's vendor was resolved by the parser (DC lines already carry their
       // article's real vendor). With a single vendor this collapses to one group.
+      /* Re-decide each row's vendor with the PMF in hand. The parser can only
+         guess for a DC line — it inherits the article's vendor from a numeric
+         row, else takes the file's dominant vendor, which is a coin toss once
+         a file carries more than one vendor. The PMF's Principal says outright
+         which vendor owns the SKU, so it wins over both guesses. Rows that
+         STILL had to be guessed are counted, so a half-filled PMF can't
+         quietly look like it is working. */
+      const pmfProducts = await getProductMaster(client.id);
+      const principalMap = buildPrincipalMap(pmfProducts, client.vendorNumbers ?? []);
+      const coverage = principalCoverage(pmfProducts, client.vendorNumbers ?? []);
+      const vendorRes = resolveVendors(
+        result.rows, linksLookup, principalMap, result.vendorNumber,
+      );
+
       const primary = { id: mainChannelId, name: mainChannelName };
       const groups = new Map<string, { channel: { id: string; name: string }; vendor: string; rows: Record<string, unknown>[] }>();
       for (const row of result.rows) {
@@ -453,11 +469,24 @@ export async function POST(req: NextRequest) {
         : "";
       const vendorLabel = result.vendorNumbers.length ? result.vendorNumbers.join("/") : result.vendorNumber;
 
+      /* How each row's vendor was decided. "guessed" is the number that
+         matters: it is rows the PMF could not answer for, which in a
+         multi-vendor file may be attributed to the wrong vendor. */
+      const vc = vendorRes.counts;
+      const vendorSuffix = ` Vendor from: ${vc.cell} file, ${vc.pmf} PMF principal, ${vc.inherited} same-article, ${vc.fallback + vc.none} guessed.` +
+        ` PMF principals: ${coverage.usable} of ${coverage.total} SKU(s) carry a usable vendor number` +
+        (coverage.withPrincipal > coverage.usable
+          ? ` (${coverage.withPrincipal - coverage.usable} more have a value that is not one of this client's vendor numbers).`
+          : ".") +
+        (vendorRes.conflicts.length > 0
+          ? ` ⚠ ${vendorRes.conflicts.length} SKU(s) where the PMF principal disagrees with the DISPO's vendor.`
+          : "");
+
       await addLog({
         userId: session.userId,
         userName: session.name,
         action: "upload_dispo",
-        details: `Uploaded DISPO for ${client.name} / ${mainChannelName} (${result.totalRows} rows, vendor(s) ${vendorLabel}). Ledger merge: ${mergeTotals.inserted} new, ${mergeTotals.updated} updated, ${mergeTotals.unchanged} unchanged.${splitSuffix}${repairSuffix}${logSuffix}`,
+        details: `Uploaded DISPO for ${client.name} / ${mainChannelName} (${result.totalRows} rows, vendor(s) ${vendorLabel}). Ledger merge: ${mergeTotals.inserted} new, ${mergeTotals.updated} updated, ${mergeTotals.unchanged} unchanged.${splitSuffix}${repairSuffix}${vendorSuffix}${logSuffix}`,
         status: "success",
         clientId: client.id,
         clientName: client.name,

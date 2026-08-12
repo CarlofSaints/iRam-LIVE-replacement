@@ -70,6 +70,7 @@ export async function buildProductMaster(
     status: saved.status || auto.status,
     description: saved.description || auto.description,
     barcode: saved.barcode || auto.barcode,
+    principal: saved.principal || auto.principal,
   };
 
   // Build master, dedup by clientProductId (last row wins)
@@ -102,6 +103,9 @@ export async function buildProductMaster(
     }
     if (mapping.barcode && row[mapping.barcode] !== undefined) {
       entry.barcode = String(row[mapping.barcode]).trim() || undefined;
+    }
+    if (mapping.principal && row[mapping.principal] !== undefined) {
+      entry.principal = String(row[mapping.principal]).trim() || undefined;
     }
 
     dedup.set(key, entry);
@@ -158,6 +162,13 @@ export const AUTO_MATCH: Record<keyof ProductFieldMapping, string[]> = {
     "prod desc",
   ],
   barcode: ["barcode", "ean", "gtin", "upc"],
+  /* "PRODUCT PRINCIPLE" is what the PMFs actually use — it is in 13 of the 14
+     sampled. The correct spelling and the bare forms are accepted too, since
+     this is the column the team fills the owning vendor number into. */
+  principal: [
+    "product principle", "product principal", "principle", "principal",
+    "product vendor", "vendor number", "vendor",
+  ],
 };
 
 /**

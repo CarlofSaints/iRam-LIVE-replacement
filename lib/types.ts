@@ -304,6 +304,10 @@ export interface ProductFieldMapping {
   status?: string;         // which PMF column = Product Status (Active/Discontinued)
   description?: string;    // which PMF column = Product Description
   barcode?: string;        // which PMF column = Barcode/EAN
+  /* which PMF column = the owning vendor number ("PRODUCT PRINCIPLE"), filled
+     in per SKU so a DC line in a multi-vendor DISPO is attributed rather than
+     guessed. Read tolerantly — see lib/principalVendor.ts. */
+  principal?: string;
 }
 
 export interface ProductMaster {
@@ -314,6 +318,8 @@ export interface ProductMaster {
   status?: string;
   description?: string;
   barcode?: string;
+  /** Owning vendor number as typed in the PMF — may be a name, so validate before use. */
+  principal?: string;
 }
 
 // ── Links Field Mapping ──
