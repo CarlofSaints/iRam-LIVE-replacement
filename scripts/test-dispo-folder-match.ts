@@ -139,12 +139,27 @@ const TREE: Record<string, Entry[]> = {
   "TOPLINE/DISPO'S & DATA SOURCES/2026": [{ name: "2026-07", isFolder: true }],
 
   "GENKEM": [{ name: "MASTERFILES", isFolder: true }],
+
+  // Clippa really has TWO folders starting with "Dispo". The first one listed
+  // is the empty legacy folder; the file is in the other. Checking only the
+  // first reported Clippa as unfiled when it was filed correctly.
+  "CLIPPA SALES": [
+    { name: "Dispo", isFolder: true },
+    { name: "DISPO's & DATA SOURCES", isFolder: true },
+  ],
+  "CLIPPA SALES/Dispo/2026": null as unknown as Entry[],
+  "CLIPPA SALES/DISPO's & DATA SOURCES/2026": [{ name: "2026-08", isFolder: true }],
+  "CLIPPA SALES/DISPO's & DATA SOURCES/2026/2026-08": [{ name: "W1", isFolder: true }],
+  "CLIPPA SALES/DISPO's & DATA SOURCES/2026/2026-08/W1": [{ name: "VD CLIPPA (892-W1) MB.xlsx", isFolder: false }],
 };
-const listTree: ListChildren = async (p) => TREE[p.join("/")] ?? null;
+const listTree: ListChildren = async (p) => {
+  const v = TREE[p.join("/")];
+  return v == null ? null : v;
+};
 const AUG_W1 = { year: 2026, month: 8, week: 1 };
 
 async function verdictFor(client: string) {
-  const r = await checkClientFiling(client, AUG_W1, FOLDERS.concat(["VERIGREEN", "ROVIC LEERS", "TALBORNE", "TOPLINE", "GENKEM"]), listTree);
+  const r = await checkClientFiling(client, AUG_W1, FOLDERS.concat(["VERIGREEN", "ROVIC LEERS", "TALBORNE", "TOPLINE", "GENKEM", "CLIPPA SALES"]), listTree);
   return r.verdict;
 }
 
@@ -159,6 +174,10 @@ async function runFilingTests() {
   // A week folder holding only a file still counts — files are what get filed.
   const r = await checkClientFiling("VERIGREEN PTY LTD", AUG_W1, ["VERIGREEN"], listTree);
   eq(r.expectedPath, "CLIENTS/VERIGREEN/DISPO's & DATA SOURCES/2026/2026-08/WK1", "reports the real path it found");
+
+  // A client with several "Dispo*" folders must be judged on the best of them.
+  eq(await verdictFor("CLIPPA SALES (Pty) Ltd"), "filed",
+    "the second DISPO folder is found when the first is empty");
 
   // Wrong week in the same month must not pass.
   eq((await checkClientFiling("VERIGREEN PTY LTD", { year: 2026, month: 8, week: 3 }, ["VERIGREEN"], listTree)).verdict,

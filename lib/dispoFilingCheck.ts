@@ -65,31 +65,48 @@ export async function checkDispoFiling(
 
   // One listing per path, cached: sibling clients never share a path, but a
   // client checked twice (two channels, same period) would otherwise re-fetch.
-  const cache = new Map<string, Entry[] | null>();
-  const list = async (relPath: string[]): Promise<Entry[] | null> => {
+  // Cache the PROMISE, not the result — clients are walked concurrently, so two
+  // workers reaching the same path must share one request rather than both miss.
+  const cache = new Map<string, Promise<Entry[] | null>>();
+  const list = (relPath: string[]): Promise<Entry[] | null> => {
     const key = relPath.join("/");
-    if (cache.has(key)) return cache.get(key)!;
-    const kids = await listChildrenAtPath(driveId, itemId, relPath);
-    const val = kids == null ? null : kids.map((k) => ({ name: k.name, isFolder: k.isFolder }));
-    cache.set(key, val);
-    return val;
+    const hit = cache.get(key);
+    if (hit) return hit;
+    const p = listChildrenAtPath(driveId, itemId, relPath).then((kids) =>
+      kids == null ? null : kids.map((k) => ({ name: k.name, isFolder: k.isFolder })),
+    );
+    cache.set(key, p);
+    return p;
   };
+
+  // Each client is 3-5 sequential Graph calls; run a few clients at once so the
+  // whole check stays a few seconds rather than half a minute. Kept modest to
+  // stay well clear of Graph throttling.
+  const names = [...new Set(clientNames)].sort();
+  const CONCURRENCY = 6;
+  const results: FilingResult[] = new Array(names.length);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(CONCURRENCY, names.length) }, async () => {
+      for (let i = next++; i < names.length; i = next++) {
+        const name = names[i];
+        try {
+          results[i] = await checkClientFiling(name, period, clientDirs, list, overrides);
+        } catch (e) {
+          // One client failing must not silently drop it from the report.
+          results[i] = {
+            clientName: name, verdict: "no client folder",
+            expectedPath: `(could not be read — ${e instanceof Error ? e.message : String(e)})`,
+          };
+        }
+      }
+    }),
+  );
 
   const problems: FilingResult[] = [];
   const unmatched: FilingResult[] = [];
   let filed = 0;
-
-  for (const name of [...new Set(clientNames)].sort()) {
-    let r: FilingResult;
-    try {
-      r = await checkClientFiling(name, period, clientDirs, list, overrides);
-    } catch (e) {
-      // One client's folder failing must not silently drop it from the report.
-      r = {
-        clientName: name, verdict: "no client folder",
-        expectedPath: `(could not be read — ${e instanceof Error ? e.message : String(e)})`,
-      };
-    }
+  for (const r of results) {
     if (r.verdict === "filed") filed++;
     else if (r.verdict === "no client folder") unmatched.push(r);
     else problems.push(r);

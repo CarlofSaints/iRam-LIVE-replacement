@@ -150,14 +150,48 @@ export async function checkClientFiling(
     };
   }
 
-  const monthName = monthFolderName(period.year, period.month);
   const base = `CLIENTS/${folder}`;
 
   const clientKids = await list([folder]);
-  const dispoDir = folderNames(clientKids).find(isDispoDir);
-  if (!dispoDir) {
+  // A client can have MORE than one folder starting with "dispo" — Clippa has
+  // both "Dispo" and "DISPO's & DATA SOURCES". Taking the first one found
+  // reported Clippa as unfiled when the file was sitting in the other folder,
+  // so try them all and keep the best outcome. A false accusation is the one
+  // thing this report cannot afford.
+  const candidates = folderNames(clientKids).filter(isDispoDir);
+  if (candidates.length === 0) {
     return { clientName, folder, verdict: "no DISPO folder", expectedPath: `${base}/DISPO's & DATA SOURCES`, found: folderNames(clientKids) };
   }
+
+  let best: FilingResult | null = null;
+  for (const dispoDir of candidates) {
+    const r = await checkOneDispoDir(clientName, folder, dispoDir, period, base, list);
+    if (!best || VERDICT_RANK[r.verdict] < VERDICT_RANK[best.verdict]) best = r;
+    if (best.verdict === "filed") break;
+  }
+  return best!;
+}
+
+// Best (0) to worst — used to pick between a client's several DISPO folders.
+const VERDICT_RANK: Record<FilingVerdict, number> = {
+  "filed": 0,
+  "empty week folder": 1,
+  "no week folder": 2,
+  "no month folder": 3,
+  "no year folder": 4,
+  "no DISPO folder": 5,
+  "no client folder": 6,
+};
+
+async function checkOneDispoDir(
+  clientName: string,
+  folder: string,
+  dispoDir: string,
+  period: { year: number; month: number; week: number },
+  base: string,
+  list: ListChildren,
+): Promise<FilingResult> {
+  const monthName = monthFolderName(period.year, period.month);
 
   const yearKids = await list([folder, dispoDir, String(period.year)]);
   if (yearKids == null) {
