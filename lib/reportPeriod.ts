@@ -101,3 +101,42 @@ export function resolveReportPeriod(
     filePart: `${year}${String(month).padStart(2, "0")}Wk${week}`,
   };
 }
+
+/* ── Which VENDOR(S) a report file actually contains ──────────────────────────
+
+   Both report routes used to name the file `client.vendorNumbers[0]`, which is
+   whichever vendor happens to sort first on the client record — nothing to do
+   with what is inside. VERIGREEN is 9677 on MAKRO and 1544 on MASSBUILD, so
+   their MAKRO Month-End downloaded as "… - 1544 - …" while every row in it was
+   9677 (Carl, 17 Aug 2026). A report that mislabels its own vendor is worse
+   than one with no vendor in the name at all.
+
+   The rows are the truth: `parseDispo` resolves a vendor per row and stamps
+   `_vendor`, and it survives the merge and the enrichment. So read the file's
+   own rows, and order them by the client's declared list purely so the name is
+   stable between runs. A vendor present in the data but NOT declared on the
+   client is still named — that disagreement is worth seeing, not hiding. */
+
+const MAX_NAMED_VENDORS = 5;
+
+export function reportVendorPart(
+  rows: { [k: string]: unknown }[],
+  declared: string[] | undefined,
+): string {
+  const present = new Set<string>();
+  for (const r of rows) {
+    const v = String(r["_vendor"] ?? "").trim();
+    if (v) present.add(v);
+  }
+
+  // No row carries a vendor (a legacy ledger, or an empty report) — fall back
+  // to what the client declares rather than leaving the name blank.
+  if (present.size === 0) return (declared ?? []).join("+");
+
+  const order = (declared ?? []).filter((v) => present.has(v));
+  const extra = [...present].filter((v) => !order.includes(v)).sort();
+  const all = [...order, ...extra];
+
+  if (all.length <= MAX_NAMED_VENDORS) return all.join("+");
+  return `${all.slice(0, MAX_NAMED_VENDORS).join("+")}+${all.length - MAX_NAMED_VENDORS}more`;
+}

@@ -26,7 +26,10 @@ interface LedgerRow {
   fieldsRemoved: number;
   byField: Record<string, number>;
   liveSuspectRows: number;
+  liveSuspectUnits: number;
   unknownRows: number;
+  unknownUnits: number;
+  snapshotRows: number;
   error?: string;
 }
 interface Report {
@@ -35,7 +38,8 @@ interface Report {
   totals: {
     ledgers: number; failed: number; rows: number;
     rowsRepaired: number; fieldsRemoved: number;
-    liveSuspectRows: number; unknownRows: number;
+    liveSuspectRows: number; liveSuspectUnits: number;
+    unknownRows: number; unknownUnits: number; snapshotRows: number;
   };
   ledgers: LedgerRow[];
 }
@@ -70,6 +74,7 @@ export default function PackPriceAudit({ canRepair }: { canRepair: boolean }) {
       clientName: (l) => l.clientName,
       channelName: (l) => l.channelName,
       fieldsRemoved: (l) => l.fieldsRemoved,
+      snapshotRows: (l) => l.snapshotRows,
       liveSuspectRows: (l) => l.liveSuspectRows,
     },
     "fieldsRemoved",
@@ -93,10 +98,16 @@ export default function PackPriceAudit({ canRepair }: { canRepair: boolean }) {
         August report showed <strong>R13.9m</strong> where the DISPO supports <strong>R775k</strong>.
         Unit counts were never affected.
       </p>
-      <p className="mb-6 max-w-3xl text-sm text-[var(--color-text-muted)]">
+      <p className="mb-4 max-w-3xl text-sm text-[var(--color-text-muted)]">
         Repairing removes the bad stored price so the report falls back to the product&apos;s current
         price — out by inflation instead of by a factor of 25. It never touches sales, stock or the
         current price columns, and running it twice does nothing the second time.
+      </p>
+      <p className="mb-6 max-w-3xl rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+        <strong>Order matters.</strong> Load a client&apos;s latest DISPO <em>first</em>, then run this.
+        A stored price is judged against the product&apos;s current price, so if the current price is
+        itself still a pack price the two look alike and the bad one is left in place. Re-run this
+        after any batch of loads.
       </p>
 
       <div className="flex flex-wrap items-center gap-3">
@@ -171,20 +182,25 @@ export default function PackPriceAudit({ canRepair }: { canRepair: boolean }) {
                 </div>
                 <div className={`mt-1 text-sm ${applied ? "text-green-700" : "text-amber-800"}`}>
                   Across {t.ledgers.toLocaleString()} ledger(s), {t.rows.toLocaleString()} row(s) read in{" "}
-                  {report.seconds}s.
+                  {report.seconds}s — {t.snapshotRows.toLocaleString()} of them carry a stored price at all.
                   {t.failed > 0 && ` ${t.failed} ledger(s) could not be read — see the table.`}
                 </div>
                 {t.liveSuspectRows > 0 && (
                   <div className="mt-2 text-sm text-amber-800">
                     <strong>{t.liveSuspectRows.toLocaleString()} row(s)</strong> still hold a pack price as
-                    their <em>current</em> price. This sweep deliberately leaves those alone — they clear
-                    when that client&apos;s latest DISPO is re-uploaded in Data Load.
+                    their <em>current</em> price, carrying{" "}
+                    <strong>{Math.round(t.liveSuspectUnits).toLocaleString()} units</strong> of sales. This
+                    sweep deliberately leaves those alone — they clear when that client&apos;s latest DISPO
+                    is re-uploaded in Data Load. Run this again afterwards.
                   </div>
                 )}
                 {t.unknownRows > 0 && (
                   <div className="mt-2 text-sm text-amber-800">
                     {t.unknownRows.toLocaleString()} row(s) have a stored price but no current price to
-                    judge it against, so they were left untouched rather than guessed at.
+                    judge it against, so they were left untouched rather than guessed at. Between them they
+                    carry <strong>{Math.round(t.unknownUnits).toLocaleString()} units</strong> of sales in
+                    the years those prices cover
+                    {t.unknownUnits < 1 ? " — so they change nothing in any report." : "."}
                   </div>
                 )}
               </div>
@@ -212,6 +228,9 @@ export default function PackPriceAudit({ canRepair }: { canRepair: boolean }) {
                       <SortableTh label="Needs re-upload" sortKey="liveSuspectRows"
                         className="px-4 py-2.5" align="right"
                         current={tools.sortKey} dir={tools.sortDir} onSort={tools.toggleSort} />
+                      <SortableTh label="Has stored prices" sortKey="snapshotRows"
+                        className="px-4 py-2.5" align="right"
+                        current={tools.sortKey} dir={tools.sortDir} onSort={tools.toggleSort} />
                       <th className="px-4 py-2.5 text-left font-semibold">Years affected</th>
                     </tr>
                   </thead>
@@ -228,6 +247,9 @@ export default function PackPriceAudit({ canRepair }: { canRepair: boolean }) {
                         </td>
                         <td className="px-4 py-2.5 text-right text-[var(--color-text-muted)]">
                           {l.liveSuspectRows > 0 ? l.liveSuspectRows.toLocaleString() : "—"}
+                        </td>
+                        <td className="px-4 py-2.5 text-right text-[var(--color-text-muted)]">
+                          {l.snapshotRows.toLocaleString()}
                         </td>
                         <td className="px-4 py-2.5 text-xs text-[var(--color-text-muted)]">
                           {l.error

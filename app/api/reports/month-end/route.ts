@@ -28,7 +28,7 @@ import { getMergedStores } from "@/lib/storeFileData";
 import { getProductLookup } from "@/lib/productMasterData";
 import { getControlFileData } from "@/lib/controlFileData";
 import { saveReportToSharePointSafe } from "@/lib/sharepoint";
-import { resolveReportPeriod } from "@/lib/reportPeriod";
+import { resolveReportPeriod, reportVendorPart } from "@/lib/reportPeriod";
 
 /* This report is an order of magnitude heavier than Vital Signs: it reads the
    whole store master, the product lookup and the ranging file on top of the
@@ -202,7 +202,10 @@ export async function GET(req: NextRequest) {
     // FIRST stamped ledger rather than the latest, which is what put "Wk1" on
     // reports across every client.
     const client = await getClientById(clientId);
-    const vendorNum = client?.vendorNumbers?.[0] ?? "";
+    /* Name the vendors that are actually IN this file, not vendorNumbers[0] —
+       see reportVendorPart. `reportRows` and not `allRows`, so the name follows
+       the sub-channel / category filters the user applied. */
+    const vendorNum = reportVendorPart(reportRows, client?.vendorNumbers);
     const period = resolveReportPeriod(
       ledgerResults.map(({ meta }) => meta),
       { year: yearParam, month: monthParam, week: weekParam },

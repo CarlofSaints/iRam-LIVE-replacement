@@ -12,7 +12,7 @@ import { analyzeCoverage, coverageMessageLines, formatMonth } from "@/lib/dataCo
 import { addLog } from "@/lib/activityLog";
 import { incrementReportCount } from "@/lib/reportCounts";
 import { saveReportToSharePointSafe } from "@/lib/sharepoint";
-import { resolveReportPeriod } from "@/lib/reportPeriod";
+import { resolveReportPeriod, reportVendorPart } from "@/lib/reportPeriod";
 
 export const maxDuration = 120;
 
@@ -186,9 +186,12 @@ export async function GET(req: NextRequest) {
     incrementReportCount(clientId, "vitalSigns").catch(() => {});
 
     // 8. Return as downloadable xlsx
-    // Naming: Vital Signs - CLIENT NAME - VENDOR - YYYYMMWkN
+    // Naming: Vital Signs - CLIENT NAME - VENDOR(S) - YYYYMMWkN
+    // The vendors named are the ones actually in the file, read off the rows —
+    // not vendorNumbers[0], which is just whichever sorts first on the client
+    // record. See reportVendorPart in lib/reportPeriod.ts.
     const client = await getClientById(clientId);
-    const vendorNum = client?.vendorNumbers?.[0] ?? "";
+    const vendorNum = reportVendorPart(enriched.rows, client?.vendorNumbers);
 
     // Period from query params, else the LATEST stamped ledger, else today.
     // This used to take the FIRST stamped ledger (channel order, not time

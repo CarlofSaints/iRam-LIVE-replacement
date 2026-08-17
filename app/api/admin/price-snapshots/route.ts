@@ -6,6 +6,7 @@ import {
   getSalesLedger,
   overwriteSalesLedger,
 } from "@/lib/salesData";
+import { listBlobs } from "@/lib/blob";
 import { repairLedger, type LedgerRepairSummary } from "@/lib/priceSnapshotRepair";
 import { acquireUploadLock, releaseUploadLock, lockMessage } from "@/lib/uploadLock";
 import { addLog } from "@/lib/activityLog";
@@ -34,7 +35,46 @@ interface LedgerResult extends LedgerRepairSummary {
   clientName: string;
   channelId: string;
   channelName: string;
+  snapshotRows: number;   // rows carrying ANY per-year price at all
   error?: string;
+}
+
+/* How many rows carry a per-year price of any kind. Reported even when nothing
+   is wrong, so "we looked and it was clean" is distinguishable from "we never
+   looked" — the first sweep could not tell those apart, which is why a skipped
+   ledger read as a successful run. */
+function countSnapshotRows(rows: Record<string, unknown>[]): number {
+  let n = 0;
+  for (const r of rows) {
+    if (Object.keys(r).some((k) => /^_(inclSP|promSP|nettCost)_\d{4}$/.test(k))) n++;
+  }
+  return n;
+}
+
+/* Find every ledger by BLOB PREFIX, not by `sales/{clientId}/index.json`.
+
+   That index is a read-modify-write of one shared JSON — the same shape as the
+   uploads index that silently lost entries under concurrent loads. A ledger
+   missing from it is invisible, and on 17 Aug that is exactly what happened:
+   the first sweep reported 52 ledgers, VERIGREEN/MAKRO was not among them, and
+   its 2025 prices survived while the summary said the run had succeeded.
+   The purge already sweeps by prefix for the same reason. */
+async function findLedgers(onlyClientId?: string | null): Promise<{ clientId: string; channelId: string }[]> {
+  const blobs = await listBlobs("sales/");
+  const out: { clientId: string; channelId: string }[] = [];
+  const seen = new Set<string>();
+  for (const b of blobs) {
+    const m = b.key.match(/(?:^|\/)sales\/([^/]+)\/([^/]+)\.json$/);
+    if (!m) continue;
+    const [, clientId, channelId] = m;
+    if (channelId === "index" || channelId.endsWith("-meta")) continue;   // not ledgers
+    if (onlyClientId && clientId !== onlyClientId) continue;
+    const k = `${clientId}/${channelId}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push({ clientId, channelId });
+  }
+  return out;
 }
 
 async function sweep(
@@ -42,35 +82,42 @@ async function sweep(
   onlyClientId?: string | null,
 ): Promise<{ ledgers: LedgerResult[]; totals: Record<string, number> }> {
   const clients = await getClients();
-  const targets = onlyClientId ? clients.filter((c) => c.id === onlyClientId) : clients;
+  const clientName = new Map(clients.map((c) => [c.id, c.name]));
+
+  /* Names come from the per-client index when it has them — it is fine for
+     LABELS, just not for deciding what exists. */
+  const channelName = new Map<string, string>();
+  for (const c of clients) {
+    for (const meta of await getAllSalesLedgers(c.id)) {
+      if (meta.channelName) channelName.set(`${c.id}/${meta.channelId}`, meta.channelName);
+    }
+  }
 
   const ledgers: LedgerResult[] = [];
 
-  for (const client of targets) {
-    const metas = await getAllSalesLedgers(client.id);
-    for (const meta of metas) {
-      const base = {
-        clientId: client.id,
-        clientName: client.name,
-        channelId: meta.channelId,
-        channelName: meta.channelName,
-      };
-      try {
-        const rows = await getSalesLedger(client.id, meta.channelId);
-        const summary = repairLedger(rows, { apply });
-        // Only pay for a write when something actually changed.
-        if (apply && summary.fieldsRemoved > 0) {
-          await overwriteSalesLedger(client.id, meta.channelId, rows);
-        }
-        ledgers.push({ ...base, ...summary });
-      } catch (err) {
-        ledgers.push({
-          ...base,
-          rows: 0, rowsRepaired: 0, fieldsRemoved: 0, byField: {},
-          liveSuspectRows: 0, unknownRows: 0, samples: [],
-          error: err instanceof Error ? err.message : String(err),
-        });
+  for (const { clientId: cid, channelId } of await findLedgers(onlyClientId)) {
+    const base = {
+      clientId: cid,
+      clientName: clientName.get(cid) ?? `(unknown client ${cid})`,
+      channelId,
+      channelName: channelName.get(`${cid}/${channelId}`) ?? channelId,
+    };
+    try {
+      const rows = await getSalesLedger(cid, channelId);
+      const summary = repairLedger(rows, { apply });
+      // Only pay for a write when something actually changed.
+      if (apply && summary.fieldsRemoved > 0) {
+        await overwriteSalesLedger(cid, channelId, rows);
       }
+      ledgers.push({ ...base, ...summary, snapshotRows: countSnapshotRows(rows) });
+    } catch (err) {
+      ledgers.push({
+        ...base,
+        rows: 0, rowsRepaired: 0, fieldsRemoved: 0, byField: {},
+        liveSuspectRows: 0, liveSuspectUnits: 0, unknownRows: 0, unknownUnits: 0,
+        samples: [], snapshotRows: 0,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -82,9 +129,15 @@ async function sweep(
       rowsRepaired: acc.rowsRepaired + l.rowsRepaired,
       fieldsRemoved: acc.fieldsRemoved + l.fieldsRemoved,
       liveSuspectRows: acc.liveSuspectRows + l.liveSuspectRows,
+      liveSuspectUnits: acc.liveSuspectUnits + l.liveSuspectUnits,
       unknownRows: acc.unknownRows + l.unknownRows,
+      unknownUnits: acc.unknownUnits + l.unknownUnits,
+      snapshotRows: acc.snapshotRows + l.snapshotRows,
     }),
-    { ledgers: 0, failed: 0, rows: 0, rowsRepaired: 0, fieldsRemoved: 0, liveSuspectRows: 0, unknownRows: 0 },
+    {
+      ledgers: 0, failed: 0, rows: 0, rowsRepaired: 0, fieldsRemoved: 0,
+      liveSuspectRows: 0, liveSuspectUnits: 0, unknownRows: 0, unknownUnits: 0, snapshotRows: 0,
+    },
   );
 
   return { ledgers, totals };
@@ -108,7 +161,7 @@ export async function GET(req: NextRequest) {
           "that client's latest DISPO is re-loaded, not by this sweep.",
         seconds: Math.round((Date.now() - started) / 100) / 10,
         totals,
-        ledgers: ledgers.filter((l) => l.fieldsRemoved > 0 || l.liveSuspectRows > 0 || l.error),
+        ledgers,
       },
       { headers: noCacheHeaders() },
     );
@@ -162,7 +215,7 @@ export async function POST(req: NextRequest) {
           mode: "applied",
           seconds: Math.round((Date.now() - started) / 100) / 10,
           totals,
-          ledgers: ledgers.filter((l) => l.fieldsRemoved > 0 || l.liveSuspectRows > 0 || l.error),
+          ledgers,
         },
         { headers: noCacheHeaders() },
       );

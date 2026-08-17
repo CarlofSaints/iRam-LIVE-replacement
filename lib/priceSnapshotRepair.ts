@@ -83,6 +83,37 @@ const num = (v: unknown): number => {
   return isNaN(n) ? NaN : n;
 };
 
+/* Units on a row for one calendar year, read off its own `MM-YYYY` sales
+   columns. Nothing else needs passing in, which keeps this pure.
+
+   This exists so the two buckets we DON'T repair can be sized rather than just
+   counted. "7,625 rows we couldn't judge" is alarming and useless; "…carrying
+   140 units of last-year sales between them" is a decision. */
+export function unitsInYear(row: Record<string, unknown>, year: number): number {
+  const suffix = `-${year}`;
+  let total = 0;
+  for (const key of Object.keys(row)) {
+    if (!key.endsWith(suffix) || !/^\d{2}-\d{4}$/.test(key)) continue;
+    const n = num(row[key]);
+    if (isFinite(n)) total += n;
+  }
+  return total;
+}
+
+/* The newest year this row carries sales for — the one the LIVE price column
+   values, and therefore the one at risk when that column is itself a pack
+   price. */
+function latestSalesYear(row: Record<string, unknown>): number | null {
+  let best: number | null = null;
+  for (const key of Object.keys(row)) {
+    const m = key.match(/^\d{2}-(\d{4})$/);
+    if (!m) continue;
+    const y = Number(m[1]);
+    if (best === null || y > best) best = y;
+  }
+  return best;
+}
+
 /* Classify one snapshot against the live column it shadows.
 
    Direction matters and is not symmetric:
@@ -143,7 +174,9 @@ export interface LedgerRepairSummary {
   fieldsRemoved: number;
   byField: Record<string, number>;   // "_inclSP_2025" → how many rows
   liveSuspectRows: number;    // rows whose CURRENT price looks pack-level
+  liveSuspectUnits: number;   // …and the sales those rows actually value
   unknownRows: number;        // rows with a snapshot but no live price to judge it
+  unknownUnits: number;       // …and the sales of the year that snapshot prices
   samples: FieldFinding[];    // first few, for the preview
 }
 
@@ -160,7 +193,9 @@ export function repairLedger(
     fieldsRemoved: 0,
     byField: {},
     liveSuspectRows: 0,
+    liveSuspectUnits: 0,
     unknownRows: 0,
+    unknownUnits: 0,
     samples: [],
   };
 
@@ -171,8 +206,21 @@ export function repairLedger(
       summary.fieldsRemoved += r.removed.length;
       for (const f of r.removed) summary.byField[f] = (summary.byField[f] ?? 0) + 1;
     }
-    if (r.liveSuspect) summary.liveSuspectRows++;
-    if (r.findings.some((f) => f.verdict === "unknown")) summary.unknownRows++;
+    if (r.liveSuspect) {
+      summary.liveSuspectRows++;
+      const y = latestSalesYear(row);
+      if (y !== null) summary.liveSuspectUnits += unitsInYear(row, y);
+    }
+    /* Size the bucket, don't just count it. A row we can't judge only matters
+       if it carries sales in the year its snapshot prices — a dead SKU with a
+       stale price and no units changes nothing in any report. */
+    const unknownYears = new Set(
+      r.findings.filter((f) => f.verdict === "unknown").map((f) => f.year),
+    );
+    if (unknownYears.size > 0) {
+      summary.unknownRows++;
+      for (const y of unknownYears) summary.unknownUnits += unitsInYear(row, y);
+    }
     for (const f of r.findings) {
       if (summary.samples.length < SAMPLE_LIMIT && f.verdict !== "unknown") summary.samples.push(f);
     }

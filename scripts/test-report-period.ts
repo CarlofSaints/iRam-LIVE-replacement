@@ -1,7 +1,7 @@
 /* Which period a report claims to be for.
    Run: npx tsx scripts/test-report-period.ts                                  */
 
-import { resolveReportPeriod, latestStamp, type PeriodStamp } from "../lib/reportPeriod";
+import { resolveReportPeriod, latestStamp, reportVendorPart, type PeriodStamp } from "../lib/reportPeriod";
 
 let pass = 0, fail = 0;
 function ok(label: string, cond: boolean, detail = "") {
@@ -96,6 +96,32 @@ console.log("\n── Label and filename agree ───────────
   eq("label", r.label, "Jul 2026 Wk4");
   eq("filename part", r.filePart, "202607Wk4");
   eq("month is zero-padded in the filename", resolveReportPeriod([], { year: 2026, month: 3, week: 1 }, NOW).filePart, "202603Wk1");
+}
+
+// ── Which vendor(s) the filename names ────────────────────────────────────────
+// The bug it fixes: VERIGREEN is 9677 on MAKRO and 1544 on MASSBUILD, and their
+// MAKRO Month-End downloaded as "… - 1544 - …" without a single 1544 row in it.
+{
+  const row = (v: string) => ({ _vendor: v, Article: "1", Site: "M01" });
+  eq("names the vendor actually in the file, not vendorNumbers[0]",
+    reportVendorPart([row("9677"), row("9677")], ["1544", "9677"]), "9677");
+  eq("…and the other channel names its own",
+    reportVendorPart([row("1544")], ["1544", "9677"]), "1544");
+  eq("a genuinely multi-vendor file names them all, in the declared order",
+    reportVendorPart([row("9677"), row("1544")], ["1544", "9677"]), "1544+9677");
+  eq("a vendor in the DATA but not declared is still named, never hidden",
+    reportVendorPart([row("9677"), row("4242")], ["9677"]), "9677+4242");
+  eq("a declared vendor with no rows is left out",
+    reportVendorPart([row("9677")], ["1544", "9677", "1111"]), "9677");
+  eq("rows carrying no vendor fall back to what the client declares",
+    reportVendorPart([{ Article: "1" }], ["1544", "9677"]), "1544+9677");
+  eq("…and an empty report with nothing declared names nothing",
+    reportVendorPart([], undefined), "");
+  eq("blank vendor stamps are ignored, not named as empty",
+    reportVendorPart([{ _vendor: "  " }, row("9677")], ["9677"]), "9677");
+  const many = ["1", "2", "3", "4", "5", "6", "7"];
+  eq("a long vendor list is capped so the filename stays a filename",
+    reportVendorPart(many.map(row), many), "1+2+3+4+5+2more");
 }
 
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"} — ${pass} passed, ${fail} failed\n`);

@@ -11,6 +11,7 @@ import {
   repairRow,
   repairLedger,
   PACK_PRICE_RATIO,
+  unitsInYear,
 } from "../lib/priceSnapshotRepair";
 
 let pass = 0;
@@ -118,6 +119,29 @@ eq("_inclSP_2025" in ledger[0], false, "…and they are gone");
 eq(ledger[1]._inclSP_2025, 44.95, "a healthy row is untouched");
 eq(ledger[3]._inclSP_2025, 1194.95, "an unjudgeable row is left for a human");
 eq(repairLedger(ledger, { apply: true }).fieldsRemoved, 0, "running it twice is a no-op");
+
+// ── The two buckets we don't repair get SIZED, not just counted ──
+// "7,625 rows we couldn't judge" is alarming and useless on its own; whether
+// they carry any sales is what decides if it matters.
+{
+  const ledger2: Record<string, unknown>[] = [
+    // Can't judge (no live price) and it carries real 2025 sales — this matters.
+    { "Incl SP": 0, _inclSP_2025: 1194.95, "07-2025": 100, "08-2025": 40, "08-2026": 999 },
+    // Can't judge, but dead — no 2025 sales at all, so it changes no report.
+    { "Incl SP": 0, _inclSP_2025: 1194.95, "08-2026": 500 },
+    // Live price is the pack one; its latest year's units are the ones at risk.
+    { "Incl SP": 1194.95, _inclSP_2025: 44.95, "08-2026": 25, "08-2025": 900 },
+  ];
+  const sum = repairLedger(ledger2, { apply: false });
+  eq(sum.unknownRows, 2, "both unjudgeable rows are counted");
+  eq(sum.unknownUnits, 140, "…and only the 2025 units behind them are reported");
+  eq(sum.liveSuspectRows, 1, "the pack-priced live row is flagged");
+  eq(sum.liveSuspectUnits, 25, "…and sized on its LATEST year, which that price values");
+  eq(sum.fieldsRemoved, 0, "neither bucket is repaired");
+}
+eq(unitsInYear({ "01-2026": 5, "02-2026": "7", "01-2025": 100 }, 2026), 12, "units read off the row's own columns");
+eq(unitsInYear({ "01-2026": 5, _inclSP_2026: 48.95 }, 2026), 5, "a price field is not a sales column");
+eq(unitsInYear({}, 2026), 0, "no columns is zero, not NaN");
 
 // ── The bug this exists for, end to end ──
 // 16,807 units of 08-2025. At the case price the report read R13.9m; at the each
