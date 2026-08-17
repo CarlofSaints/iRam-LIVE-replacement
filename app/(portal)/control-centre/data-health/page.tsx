@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { useTableTools } from "@/lib/useTableTools";
 import { SortableTh, TableSearch } from "@/components/TableTools";
-import { authFetch } from "@/lib/useAuth";
+import { authFetch, useAuth } from "@/lib/useAuth";
+import PackPriceAudit from "@/components/PackPriceAudit";
 
 interface LedgerDescIssue {
   clientId: string;
@@ -22,6 +23,7 @@ interface DescAuditReport {
 }
 
 export default function DataHealthPage() {
+  const { user } = useAuth();
   const [report, setReport] = useState<DescAuditReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -54,7 +56,9 @@ export default function DataHealthPage() {
 
   return (
     <div className="p-8">
-      <h1 className="mb-2 text-2xl font-bold text-[var(--color-text)]">Data Health — Bad Descriptions</h1>
+      <h1 className="mb-6 text-2xl font-bold text-[var(--color-text)]">Data Health</h1>
+
+      <h2 className="mb-2 text-xl font-bold text-[var(--color-text)]">Bad descriptions</h2>
       <p className="mb-6 max-w-3xl text-sm text-[var(--color-text-muted)]">
         Scans every client&apos;s sales ledger for product descriptions that look like payment-terms
         text — the symptom of the column-mapping bug (e.g. Libra&apos;s &ldquo;Descriptio&rdquo; column).
@@ -138,6 +142,10 @@ export default function DataHealthPage() {
           </p>
         </div>
       )}
+
+      {/* Only a super admin may run the repair; everyone who can reach this page
+          can still SCAN, because seeing the damage is not the dangerous half. */}
+      <PackPriceAudit canRepair={user?.role === "super_admin"} />
     </div>
   );
 }

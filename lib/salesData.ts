@@ -125,6 +125,34 @@ export async function getSalesLedger(
   return readJson<Record<string, unknown>[]>(ledgerKey(clientId, channelId), []);
 }
 
+/* Write a ledger back wholesale.
+
+   Deliberately NOT a general-purpose writer: every normal path into a ledger
+   goes through mergeDispo, which is what makes a load additive. This exists for
+   in-place REPAIRS of rows that are already there — today only the pack-price
+   snapshot sweep (lib/priceSnapshotRepair.ts). It reads with readJsonStrict
+   first so a transient blob failure can't turn "repair" into "replace the
+   client's history with an empty array" — the same trap the sales merge hit in
+   `59afa4a`. Callers must hold the upload lock. */
+export async function overwriteSalesLedger(
+  clientId: string,
+  channelId: string,
+  rows: Record<string, unknown>[],
+): Promise<void> {
+  if (!Array.isArray(rows)) throw new Error("overwriteSalesLedger: rows must be an array");
+  const existing = await readJsonStrict<Record<string, unknown>[]>(
+    ledgerKey(clientId, channelId),
+    [],
+  );
+  if (rows.length !== existing.length) {
+    throw new Error(
+      `overwriteSalesLedger: refusing to write ${rows.length} rows over ${existing.length} — ` +
+      `a repair must not change the row count`,
+    );
+  }
+  await writeJson(ledgerKey(clientId, channelId), rows);
+}
+
 export async function getSalesLedgerMeta(
   clientId: string,
   channelId: string,
