@@ -12,6 +12,7 @@ import {
   repairLedger,
   PACK_PRICE_RATIO,
   unitsInYear,
+  buildArticleReference,
 } from "../lib/priceSnapshotRepair";
 
 let pass = 0;
@@ -142,6 +143,69 @@ eq(repairLedger(ledger, { apply: true }).fieldsRemoved, 0, "running it twice is 
 eq(unitsInYear({ "01-2026": 5, "02-2026": "7", "01-2025": 100 }, 2026), 12, "units read off the row's own columns");
 eq(unitsInYear({ "01-2026": 5, _inclSP_2026: 48.95 }, 2026), 5, "a price field is not a sales column");
 eq(unitsInYear({}, 2026), 0, "no columns is zero, not NaN");
+
+// ── Borrowing the same product's price from another store ──
+// 7,598 rows across the estate had a stored price and no current price of their
+// own, carrying 201,636 units between them. A delisted SKU at one store almost
+// always still has a live price at another.
+{
+  const led: Record<string, unknown>[] = [
+    { Article: "303554", Site: "M01", "Incl SP": 48.95 },                        // reference
+    { Article: "303554", Site: "M02", "Incl SP": 48.95 },                        // reference
+    { Article: "303554", Site: "M03", "Incl SP": 0, _inclSP_2025: 1194.95, "08-2025": 60 }, // judged by sibling
+    { Article: "999999", Site: "M04", "Incl SP": 0, _inclSP_2025: 1194.95, "08-2025": 40 }, // no sibling anywhere
+  ];
+  const before = repairLedger(led.map((r) => ({ ...r })), { apply: false, useSiblings: false });
+  eq(before.fieldsRemoved, 0, "without siblings neither row can be judged");
+  eq(before.unknownRows, 2, "…both sit in the unjudgeable bucket");
+  eq(before.unknownUnits, 100, "…carrying 100 units between them");
+
+  const after = repairLedger(led, { apply: true, useSiblings: true });
+  eq(after.fieldsRemoved, 1, "with siblings the one with a stablemate is repaired");
+  eq(after.siblingJudgedRows, 1, "…and reported as sibling-judged");
+  eq(after.siblingRemovedFields, 1, "…with the removal attributed to it");
+  eq("_inclSP_2025" in led[2], false, "the borrowed reference exposed the pack price");
+  eq(led[3]._inclSP_2025, 1194.95, "a product no store prices is still left alone");
+  eq(after.unknownRows, 1, "…and still reported");
+  eq(after.unknownUnits, 40, "…sized on its own units only");
+}
+
+// The reference is a MEDIAN, so a few siblings still holding a pack price
+// cannot drag it up and hide a genuinely poisoned snapshot.
+{
+  const led: Record<string, unknown>[] = [
+    { Article: "A", Site: "1", "Incl SP": 48.95 },
+    { Article: "A", Site: "2", "Incl SP": 48.95 },
+    { Article: "A", Site: "3", "Incl SP": 1194.95 },                    // still pack-priced
+    { Article: "A", Site: "4", "Incl SP": 0, _inclSP_2025: 1194.95 },
+  ];
+  const ref = buildArticleReference(led);
+  eq(ref.get("Incl SP")?.get("a"), 48.95, "median ignores the one bad sibling");
+  eq(repairLedger(led, { apply: false }).fieldsRemoved, 1, "so the poisoned snapshot is still caught");
+}
+
+// A row's OWN price always wins — the sibling is only ever a fallback.
+{
+  const led: Record<string, unknown>[] = [
+    { Article: "A", Site: "1", "Incl SP": 40 },
+    { Article: "A", Site: "2", "Incl SP": 1200, _inclSP_2025: 1194.95 },
+  ];
+  const r = repairLedger(led, { apply: true });
+  eq(r.fieldsRemoved, 0, "judged on its own price (1194.95 vs 1200), not the sibling's 40");
+  eq(r.siblingJudgedRows, 0, "…so no sibling was borrowed");
+}
+
+// Nett Cost borrows from Nett Cost, promo borrows from Incl SP — never crossed.
+{
+  const led: Record<string, unknown>[] = [
+    { Article: "A", Site: "1", "Incl SP": 48.95, "Nett Cost": 28.81 },
+    { Article: "A", Site: "2", "Incl SP": 0, "Nett Cost": 0, _nettCost_2025: 720.25, _promSP_2025: 1100 },
+  ];
+  const r = repairLedger(led, { apply: true });
+  eq(r.fieldsRemoved, 2, "both the cost and the promo snapshot are caught");
+  eq("_nettCost_2025" in led[1], false, "cost judged against the sibling's cost");
+  eq("_promSP_2025" in led[1], false, "promo judged against the sibling's shelf price");
+}
 
 // ── The bug this exists for, end to end ──
 // 16,807 units of 08-2025. At the case price the report read R13.9m; at the each

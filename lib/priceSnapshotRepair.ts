@@ -75,6 +75,64 @@ export interface RowRepair {
   removed: string[];       // snapshot fields deleted from the row
   findings: FieldFinding[];
   liveSuspect: boolean;    // the row's CURRENT price looks pack-level
+  usedSibling: boolean;    // judged against the same product at another store
+}
+
+/* A reference price per article, taken from the OTHER rows of the same product.
+
+   The first sweep could only judge a stored price against the row's own current
+   price, so a row with no current price at all was left alone — 7,598 of them
+   across the estate, carrying 201,636 units of sales between them. Not a tail
+   worth ignoring. A delisted SKU with a blank price at one store almost always
+   still has a live price at another, and a product's shelf price does not vary
+   by an order of magnitude between branches, so a sibling row is a sound
+   reference where the row itself has none.
+
+   MEDIAN, not mean or first: a handful of the siblings may themselves still
+   hold a pack price (753 such rows at last count), and the median shrugs those
+   off where an average would be dragged up by them.
+
+   The two ways this can be wrong are NOT equally bad, which is what makes it
+   safe. A reference that is too HIGH makes a poisoned snapshot look fine and we
+   leave bad data alone — no worse than today. A reference too LOW would DELETE
+   good history, and that needs the article's real prices to sit below a third
+   of a genuine last-year price, which no product does. */
+export type ArticleReference = Map<string, Map<string, number>>;  // liveKey → article → price
+
+const articleKey = (row: Record<string, unknown>): string =>
+  String(row["Article"] ?? "").trim().toLowerCase();
+
+const median = (xs: number[]): number => {
+  const s = [...xs].sort((a, b) => a - b);
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+
+export function buildArticleReference(rows: Record<string, unknown>[]): ArticleReference {
+  const liveKeys = ["Incl SP", "Nett Cost"];      // Prom SP borrows Incl SP, as above
+  const gathered = new Map<string, Map<string, number[]>>(
+    liveKeys.map((k) => [k, new Map<string, number[]>()]),
+  );
+
+  for (const row of rows) {
+    const a = articleKey(row);
+    if (!a) continue;
+    for (const k of liveKeys) {
+      const v = num(row[k]);
+      if (!isFinite(v) || v <= 0) continue;
+      const byArticle = gathered.get(k)!;
+      const list = byArticle.get(a);
+      if (list) list.push(v); else byArticle.set(a, [v]);
+    }
+  }
+
+  const out: ArticleReference = new Map();
+  for (const [k, byArticle] of gathered) {
+    const m = new Map<string, number>();
+    for (const [a, values] of byArticle) m.set(a, median(values));
+    out.set(k, m);
+  }
+  return out;
 }
 
 const num = (v: unknown): number => {
@@ -139,11 +197,12 @@ export function classifySnapshot(snapshot: unknown, live: unknown): { verdict: S
    path produces the preview and does the work and the two cannot drift. */
 export function repairRow(
   row: Record<string, unknown>,
-  opts: { apply: boolean },
+  opts: { apply: boolean; reference?: ArticleReference },
 ): RowRepair {
   const removed: string[] = [];
   const findings: FieldFinding[] = [];
   let liveSuspect = false;
+  let usedSibling = false;
 
   for (const key of Object.keys(row)) {
     const family = SNAPSHOT_FAMILIES.find((f) => key.startsWith(f.prefix));
@@ -153,6 +212,18 @@ export function repairRow(
 
     let live = row[family.live];
     if (family.prefix === "_promSP_" && !(num(live) > 0)) live = row[PROM_FALLBACK_LIVE];
+
+    /* Nothing usable on the row itself — borrow the same product's price from
+       the stores that do have one. Only ever a FALLBACK: the row's own price is
+       always preferred, so this can never override a first-hand answer. */
+    if (!(num(live) > 0) && opts.reference) {
+      const refKey = family.prefix === "_promSP_" ? PROM_FALLBACK_LIVE : family.live;
+      const borrowed = opts.reference.get(refKey)?.get(articleKey(row));
+      if (borrowed !== undefined && borrowed > 0) {
+        live = borrowed;
+        usedSibling = true;
+      }
+    }
 
     const { verdict, ratio } = classifySnapshot(row[key], live);
     if (verdict === "ok") continue;
@@ -165,7 +236,7 @@ export function repairRow(
     }
   }
 
-  return { removed, findings, liveSuspect };
+  return { removed, findings, liveSuspect, usedSibling };
 }
 
 export interface LedgerRepairSummary {
@@ -177,15 +248,21 @@ export interface LedgerRepairSummary {
   liveSuspectUnits: number;   // …and the sales those rows actually value
   unknownRows: number;        // rows with a snapshot but no live price to judge it
   unknownUnits: number;       // …and the sales of the year that snapshot prices
+  siblingJudgedRows: number;  // rows judged on the same product at another store
+  siblingRemovedFields: number; // …and the prices that found only because of it
   samples: FieldFinding[];    // first few, for the preview
 }
 
 const SAMPLE_LIMIT = 10;
 
-/* Sweep a whole ledger. Mutates `rows` only when `apply` is true. */
+/* Sweep a whole ledger. Mutates `rows` only when `apply` is true.
+
+   `useSiblings: false` reproduces the original behaviour exactly — every row
+   judged on its own price alone — so the two can be compared on live data
+   rather than argued about. */
 export function repairLedger(
   rows: Record<string, unknown>[],
-  opts: { apply: boolean },
+  opts: { apply: boolean; useSiblings?: boolean },
 ): LedgerRepairSummary {
   const summary: LedgerRepairSummary = {
     rows: rows.length,
@@ -196,11 +273,21 @@ export function repairLedger(
     liveSuspectUnits: 0,
     unknownRows: 0,
     unknownUnits: 0,
+    siblingJudgedRows: 0,
+    siblingRemovedFields: 0,
     samples: [],
   };
 
+  // Built from the ledger as it stands BEFORE any deletion — the reference is
+  // live prices, which this sweep never touches, so one pass up front is safe.
+  const reference = opts.useSiblings === false ? undefined : buildArticleReference(rows);
+
   for (const row of rows) {
-    const r = repairRow(row, opts);
+    const r = repairRow(row, { apply: opts.apply, reference });
+    if (r.usedSibling) {
+      summary.siblingJudgedRows++;
+      summary.siblingRemovedFields += r.removed.length;
+    }
     if (r.removed.length > 0) {
       summary.rowsRepaired++;
       summary.fieldsRemoved += r.removed.length;

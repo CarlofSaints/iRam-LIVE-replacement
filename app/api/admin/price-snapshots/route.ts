@@ -80,6 +80,7 @@ async function findLedgers(onlyClientId?: string | null): Promise<{ clientId: st
 async function sweep(
   apply: boolean,
   onlyClientId?: string | null,
+  useSiblings = true,
 ): Promise<{ ledgers: LedgerResult[]; totals: Record<string, number> }> {
   const clients = await getClients();
   const clientName = new Map(clients.map((c) => [c.id, c.name]));
@@ -104,7 +105,7 @@ async function sweep(
     };
     try {
       const rows = await getSalesLedger(cid, channelId);
-      const summary = repairLedger(rows, { apply });
+      const summary = repairLedger(rows, { apply, useSiblings });
       // Only pay for a write when something actually changed.
       if (apply && summary.fieldsRemoved > 0) {
         await overwriteSalesLedger(cid, channelId, rows);
@@ -115,7 +116,7 @@ async function sweep(
         ...base,
         rows: 0, rowsRepaired: 0, fieldsRemoved: 0, byField: {},
         liveSuspectRows: 0, liveSuspectUnits: 0, unknownRows: 0, unknownUnits: 0,
-        samples: [], snapshotRows: 0,
+        siblingJudgedRows: 0, siblingRemovedFields: 0, samples: [], snapshotRows: 0,
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -132,11 +133,14 @@ async function sweep(
       liveSuspectUnits: acc.liveSuspectUnits + l.liveSuspectUnits,
       unknownRows: acc.unknownRows + l.unknownRows,
       unknownUnits: acc.unknownUnits + l.unknownUnits,
+      siblingJudgedRows: acc.siblingJudgedRows + l.siblingJudgedRows,
+      siblingRemovedFields: acc.siblingRemovedFields + l.siblingRemovedFields,
       snapshotRows: acc.snapshotRows + l.snapshotRows,
     }),
     {
       ledgers: 0, failed: 0, rows: 0, rowsRepaired: 0, fieldsRemoved: 0,
-      liveSuspectRows: 0, liveSuspectUnits: 0, unknownRows: 0, unknownUnits: 0, snapshotRows: 0,
+      liveSuspectRows: 0, liveSuspectUnits: 0, unknownRows: 0, unknownUnits: 0,
+      siblingJudgedRows: 0, siblingRemovedFields: 0, snapshotRows: 0,
     },
   );
 
@@ -149,12 +153,17 @@ export async function GET(req: NextRequest) {
        already gated on manage_clients — matching it keeps the scan button from
        403ing for the people who own that page. Applying stays super-admin. */
     requirePermission(req, "manage_clients");
-    const clientId = new URL(req.url).searchParams.get("clientId");
+    const q = new URL(req.url).searchParams;
+    const clientId = q.get("clientId");
+    // ?siblings=0 reproduces the original row-only logic, so the two can be
+    // compared on real data instead of argued about.
+    const useSiblings = q.get("siblings") !== "0";
     const started = Date.now();
-    const { ledgers, totals } = await sweep(false, clientId);
+    const { ledgers, totals } = await sweep(false, clientId, useSiblings);
     return Response.json(
       {
         mode: "preview",
+        useSiblings,
         note:
           "Nothing was written. POST ?confirm=repair to delete the poisoned year snapshots. " +
           "liveSuspectRows are rows whose CURRENT price is the pack one — those heal when " +
@@ -181,6 +190,7 @@ export async function POST(req: NextRequest) {
       );
     }
     const clientId = url.searchParams.get("clientId");
+    const useSiblings = url.searchParams.get("siblings") !== "0";
 
     /* Fails closed — an unreadable lock reads as busy, never as "go ahead".
        Rewriting a ledger under a concurrent DISPO load would lose that load. */
@@ -199,7 +209,7 @@ export async function POST(req: NextRequest) {
 
     const started = Date.now();
     try {
-      const { ledgers, totals } = await sweep(true, clientId);
+      const { ledgers, totals } = await sweep(true, clientId, useSiblings);
       await addLog({
         userId: session.userId,
         userName: session.name,
@@ -207,12 +217,14 @@ export async function POST(req: NextRequest) {
         details:
           `Removed ${totals.fieldsRemoved} pack-price snapshot(s) from ${totals.rowsRepaired} row(s) ` +
           `across ${totals.ledgers} ledger(s)${clientId ? " (single client)" : ""}. ` +
-          `${totals.liveSuspectRows} row(s) still hold a pack-level CURRENT price and need a DISPO re-load.`,
+          `${totals.liveSuspectRows} row(s) still hold a pack-level CURRENT price and need a DISPO re-load. ` +
+          `${totals.siblingRemovedFields} of the removals were only findable via the same product at another store.`,
         status: totals.failed > 0 ? "error" : "success",
       });
       return Response.json(
         {
           mode: "applied",
+          useSiblings,
           seconds: Math.round((Date.now() - started) / 100) / 10,
           totals,
           ledgers,

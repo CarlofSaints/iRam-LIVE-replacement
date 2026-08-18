@@ -29,6 +29,8 @@ interface LedgerRow {
   liveSuspectUnits: number;
   unknownRows: number;
   unknownUnits: number;
+  siblingJudgedRows: number;
+  siblingRemovedFields: number;
   snapshotRows: number;
   error?: string;
 }
@@ -39,7 +41,8 @@ interface Report {
     ledgers: number; failed: number; rows: number;
     rowsRepaired: number; fieldsRemoved: number;
     liveSuspectRows: number; liveSuspectUnits: number;
-    unknownRows: number; unknownUnits: number; snapshotRows: number;
+    unknownRows: number; unknownUnits: number;
+    siblingJudgedRows: number; siblingRemovedFields: number; snapshotRows: number;
   };
   ledgers: LedgerRow[];
 }
@@ -194,11 +197,19 @@ export default function PackPriceAudit({ canRepair }: { canRepair: boolean }) {
                     is re-uploaded in Data Load. Run this again afterwards.
                   </div>
                 )}
+                {t.siblingRemovedFields > 0 && (
+                  <div className="mt-2 text-sm text-amber-800">
+                    <strong>{t.siblingRemovedFields.toLocaleString()}</strong> of the{" "}
+                    {applied ? "removals" : "finds"} came from rows with no price of their own, judged
+                    against the same product at another store ({t.siblingJudgedRows.toLocaleString()} row(s)
+                    borrowed a price that way).
+                  </div>
+                )}
                 {t.unknownRows > 0 && (
                   <div className="mt-2 text-sm text-amber-800">
                     {t.unknownRows.toLocaleString()} row(s) have a stored price but no current price to
-                    judge it against, so they were left untouched rather than guessed at. Between them they
-                    carry <strong>{Math.round(t.unknownUnits).toLocaleString()} units</strong> of sales in
+                    judge it against, and no other store carries that product either, so they were left
+                    untouched rather than guessed at. Between them they carry <strong>{Math.round(t.unknownUnits).toLocaleString()} units</strong> of sales in
                     the years those prices cover
                     {t.unknownUnits < 1 ? " — so they change nothing in any report." : "."}
                   </div>

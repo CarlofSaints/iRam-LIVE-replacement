@@ -25,6 +25,9 @@ const SECTIONS: { id: string; label: string }[] = [
   { id: "checklist", label: "Quick checklist" },
   { id: "shared-data", label: "Appendix: channels & store files" },
   { id: "status", label: "Appendix: status reference (site-wide)" },
+  { id: "data-model", label: "Appendix: how a DISPO becomes a number" },
+  { id: "pack-prices", label: "Appendix: the pack-price problem" },
+  { id: "troubleshooting", label: "Appendix: when a number looks wrong" },
 ];
 
 function Figure({ src, alt, caption }: { src: string; alt: string; caption?: string }) {
@@ -137,9 +140,10 @@ export default function GuidePage() {
   return (
     <div className="p-8">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-[var(--color-text)]">Client Setup Guide</h1>
+        <h1 className="text-2xl font-bold text-[var(--color-text)]">iRam LIVE Guide</h1>
         <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-          How to onboard a new client in iRam LIVE — what each setting means, and the order to do it in.
+          How to onboard a new client — what each setting means and the order to do it in — plus, in the
+          appendices, how DISPO data turns into a report figure and what to check when one looks wrong.
         </p>
       </div>
 
@@ -558,6 +562,215 @@ export default function GuidePage() {
             <Callout tone="info">
               Everything here is generic across clients. A scenario added to a channel automatically applies to every
               client trading that channel — there&apos;s nothing client-specific to configure during onboarding.
+            </Callout>
+          </Section>
+
+          <Section id="data-model" title="Appendix: how a DISPO becomes a number">
+            <p>
+              Written up in August 2026 after a run of report defects that all traced back to the same few
+              facts about the data. If a number ever looks wrong, start here — most of the surprises live in
+              this section rather than in the report code.
+            </p>
+
+            <h3 className="pt-2 font-semibold">1. A Makro DISPO lists every product several times</h3>
+            <p>
+              A Makro-style DISPO carries <strong>one row per Article × Site × unit of measure</strong> —
+              EA (each), CS (case), PAL (pallet), LAY (layer), and a <code>**</code> total line. In a typical
+              file <em>every</em> Article|Site appears 2–5 times. Sales and stock sit <strong>only on the
+              selling-unit (EA) row</strong>; the pack rows carry zero units but <strong>real pack money</strong>:
+            </p>
+            <pre className="overflow-x-auto rounded-lg border border-[var(--color-border)] bg-zinc-50 p-3 text-xs leading-relaxed">{`uom=EA   SOH=395  Incl SP=48.95     Nett Cost=28.81
+uom=CS   SOH=0    Incl SP=1194.95   Nett Cost=720.25     <- case of 25
+uom=PAL  SOH=0    Incl SP=(blank)   Nett Cost=25929.00   <- pallet of 900
+uom=**   SOH=0    Incl SP=(blank)   Nett Cost=(blank)    <- the file's own total line`}</pre>
+            <Callout tone="warn">
+              <strong>Never sum a month column straight down a DISPO.</strong> You will roughly double the
+              answer. Verigreen&apos;s August file summed to 34,048 units for Aug-2025; the real figure is
+              16,812. The report was right and the spreadsheet check was wrong.
+            </Callout>
+            <p>
+              The parser collapses each Article|Site to <strong>one row — the highest-SOH one</strong>, which
+              is the selling unit. That happens in <code>collapseUomRows</code> and has been in place since
+              30 June 2026.
+            </p>
+            <Callout tone="info">
+              The DISPO also ends with its own <strong>grand-total line</strong> — Article and Site both blank.
+              It is ignored when building the ledger, but it will silently inflate anything you total up
+              yourself, including in Excel.
+            </Callout>
+
+            <h3 className="pt-2 font-semibold">2. Two kinds of column, two different rules</h3>
+            <ul className="list-disc space-y-1.5 pl-6">
+              <li>
+                <strong>Sales columns</strong> (the monthly <code>MM-YYYY</code> ones) are <em>history</em>.
+                Every DISPO carrying a month is a valid source for it, so back-loading old files is how gaps
+                get filled. These accumulate.
+              </li>
+              <li>
+                <strong>Snapshot columns</strong> (SOH, SOO, SIT, PR ST, RP, MAC, Nett Cost, Incl SP, Prom SP,
+                Curr Y/S) are <em>state as at the moment the DISPO was cut</em>. There is one right answer, and
+                it belongs to the <strong>most recent report period</strong> — not the most recent upload.
+              </li>
+            </ul>
+            <Callout tone="warn">
+              <strong>The week you stamp at upload decides who owns the stock.</strong> Re-load the current
+              DISPO stamped Wk1 while the ledger already holds Wk5 and the stock update is correctly rejected —
+              the load reports success, sales merge, SOH does not move. From the screen that looks identical to
+              a load that worked.
+            </Callout>
+
+            <h3 className="pt-2 font-semibold">3. Last year&apos;s Rands use last year&apos;s prices</h3>
+            <p>
+              When a DISPO is merged, each row&apos;s prices are also stored under the year of its newest month —{" "}
+              <code>_inclSP_2025</code>, <code>_promSP_2025</code>, <code>_nettCost_2025</code> — so that
+              &ldquo;Same Month LY&rdquo; and &ldquo;LY YTD&rdquo; are valued in the money of the time rather
+              than today&apos;s price.
+            </p>
+            <Callout tone="warn">
+              Those stored prices are only ever written by a load whose <strong>newest month is in that
+              year</strong>. Nobody re-uploads 2025 DISPOs, so <strong>a wrong value in them never heals by
+              itself</strong> — unlike the live price columns, which every load rewrites. That asymmetry is
+              what caused the August 2026 problem in the next section.
+            </Callout>
+
+            <h3 className="pt-2 font-semibold">4. A row goes to the ledger its STORE belongs to</h3>
+            <p>
+              You pick one main channel when you upload, but rows are routed per row: each site is looked up in
+              the store master, and the row is merged into the ledger of the <strong>main channel that owns
+              that site</strong> — not necessarily the one you selected. One DISPO can therefore populate
+              several ledgers, and a report run on one main channel will not show the rows that went elsewhere.
+            </p>
+            <Callout tone="info">
+              <strong>Known open issue.</strong> Verigreen&apos;s Walmart stores show zero sales in the MAKRO
+              Month-End for exactly this reason: their live data goes to another ledger, and the copies sitting
+              in MAKRO are stale rows from before the routing existed. The gap is exact — 106 units in August
+              2026. Not yet fixed.
+            </Callout>
+
+            <h3 className="pt-2 font-semibold">5. The ledger key is Article | Site</h3>
+            <p>
+              One row per Article|Site per ledger. Two consequences worth knowing: a product supplied both
+              direct and via a DC cannot be held separately (the higher-SOH line wins), and a site code that
+              Excel mangled — <code>R001</code> saved as a Rand value becoming <code>R1</code> — is repaired
+              against the store master before matching, so it still lines up.
+            </p>
+          </Section>
+
+          <Section id="pack-prices" title="Appendix: the pack-price problem (August 2026)">
+            <p>
+              The single largest data defect found so far, kept here because the shape of it will recur.
+            </p>
+
+            <h3 className="pt-2 font-semibold">What went wrong</h3>
+            <p>
+              Before 30 June 2026 the merge folded a product&apos;s per-UOM rows onto one ledger key with the
+              last non-blank value winning — so the <strong>case price stuck</strong> (R1,194.95 instead of
+              R48.95). The per-year price snapshots captured that. The result: last-year Rand columns reading
+              up to <strong>25× too high</strong>, while every unit count stayed correct.
+            </p>
+            <p>
+              Verigreen&apos;s August 2026 Month-End printed <strong>R13,883,224</strong> for Same Month LY
+              against a true <strong>R775,072</strong> — R825.81 for a refuse bag.
+            </p>
+            <Callout tone="tip">
+              <strong>The check that found it:</strong> divide the total by its own unit count. A wrong
+              aggregate is invisible; a wrong price per unit is obvious to anyone who knows the products.
+            </Callout>
+
+            <h3 className="pt-2 font-semibold">What the repair does</h3>
+            <p>
+              <strong>Control Centre → Data Health → Pack prices in last year&apos;s values.</strong>{" "}
+              <em>Check for pack prices</em> is read-only and safe; <em>Repair</em> needs super admin and a
+              second confirming click, and takes the upload lock so nobody can load a DISPO while it runs.
+            </p>
+            <ul className="list-disc space-y-1.5 pl-6">
+              <li>
+                A stored year-price <strong>3× or more above</strong> the product&apos;s current price is a pack
+                price and is deleted. The report then falls back to the current price — out by inflation
+                instead of by a factor of 25.
+              </li>
+              <li>
+                A stored price far <strong>below</strong> the current one means the <em>current</em> price is
+                the pack one. Those are reported and deliberately left alone — they clear when that
+                client&apos;s latest DISPO is re-uploaded.
+              </li>
+              <li>
+                A row with no current price of its own is judged against{" "}
+                <strong>the same product&apos;s price at another store</strong> (the median, so a few
+                still-bad siblings cannot skew it). Products no store prices at all are reported, never guessed.
+              </li>
+              <li>Sales, stock and the current price columns are never touched. Running it twice does nothing the second time.</li>
+            </ul>
+            <Callout tone="warn">
+              <strong>Order matters.</strong> Load the latest DISPO <em>first</em>, then run the repair. A
+              stored price is judged against the current price, so while the current price is also a pack price
+              the two look alike and the bad one is kept. Re-run the repair after any batch of loads.
+            </Callout>
+
+            <h3 className="pt-2 font-semibold">Which reports it affects</h3>
+            <ul className="list-disc space-y-1.5 pl-6">
+              <li><strong>Month-End</strong> — Same Month LY and LY YTD value columns, and every growth % based on them.</li>
+              <li><strong>Vital Signs</strong> — the <code>Curr Y/S Value LY</code> column.</li>
+              <li><strong>Charts</strong> — the current-vs-prior-year value bars and the 24-month value lines.</li>
+              <li><strong>Store Reports</strong> — <em>not</em> affected. It only ever reads current prices.</li>
+            </ul>
+            <Callout tone="tip">
+              <strong>The acceptance test.</strong> Unit growth % and value growth % should roughly agree.
+              Verigreen read <strong>+293% on units and −78% on value</strong> for the same period, which
+              cannot both be true when prices are stable. If they disagree wildly, the value side is wrong.
+            </Callout>
+          </Section>
+
+          <Section id="troubleshooting" title="Appendix: when a number looks wrong">
+            <p>
+              A running order for &ldquo;this figure does not match the DISPO&rdquo;. Each step has caught a real
+              defect at least once.
+            </p>
+            <ol className="list-decimal space-y-2 pl-6">
+              <li>
+                <strong>Divide the total by its own count.</strong> Rands ÷ units, stores ÷ region, rows ÷ SKU.
+                A unit rate that is obviously wrong for the product tells you which half of the calculation to
+                look at, in one step.
+              </li>
+              <li>
+                <strong>Check whether the file was loaded before the report was run.</strong> Compare the two
+                files&apos; modified times. A DISPO saved after the report was generated explains a small gap
+                and nothing else — this nearly sent us hunting a bug that did not exist.
+              </li>
+              <li>
+                <strong>Do not sum the DISPO by hand without collapsing UOM rows</strong> and without excluding
+                the file&apos;s own total line. See the appendix above.
+              </li>
+              <li>
+                <strong>Compare unit growth against value growth.</strong> If units say up and value says
+                down for the same period, it is a pricing problem, not a sales problem.
+              </li>
+              <li>
+                <strong>Use the Month-End <code>Data</code> sheet as the evidence.</strong> It is the ledger,
+                one row per Article|Site, with the prices and every month column. Anything the summary sheets
+                claim can be re-derived from it — that is how each of these defects was proven rather than
+                guessed at.
+              </li>
+              <li>
+                <strong>Check the report is reading the channel the data went to.</strong> Sales can be in a
+                different ledger — see &ldquo;a row goes to the ledger its store belongs to&rdquo; above.
+              </li>
+              <li>
+                <strong>Check the period stamp.</strong> Each Reports card prints the period the sheets and
+                filename will use. If stock looks stale, the last load may have been stamped an earlier week
+                and correctly refused.
+              </li>
+              <li>
+                <strong>Run the Data Health checks.</strong> Bad descriptions and pack prices both have
+                read-only scans there, and the pack-price scan lists <em>every</em> ledger with its row counts —
+                useful on its own for seeing which channels a client actually has data in.
+              </li>
+            </ol>
+            <Callout tone="info">
+              The Month-End filename names the <strong>vendors actually in the file</strong>. If a client
+              trades under several vendor numbers you will see them joined, e.g.{" "}
+              <code>1544+9677</code>. Before 17 Aug 2026 it always printed the client&apos;s first vendor
+              number regardless of the contents, so older files on SharePoint may be misnamed.
             </Callout>
           </Section>
         </article>
