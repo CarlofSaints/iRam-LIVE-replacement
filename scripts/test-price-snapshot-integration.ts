@@ -66,9 +66,16 @@ const rawW = body.reduce((s, r) => s + num(r[dateCols.find((d) => d.h === "08-20
 near("summing column W straight down double-counts (Carl's 34,048)", rawW, 34048.089, 0.1);
 
 // ── Build the two ledgers ──────────────────────────────────────────────────
-// TODAY: collapseUomRows picks the highest-SOH row — the selling unit.
+// This test deliberately reproduces the state of the code on 17 Aug 2026, so it
+// keeps the OLD collapse: pick the highest-SOH row and take its sales.
 // PRE-30-JUN: every UOM row merged onto one key, last non-empty value winning,
 //             so the CASE price stuck and got snapshotted as _inclSP_2025.
+//
+// ⚠️ Both ledgers below therefore carry the UNDERSTATED units that the 19 Aug
+// fixes correct (dropped case sales + period-as-thousands). That is intentional
+// and harmless here — the units are identical on both sides, so they cancel out
+// of the price comparison this file exists to make. For the true unit totals see
+// scripts/test-dispo-numbers-integration.ts.
 const iW = dateCols.find((d) => d.h === "08-2025")!.i;
 const correct: Record<string, unknown>[] = [];
 const poisoned: Record<string, unknown>[] = [];
@@ -110,7 +117,9 @@ for (const [, g] of groups) {
 }
 
 const collapsedW = correct.reduce((s, r) => s + num(r["08-2025"]), 0);
-near("collapsed, 08-2025 is the 16,807 the report printed", collapsedW, 16807, 0.1);
+// 16,807 is what the SHIPPED report printed, not the truth — the real figure is
+// 22,839. Pinned here only to prove this test reproduces that report exactly.
+near("the old collapse reproduces the 16,807 the report printed", collapsedW, 16807, 0.1);
 
 // ── Through the REAL report engine ─────────────────────────────────────────
 const ctx = buildDateContext(dateCols.map((d) => d.h));
@@ -141,7 +150,8 @@ const after = lyValue(poisoned);
 console.log(`  after repair:         R${after.toFixed(2)}`);
 near("after the repair the report reads the true value", after, target, 1);
 ok("…and it is no longer anywhere near R13.9m", after < 1_000_000, `R${after.toFixed(2)}`);
-near("units still untouched", lyUnits(poisoned), 16807, 0.1);
+// Again the shipped-report figure, not the truth — the repair must not move it.
+near("units still untouched by the repair", lyUnits(poisoned), 16807, 0.1);
 
 const again = repairLedger(poisoned, { apply: true });
 ok("re-running the sweep is a no-op", again.fieldsRemoved === 0);

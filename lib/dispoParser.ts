@@ -1,5 +1,12 @@
 import * as XLSX from "xlsx";
 import { resolveHeader, DATE_COL_REGEX, CANONICAL_HEADERS } from "./headers";
+import {
+  FIXED_QUANTITY_COLUMN,
+  detectPeriodThousands,
+  applyPeriodThousands,
+  describeDetection,
+  type ThousandsDetection,
+} from "./dispoNumbers";
 
 // Two source columns resolving to the same field (e.g. Libra's payment-terms
 // "Descriptio" and the real "Article Description" both map to "Article Desc").
@@ -19,6 +26,8 @@ export interface DispoParseResult {
   headerRow: number;
   totalRows: number;
   collisions: HeaderCollision[];
+  /** Period-as-thousands detection over the quantity columns — see dispoNumbers. */
+  thousands: ThousandsDetection & { cellsRescaled: number; notes: string[] };
 }
 
 /**
@@ -211,12 +220,24 @@ export function parseDispo(buffer: Buffer): DispoParseResult {
 
   const vendorNumber = dominantVendor;
 
+  // ── Period-as-thousands ──
+  // Some SAP exports write 1,525 as "1.525" in the quantity columns. Judge it
+  // against the file's own "**" total lines and rescale only on a unanimous
+  // verdict. MUST run before the UOM collapse, because the collapse reads and
+  // compares those same values. Prices are deliberately excluded — they carry
+  // real decimals.
+  const quantityColumns = [...dateColumns, FIXED_QUANTITY_COLUMN];
+  const detection = detectPeriodThousands(rows, quantityColumns);
+  const cellsRescaled = detection.applies
+    ? applyPeriodThousands(rows, quantityColumns)
+    : 0;
+
   // Makro-style DISPOs list the same Article×Site once per UOM (EA, CS, PAL,
-  // LAY, SW…). Stock and sales are reported only on the selling-unit row; the
-  // pack rows carry SOH=0. Because the sales ledger dedups by Article|Site, the
-  // zero-stock pack rows would otherwise overwrite the real stock and make every
-  // SKU look out of stock. Collapse each Article|Site to its most meaningful row
-  // here. Files with one row per Article|Site (e.g. Massbuild) are unchanged.
+  // LAY, SW…). Stock sits only on the selling-unit row; the pack rows carry
+  // SOH=0. Because the sales ledger dedups by Article|Site, the zero-stock pack
+  // rows would otherwise overwrite the real stock and make every SKU look out of
+  // stock. Collapse each Article|Site to its most meaningful row here. Files
+  // with one row per Article|Site (e.g. Massbuild) are unchanged.
   const collapsed = collapseUomRows(rows, dateColumns);
 
   return {
@@ -227,12 +248,36 @@ export function parseDispo(buffer: Buffer): DispoParseResult {
     headerRow: headerRowIdx,
     totalRows: collapsed.length,
     collisions,
+    thousands: {
+      ...detection,
+      cellsRescaled,
+      notes: describeDetection(detection, cellsRescaled),
+    },
   };
 }
 
-// Reduce duplicate Article|Site rows (one per UOM) to a single representative:
-// the row with the highest SOH, tie-broken by highest total sales, then first
-// seen — i.e. the selling-unit row that actually carries the stock and sales.
+// Reduce duplicate Article|Site rows (one per UOM) to a single representative.
+//
+// TWO different rows are needed and they are not the same row:
+//
+//   • STOCK, prices and status come from the SELLING-UNIT row — the one with
+//     real SOH. The pack rows (CS/PAL/LAY) carry SOH=0.
+//
+//   • SALES come from the "**" row, which is the file's own grand total for
+//     that Article×Site expressed in base units — i.e. Σ(units × Compo) across
+//     the UOM lines. A store that bought 32 eaches AND 1 case of 25 has 32 on
+//     the EA line, 1 on the CS line and 57 on "**". Taking the selling row
+//     alone silently DROPS every case, pallet and layer sale.
+//     Verified against a real Makro DISPO: the "**" line reconciles to
+//     Σ(units × Compo) for 194 of 194 keys that have one.
+//
+// Where a group has no "**" line we keep the selling row's own sales, because
+// without the file's own total there is nothing to prove a multi-UOM sale
+// against — and Σ(units × Compo) over a single-row group would multiply a
+// Massbuild-style row by its pack size. Those cases are counted so a file that
+// needs the total but hasn't got one can't pass unnoticed.
+//
+// Files with one row per Article|Site (e.g. Massbuild) are unchanged.
 function collapseUomRows(
   rows: Record<string, unknown>[],
   dateColumns: string[],
@@ -249,6 +294,8 @@ function collapseUomRows(
     }
     return t;
   };
+  const isTotalRow = (r: Record<string, unknown>): boolean =>
+    String(r["UOM"] ?? "").trim() === "**";
 
   const groups = new Map<string, Record<string, unknown>[]>();
   const order: (string | Record<string, unknown>)[] = [];
@@ -261,17 +308,34 @@ function collapseUomRows(
     groups.get(k)!.push(r);
   }
 
+  // Every column whose value must come off the "**" total line.
+  const salesColumns = [...dateColumns, FIXED_QUANTITY_COLUMN];
+
   const out: Record<string, unknown>[] = [];
   for (const item of order) {
     if (typeof item !== "string") { out.push(item); continue; }
     const g = groups.get(item)!;
     if (g.length === 1) { out.push(g[0]); continue; }
-    let best = g[0];
-    for (const r of g) {
+
+    // The selling-unit row: highest SOH, tie-broken by highest sales. The "**"
+    // line is never eligible — it carries SOH=0 and no prices of its own.
+    const sellCandidates = g.filter((r) => !isTotalRow(r));
+    const pool = sellCandidates.length > 0 ? sellCandidates : g;
+    let best = pool[0];
+    for (const r of pool) {
       if (numOf(r["SOH"]) - numOf(best["SOH"]) > 0) best = r;
       else if (numOf(r["SOH"]) === numOf(best["SOH"]) && salesTotal(r) > salesTotal(best)) best = r;
     }
-    out.push(best);
+
+    const total = g.find(isTotalRow);
+    if (!total) { out.push(best); continue; }
+
+    // Selling row for everything, "**" for the sales columns only.
+    const merged: Record<string, unknown> = { ...best };
+    for (const c of salesColumns) {
+      if (c in total) merged[c] = total[c];
+    }
+    out.push(merged);
   }
   return out;
 }

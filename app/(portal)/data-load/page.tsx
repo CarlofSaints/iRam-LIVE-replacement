@@ -69,6 +69,7 @@ export default function DataLoadPage() {
     message: string;
     rowCount?: number;
     merge?: { inserted: number; updated: number; unchanged: number };
+    numberFormat?: { notes: string[]; cellsRescaled: number };
     warnings?: {
       missingArticles: MissingArticleDetail[];
       missingSites: string[];
@@ -206,6 +207,7 @@ export default function DataLoadPage() {
           message: `${data.rowCount} rows processed`,
           rowCount: data.rowCount,
           merge: data.merge,
+          numberFormat: data.numberFormat,
           warnings: data.warnings,
         });
       } else {
@@ -722,6 +724,25 @@ export default function DataLoadPage() {
                       </span>
                     </div>
                   )}
+                  {/* How the quantity columns were read. A DISPO that writes
+                      1,525 as "1.525" understates sales a thousandfold, so both
+                      "we rescaled" and "we saw it and could not prove it" have
+                      to be said out loud rather than buried in the log. */}
+                  {result.numberFormat?.notes?.length ? (
+                    <div
+                      className={`mt-3 rounded-lg border px-3 py-2 text-sm ${
+                        result.numberFormat.cellsRescaled > 0
+                          ? "border-blue-200 bg-blue-50 text-blue-800"
+                          : "border-amber-200 bg-amber-50 text-amber-800"
+                      }`}
+                    >
+                      {result.numberFormat.notes.map((n, i) => (
+                        <p key={i} className={i > 0 ? "mt-1" : ""}>
+                          {n}
+                        </p>
+                      ))}
+                    </div>
+                  ) : null}
                   {/* A forced load succeeds WITH warnings — do not let a green
                       tick imply the data was clean. */}
                   {(result.warnings?.missingArticles?.length ||

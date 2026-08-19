@@ -469,6 +469,13 @@ export async function POST(req: NextRequest) {
         : "";
       const vendorLabel = result.vendorNumbers.length ? result.vendorNumbers.join("/") : result.vendorNumber;
 
+      /* How the quantity columns were read. A DISPO that writes 1,525 as
+         "1.525" understates sales a thousandfold, so both the rescale AND the
+         "we saw it but could not prove it" case have to be on the record. */
+      const thousandsSuffix = result.thousands.notes.length > 0
+        ? ` ${result.thousands.notes.join(" ")}`
+        : "";
+
       /* How each row's vendor was decided. "guessed" is the number that
          matters: it is rows the PMF could not answer for, which in a
          multi-vendor file may be attributed to the wrong vendor. */
@@ -486,7 +493,7 @@ export async function POST(req: NextRequest) {
         userId: session.userId,
         userName: session.name,
         action: "upload_dispo",
-        details: `Uploaded DISPO for ${client.name} / ${mainChannelName} (${result.totalRows} rows, vendor(s) ${vendorLabel}). Ledger merge: ${mergeTotals.inserted} new, ${mergeTotals.updated} updated, ${mergeTotals.unchanged} unchanged.${splitSuffix}${repairSuffix}${vendorSuffix}${logSuffix}`,
+        details: `Uploaded DISPO for ${client.name} / ${mainChannelName} (${result.totalRows} rows, vendor(s) ${vendorLabel}). Ledger merge: ${mergeTotals.inserted} new, ${mergeTotals.updated} updated, ${mergeTotals.unchanged} unchanged.${splitSuffix}${repairSuffix}${thousandsSuffix}${vendorSuffix}${logSuffix}`,
         status: "success",
         clientId: client.id,
         clientName: client.name,
@@ -611,6 +618,9 @@ export async function POST(req: NextRequest) {
           id: firstUploadId,
           rowCount: result.totalRows,
           merge: mergeTotals,
+          ...(result.thousands.notes.length > 0
+            ? { numberFormat: { notes: result.thousands.notes, cellsRescaled: result.thousands.cellsRescaled } }
+            : {}),
           ...(perChannel.length > 1 ? { perChannel } : {}),
           ...(hasWarnings ? {
             warnings: {
