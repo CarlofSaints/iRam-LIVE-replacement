@@ -28,6 +28,10 @@ export interface DispoParseResult {
   collisions: HeaderCollision[];
   /** Period-as-thousands detection over the quantity columns — see dispoNumbers. */
   thousands: ThousandsDetection & { cellsRescaled: number; notes: string[] };
+  /** (group, column) pairs where the file's "**" total disagreed with the
+      computed Σ(units × Compo). Not an error — several exports write "**" in
+      order units — but a jump means the export format changed. */
+  starDisagreed: number;
 }
 
 /**
@@ -243,11 +247,12 @@ export function parseDispo(buffer: Buffer): DispoParseResult {
   return {
     vendorNumber,
     vendorNumbers,
-    rows: collapsed,
+    rows: collapsed.rows,
     dateColumns,
     headerRow: headerRowIdx,
-    totalRows: collapsed.length,
+    totalRows: collapsed.rows.length,
     collisions,
+    starDisagreed: collapsed.starDisagreed,
     thousands: {
       ...detection,
       cellsRescaled,
@@ -258,44 +263,62 @@ export function parseDispo(buffer: Buffer): DispoParseResult {
 
 // Reduce duplicate Article|Site rows (one per UOM) to a single representative.
 //
-// TWO different rows are needed and they are not the same row:
+// TWO different things are needed and they do NOT come from the same place:
 //
 //   • STOCK, prices and status come from the SELLING-UNIT row — the one with
-//     real SOH. The pack rows (CS/PAL/LAY) carry SOH=0.
+//     real SOH. The pack rows (CS/PAL/LAY/SW) carry SOH=0.
 //
-//   • SALES come from the "**" row, which is the file's own grand total for
-//     that Article×Site expressed in base units — i.e. Σ(units × Compo) across
-//     the UOM lines. A store that bought 32 eaches AND 1 case of 25 has 32 on
-//     the EA line, 1 on the CS line and 57 on "**". Taking the selling row
-//     alone silently DROPS every case, pallet and layer sale.
-//     Verified against a real Makro DISPO: the "**" line reconciles to
-//     Σ(units × Compo) for 194 of 194 keys that have one.
+//   • SALES are the sum of every UOM line converted to base units:
+//     Σ(units × Compo). A store that bought 32 eaches AND 1 case of 25 has 32
+//     on the EA line and 1 on the CS line — 57 units. Keeping the selling row
+//     alone silently DROPS every case, pallet, layer and shrink-wrap sale.
+//     Measured across 36 Makro-style DISPOs on disk: 35 of them lose sales
+//     that way, and for a client selling mainly in multi-packs the loss is
+//     most of the number (Rhodes 10225 at M16 read 1,847 against a true
+//     98,021 — 1,847 EA plus 16,029 shrink-wraps of 6).
 //
-// Where a group has no "**" line we keep the selling row's own sales, because
-// without the file's own total there is nothing to prove a multi-UOM sale
-// against — and Σ(units × Compo) over a single-row group would multiply a
-// Massbuild-style row by its pack size. Those cases are counted so a file that
-// needs the total but hasn't got one can't pass unnoticed.
+// ⚠️ DO NOT take the value off the "**" line, even though it is usually the
+// same number. "**" is the file's own total row and it is NOT written in a
+// consistent unit across exports:
+//     • VERIGREEN 9677, Rhodes 10225 — base units, agrees with the sum.
+//     • BISCO 10548 (Jun) — ORDER units: EA 8, packs 0, "**" 1; Curr Y/S 86
+//       against "**" 7 (86/12).
+//     • SERANO 7629 (Jun) — all zeros while the EA line carries real sales.
+// Trusting it wiped 4,939 (group, column) pairs to zero or to a twelfth in a
+// scan of the DISPOs on disk. The sum is computed from first principles and
+// agrees with "**" on all 152,408 pairs where "**" is written in base units,
+// so it is strictly the better source. `starDisagreed` counts the rest.
+//
+// A group whose UOM values are not all distinct is NOT a clean UOM listing —
+// it could be the direct-from-vendor / via-DC pair the Article|Site key cannot
+// represent — so it falls back to the selling row rather than summing two rows
+// that may describe the same stock twice.
 //
 // Files with one row per Article|Site (e.g. Massbuild) are unchanged.
-function collapseUomRows(
+export function collapseUomRows(
   rows: Record<string, unknown>[],
   dateColumns: string[],
-): Record<string, unknown>[] {
+): { rows: Record<string, unknown>[]; starDisagreed: number } {
   const numOf = (v: unknown): number => {
     const n = Number(String(v ?? "").replace(/,/g, "").trim());
     return isNaN(n) ? -Infinity : n;
   };
+  const qty = (v: unknown): number => {
+    const n = Number(String(v ?? "").replace(/["\s,]/g, ""));
+    return Number.isFinite(n) ? n : 0;
+  };
   const salesTotal = (r: Record<string, unknown>): number => {
     let t = 0;
-    for (const c of dateColumns) {
-      const n = Number(String(r[c] ?? "").replace(/,/g, "").trim());
-      if (!isNaN(n)) t += n;
-    }
+    for (const c of dateColumns) t += qty(r[c]);
     return t;
   };
-  const isTotalRow = (r: Record<string, unknown>): boolean =>
-    String(r["UOM"] ?? "").trim() === "**";
+  const uomOf = (r: Record<string, unknown>) => String(r["UOM"] ?? "").trim();
+  const isTotalRow = (r: Record<string, unknown>) => uomOf(r) === "**";
+  // Pack size in base units. Missing or nonsensical means "already base units".
+  const compoOf = (r: Record<string, unknown>): number => {
+    const c = qty(r["Compo"]);
+    return c > 0 ? c : 1;
+  };
 
   const groups = new Map<string, Record<string, unknown>[]>();
   const order: (string | Record<string, unknown>)[] = [];
@@ -308,34 +331,44 @@ function collapseUomRows(
     groups.get(k)!.push(r);
   }
 
-  // Every column whose value must come off the "**" total line.
   const salesColumns = [...dateColumns, FIXED_QUANTITY_COLUMN];
 
   const out: Record<string, unknown>[] = [];
+  let starDisagreed = 0;
   for (const item of order) {
     if (typeof item !== "string") { out.push(item); continue; }
     const g = groups.get(item)!;
     if (g.length === 1) { out.push(g[0]); continue; }
 
-    // The selling-unit row: highest SOH, tie-broken by highest sales. The "**"
-    // line is never eligible — it carries SOH=0 and no prices of its own.
-    const sellCandidates = g.filter((r) => !isTotalRow(r));
-    const pool = sellCandidates.length > 0 ? sellCandidates : g;
+    // The "**" line is never eligible as the selling row — it carries SOH=0
+    // and no prices of its own.
+    const parts = g.filter((r) => !isTotalRow(r));
+    const pool = parts.length > 0 ? parts : g;
     let best = pool[0];
     for (const r of pool) {
       if (numOf(r["SOH"]) - numOf(best["SOH"]) > 0) best = r;
       else if (numOf(r["SOH"]) === numOf(best["SOH"]) && salesTotal(r) > salesTotal(best)) best = r;
     }
 
-    const total = g.find(isTotalRow);
-    if (!total) { out.push(best); continue; }
+    // Only sum a clean UOM listing: every part row a distinct unit.
+    const units = new Set(parts.map(uomOf));
+    if (parts.length < 2 || units.size !== parts.length) { out.push(best); continue; }
 
-    // Selling row for everything, "**" for the sales columns only.
     const merged: Record<string, unknown> = { ...best };
+    const total = g.find(isTotalRow);
     for (const c of salesColumns) {
-      if (c in total) merged[c] = total[c];
+      let sum = 0;
+      let present = false;
+      for (const r of parts) {
+        if (!(c in r)) continue;
+        present = true;
+        sum += qty(r[c]) * compoOf(r);
+      }
+      if (!present) continue;
+      if (total && c in total && Math.abs(qty(total[c]) - sum) > 0.01) starDisagreed++;
+      merged[c] = sum;
     }
     out.push(merged);
   }
-  return out;
+  return { rows: out, starDisagreed };
 }

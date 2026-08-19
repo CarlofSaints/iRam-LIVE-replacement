@@ -18,6 +18,10 @@ import {
   detectPeriodThousands,
   applyPeriodThousands,
 } from "../lib/dispoNumbers";
+import { collapseUomRows } from "../lib/dispoParser";
+
+const collapseForTest = (rows: Record<string, unknown>[], cols: string[]) =>
+  collapseUomRows(rows, cols).rows;
 
 let pass = 0, fail = 0;
 function ok(label: string, cond: boolean, detail = "") {
@@ -123,6 +127,80 @@ console.log("\n── Rescaling only touches the quantity columns ────�
   eq("  the selling price is untouched", rows[0]["Incl SP"], "43.99");
   eq("  MAC is untouched", rows[0]["MAC"], "122.905");
   ok("  a column not present is skipped without error", true);
+}
+
+console.log("\n── The \"**\" line is a CROSS-CHECK, never the value ─────");
+{
+  /* Sales are Σ(units × Compo) over the UOM lines. The "**" total row usually
+     equals that, but it is NOT written in a consistent unit across exports, and
+     an earlier version of this fix took its value directly — which zeroed or
+     twelfthed real sales on two clients. Each case below is a real file. */
+  const COLS = ["07-2026"];
+  const run = (rows: Record<string, unknown>[]) => {
+    const r = collapseForTest(rows, COLS);
+    return r[0]["07-2026"];
+  };
+
+  // VERIGREEN 9677 / Rhodes 10225: "**" in base units, agrees with the sum.
+  eq("32 eaches + 1 case of 25 is 57", run([
+    { Article: "A", Site: "M07", UOM: "EA", Compo: "1", SOH: "100", "07-2026": "32" },
+    { Article: "A", Site: "M07", UOM: "CS", Compo: "25", SOH: "0", "07-2026": "1" },
+    { Article: "A", Site: "M07", UOM: "**", Compo: "1", SOH: "0", "07-2026": "57" },
+  ]), 57);
+
+  // Rhodes 10225 at M16 — the selling row is a sliver of the real number.
+  eq("1,847 eaches + 16,029 shrink-wraps of 6 is 98,021", run([
+    { Article: "A", Site: "M16", UOM: "EA", Compo: "1", SOH: "500", "07-2026": "1847" },
+    { Article: "A", Site: "M16", UOM: "SW", Compo: "6", SOH: "0", "07-2026": "16029" },
+    { Article: "A", Site: "M16", UOM: "**", Compo: "1", SOH: "0", "07-2026": "98021" },
+  ]), 98021);
+
+  // SERANO 7629 (Jun): "**" is all zeros while the EA line has real sales.
+  // Taking "**" would have wiped these.
+  eq("an all-zero ** does not wipe the EA line", run([
+    { Article: "A", Site: "A01", UOM: "EA", Compo: "1", SOH: "50", "07-2026": "3" },
+    { Article: "A", Site: "A01", UOM: "CS", Compo: "18", SOH: "0", "07-2026": "0" },
+    { Article: "A", Site: "A01", UOM: "**", Compo: "1", SOH: "0", "07-2026": "0" },
+  ]), 3);
+
+  // BISCO 10548 (Jun): "**" is written in ORDER units — EA 8, "**" 1.
+  eq("an order-unit ** does not shrink the EA line", run([
+    { Article: "A", Site: "M01", UOM: "EA", Compo: "1", SOH: "40", "07-2026": "8" },
+    { Article: "A", Site: "M01", UOM: "CS", Compo: "12", SOH: "0", "07-2026": "0" },
+    { Article: "A", Site: "M01", UOM: "**", Compo: "1", SOH: "0", "07-2026": "1" },
+  ]), 8);
+
+  // A group with no "**" line at all still sums its UOM rows.
+  eq("no ** line is fine — the sum stands", run([
+    { Article: "A", Site: "M01", UOM: "EA", Compo: "1", SOH: "40", "07-2026": "10" },
+    { Article: "A", Site: "M01", UOM: "CS", Compo: "12", SOH: "0", "07-2026": "2" },
+  ]), 34);
+
+  // A repeated UOM is NOT a clean UOM listing — it may be the direct-from-vendor
+  // / via-DC pair the Article|Site key cannot represent. Fall back, do not sum.
+  // The fallback returns the selling row UNTOUCHED, so its value is still the
+  // raw string — only the summing path produces a number. That distinction is
+  // deliberate: a row we did not compute is a row we did not alter.
+  eq("a repeated UOM falls back to the selling row, unaltered", run([
+    { Article: "A", Site: "M01", UOM: "EA", Compo: "1", SOH: "40", "07-2026": "10" },
+    { Article: "A", Site: "M01", UOM: "EA", Compo: "1", SOH: "5", "07-2026": "7" },
+  ]), "10");
+
+  // Stock, prices and status keep coming off the selling row.
+  {
+    const r = collapseForTest([
+      { Article: "A", Site: "M07", UOM: "EA", Compo: "1", SOH: "1040", "Incl SP": "48.95", "07-2026": "32" },
+      { Article: "A", Site: "M07", UOM: "CS", Compo: "25", SOH: "0", "Incl SP": "1194.95", "07-2026": "1" },
+    ], COLS);
+    eq("SOH is the selling row's", r[0]["SOH"], "1040");
+    eq("the price is the selling row's, not the case price", r[0]["Incl SP"], "48.95");
+    eq("the UOM is the selling unit", r[0]["UOM"], "EA");
+  }
+
+  // A single row per Article|Site (Massbuild) must NOT be multiplied by Compo.
+  eq("a lone row is never multiplied by its pack size", run([
+    { Article: "A", Site: "M01", UOM: "CS", Compo: "12", SOH: "40", "07-2026": "9" },
+  ]), "9");
 }
 
 console.log("\n── readQty stays the plain reading ──────────────────────");
