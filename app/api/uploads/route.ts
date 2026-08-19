@@ -17,6 +17,7 @@ import { getProductMaster } from "@/lib/productMasterData";
 import { requireLogin, requirePermission, noCacheHeaders, handleAuthError } from "@/lib/auth";
 import { addLog } from "@/lib/activityLog";
 import { acquireUploadLock, releaseUploadLock, lockMessage } from "@/lib/uploadLock";
+import { buildChannelGroup } from "@/lib/channelGroup";
 import type { FileType } from "@/lib/types";
 
 // Large DISPOs take real time to parse + merge. Give the function headroom so a
@@ -204,15 +205,9 @@ export async function POST(req: NextRequest) {
       // group of channels whose store masters we validate against and route rows
       // into. The link is treated bidirectionally so loading from either side
       // (Makro or Walmart) splits the file correctly.
-      const groupIds = new Set<string>([mainChannelId]);
-      for (const cid of mainRecord.companionChannelIds ?? []) groupIds.add(cid);
-      for (const c of allChannels) {
-        if (!c.parentId && c.companionChannelIds?.includes(mainChannelId)) groupIds.add(c.id);
-      }
-      const acceptChannels = [...groupIds]
-        .map((gid) => channelById.get(gid))
-        .filter((c): c is NonNullable<typeof c> => !!c)
-        .map((c) => ({ id: c.id, name: c.name }));
+      // Shared with the REPORT side (lib/channelGroup) on purpose: rows split
+      // out here are only visible there if both build the same group.
+      const acceptChannels = buildChannelGroup(mainChannelId, allChannels);
       const acceptByName = new Map<string, { id: string; name: string }>();
       for (const c of acceptChannels) acceptByName.set(c.name.trim().toUpperCase(), c);
 

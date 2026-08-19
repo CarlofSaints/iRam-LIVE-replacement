@@ -29,6 +29,8 @@ import { getProductLookup } from "@/lib/productMasterData";
 import { getControlFileData } from "@/lib/controlFileData";
 import { saveReportToSharePointSafe } from "@/lib/sharepoint";
 import { resolveReportPeriod, reportVendorPart } from "@/lib/reportPeriod";
+import { getChannels } from "@/lib/channelData";
+import { expandToChannelGroups, dedupeByFreshestLoad } from "@/lib/channelGroup";
 
 /* This report is an order of magnitude heavier than Vital Signs: it reads the
    whole store master, the product lookup and the ranging file on top of the
@@ -108,10 +110,17 @@ export async function GET(req: NextRequest) {
     // loading/analysing the data, or building the workbook — without guessing.
     const diagnose = url.searchParams.get("diagnose") === "1";
 
-    // 1. Load and merge sales ledgers from all selected channels
+    /* 1. Load and merge sales ledgers from all selected channels — plus each
+       one's COMPANION channels, and for the same reason Vital Signs does it:
+       the upload splits a Makro DISPO's Walmart / Food Store / Cash & Carry
+       rows into those channels' own ledgers, so reading only the ticked channel
+       shows the frozen pre-split copies instead of the live data. See
+       lib/channelGroup. */
     enter("loading the sales ledgers");
+    const allChannelsForGroup = await getChannels();
+    const readChannelIds = expandToChannelGroups(channelIds, allChannelsForGroup);
     const ledgerResults = await Promise.all(
-      channelIds.map(async (chId) => {
+      readChannelIds.map(async (chId) => {
         const [rows, meta] = await Promise.all([
           getSalesLedger(clientId, chId),
           getSalesLedgerMeta(clientId, chId),
@@ -143,9 +152,21 @@ export async function GET(req: NextRequest) {
 
     const dateColumns = Array.from(allDateCols);
 
+    /* One row per Article|Site, freshest load winning — the companion ledgers
+       hold the live copy of any store the split re-homed, and the ledger it was
+       loaded from still holds the frozen one. */
+    const deduped = dedupeByFreshestLoad(allRows, dateColumns);
+    if (deduped.supersededRows > 0) {
+      console.log(
+        `[month-end] ${clientName}: dropped ${deduped.supersededRows} duplicate row(s) ` +
+        `across ${readChannelIds.length} ledger(s) in the channel group ` +
+        `(${deduped.supersededStale} of them all-zero stale copies).`,
+      );
+    }
+
     // 2. Enrich rows with PMF + store dimensions
     enter("joining products and stores onto the rows");
-    const enriched = await enrichLedger(allRows, clientId);
+    const enriched = await enrichLedger(deduped.rows, clientId);
 
     // 3. Load report config for DSC brackets
     const config = await getReportConfig(clientId);

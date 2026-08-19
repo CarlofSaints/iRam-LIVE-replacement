@@ -13,6 +13,8 @@ import { addLog } from "@/lib/activityLog";
 import { incrementReportCount } from "@/lib/reportCounts";
 import { saveReportToSharePointSafe } from "@/lib/sharepoint";
 import { resolveReportPeriod, reportVendorPart } from "@/lib/reportPeriod";
+import { getChannels } from "@/lib/channelData";
+import { expandToChannelGroups, dedupeByFreshestLoad } from "@/lib/channelGroup";
 
 export const maxDuration = 120;
 
@@ -44,9 +46,18 @@ export async function GET(req: NextRequest) {
     const monthParam = url.searchParams.get("month");
     const weekParam = url.searchParams.get("week");
 
-    // 1. Load and merge sales ledgers from all selected channels
+    /* 1. Load and merge sales ledgers from all selected channels — plus each
+       one's COMPANION channels. A Makro DISPO carries Walmart / Food Store /
+       Cash & Carry sites, and the upload routes those rows into the companion
+       channel's own ledger. Reading only the ticked channel therefore showed the
+       stale copies left in the Makro ledger by pre-split loads — A01/A02/A03
+       printing 0 units and 0 SOH against a DISPO holding 379/357/271.
+       Duplicates that follow are collapsed below, freshest load winning. */
+    const allChannelsForGroup = await getChannels();
+    const readChannelIds = expandToChannelGroups(channelIds, allChannelsForGroup);
+
     const ledgerResults = await Promise.all(
-      channelIds.map(async (chId) => {
+      readChannelIds.map(async (chId) => {
         const [rows, meta] = await Promise.all([
           getSalesLedger(clientId, chId),
           getSalesLedgerMeta(clientId, chId),
@@ -78,8 +89,22 @@ export async function GET(req: NextRequest) {
 
     const dateColumns = Array.from(allDateCols);
 
+    /* One row per Article|Site, freshest load winning. Pulling the companion
+       ledgers means a store re-homed by the split now appears twice: the live
+       row in its owner's ledger and the frozen pre-split copy in the ledger it
+       was loaded from. Keeping the most recently loaded copy resolves that in
+       favour of the live one — and drops the fossil rather than printing it. */
+    const deduped = dedupeByFreshestLoad(allRows, dateColumns);
+    if (deduped.supersededRows > 0) {
+      console.log(
+        `[vital-signs] ${clientName}: dropped ${deduped.supersededRows} duplicate row(s) ` +
+        `across ${readChannelIds.length} ledger(s) in the channel group ` +
+        `(${deduped.supersededStale} of them all-zero stale copies).`,
+      );
+    }
+
     // 2. Enrich rows with PMF + store dimensions
-    const enriched = await enrichLedger(allRows, clientId);
+    const enriched = await enrichLedger(deduped.rows, clientId);
 
     // 3. Load report config, status definitions, and scenarios in parallel
     const [config, allStatusDefs, statusScenarios] = await Promise.all([
