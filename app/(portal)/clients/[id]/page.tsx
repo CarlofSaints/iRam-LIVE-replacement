@@ -8,6 +8,7 @@ import { authFetch, useAuth } from "@/lib/useAuth";
 import UploadZone from "@/components/UploadZone";
 import type { Client, Channel, CAM, ControlFileType, UploadMeta, ProductFieldMapping, LinksFieldMapping } from "@/lib/types";
 import type { ReportConfig } from "@/lib/reportConfig";
+import { filenameFromContentDisposition } from "@/lib/contentDisposition";
 
 const CF_LABELS: Record<ControlFileType, string> = {
   pmf: "PMF (Product Management File)",
@@ -403,9 +404,8 @@ export default function ClientDetailPage() {
       }
       const blob = await res.blob();
       // Derive filename from the Content-Disposition header (falls back to type).
-      const disp = res.headers.get("Content-Disposition") || "";
-      const match = disp.match(/filename="?([^"]+)"?/i);
-      const fileName = match?.[1] || `${type}.xlsx`;
+      const fileName = filenameFromContentDisposition(
+        res.headers.get("Content-Disposition"), `${type}.xlsx`);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;

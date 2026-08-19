@@ -15,6 +15,7 @@ import { saveReportToSharePointSafe } from "@/lib/sharepoint";
 import { resolveReportPeriod, reportVendorPart } from "@/lib/reportPeriod";
 import { getChannels } from "@/lib/channelData";
 import { expandToChannelGroups, dedupeByFreshestLoad } from "@/lib/channelGroup";
+import { contentDisposition } from "@/lib/contentDisposition";
 
 export const maxDuration = 120;
 
@@ -238,7 +239,7 @@ export async function GET(req: NextRequest) {
       headers: {
         "Content-Type":
           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "Content-Disposition": `attachment; filename="${fileName}"`,
+        "Content-Disposition": contentDisposition(fileName),
         "Cache-Control": "no-store",
         ...spHeaders,
       },

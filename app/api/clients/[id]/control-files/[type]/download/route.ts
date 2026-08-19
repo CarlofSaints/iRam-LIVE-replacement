@@ -13,6 +13,7 @@ import {
   handleAuthError,
 } from "@/lib/auth";
 import type { ControlFileType } from "@/lib/types";
+import { contentDisposition } from "@/lib/contentDisposition";
 
 export const dynamic = "force-dynamic";
 
@@ -91,7 +92,7 @@ export async function GET(
       headers: {
         "Content-Type":
           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "Content-Disposition": `attachment; filename="${downloadName.replace(/"/g, "")}"`,
+        "Content-Disposition": contentDisposition(downloadName),
         ...noCacheHeaders(),
       },
     });

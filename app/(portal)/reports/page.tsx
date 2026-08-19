@@ -7,6 +7,7 @@ import SearchSelect from "@/components/SearchSelect";
 import MultiSelect from "@/components/MultiSelect";
 import { analyzeCoverage, formatMonth, type CoverageResult } from "@/lib/dataCoverage";
 import type { Client, Channel, SalesLedgerMeta } from "@/lib/types";
+import { filenameFromContentDisposition } from "@/lib/contentDisposition";
 
 interface ReportStats {
   totalDispos: number;
@@ -358,9 +359,8 @@ export default function ReportsPage() {
         return;
       }
       const blob = await res.blob();
-      const disposition = res.headers.get("Content-Disposition") ?? "";
-      const fnMatch = disposition.match(/filename="?([^"]+)"?/);
-      const fileName = fnMatch ? fnMatch[1] : "Vital_Signs.xlsx";
+      const fileName = filenameFromContentDisposition(
+        res.headers.get("Content-Disposition"), "Vital_Signs.xlsx");
 
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -438,9 +438,8 @@ export default function ReportsPage() {
       }
       setMonthEndError("");
       const blob = await res.blob();
-      const disposition = res.headers.get("Content-Disposition") ?? "";
-      const fnMatch = disposition.match(/filename="?([^"]+)"?/);
-      const fileName = fnMatch ? fnMatch[1] : "Month_End.xlsx";
+      const fileName = filenameFromContentDisposition(
+        res.headers.get("Content-Disposition"), "Month_End.xlsx");
 
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");

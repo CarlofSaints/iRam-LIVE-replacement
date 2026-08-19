@@ -7,6 +7,7 @@ import { getClients } from "@/lib/clientData";
 import { getCamById } from "@/lib/camData";
 import { sendPhantomCountEmail } from "@/lib/email";
 import { parseEmailList, isEmail } from "@/lib/emailList";
+import { contentDisposition } from "@/lib/contentDisposition";
 
 /* PUBLIC endpoint — "Download" / "Email" on the Phantom list of the hosted /r page.
 
@@ -87,7 +88,7 @@ export async function POST(req: NextRequest) {
       return new Response(new Uint8Array(buffer), {
         headers: {
           "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          "Content-Disposition": `attachment; filename="${filename}"`,
+          "Content-Disposition": contentDisposition(filename),
           "Cache-Control": "no-store",
         },
       });

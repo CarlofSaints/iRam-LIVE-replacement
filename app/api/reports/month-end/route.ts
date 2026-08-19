@@ -31,6 +31,7 @@ import { saveReportToSharePointSafe } from "@/lib/sharepoint";
 import { resolveReportPeriod, reportVendorPart } from "@/lib/reportPeriod";
 import { getChannels } from "@/lib/channelData";
 import { expandToChannelGroups, dedupeByFreshestLoad } from "@/lib/channelGroup";
+import { contentDisposition } from "@/lib/contentDisposition";
 
 /* This report is an order of magnitude heavier than Vital Signs: it reads the
    whole store master, the product lookup and the ranging file on top of the
@@ -365,7 +366,7 @@ export async function GET(req: NextRequest) {
       headers: {
         "Content-Type":
           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "Content-Disposition": `attachment; filename="${fileName}"`,
+        "Content-Disposition": contentDisposition(fileName),
         "Cache-Control": "no-store",
         ...spHeaders,
       },

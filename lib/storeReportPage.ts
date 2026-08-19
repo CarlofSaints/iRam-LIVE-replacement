@@ -673,8 +673,19 @@ function xpRun(action){
       if(!res.ok) return res.json().catch(function(){ return {}; }).then(function(j){ throw new Error(j.error || "Could not build the sheet."); });
       var name = "Phantom Stock Count.xlsx";
       var cd = res.headers.get("Content-Disposition") || "";
-      var m = cd.match(/filename="([^"]+)"/);
-      if(m) name = m[1];
+      // filename* (RFC 5987) carries the real UTF-8 name and MUST win over the
+      // plain filename=, which is only an ASCII fallback for old clients — read
+      // the fallback and a name like "9677 — VERIGREEN" loses its em dash.
+      var got = false;
+      var mStar = cd.match(/filename\*=UTF-8''([^;]+)/i);
+      if(mStar){
+        try { name = decodeURIComponent(mStar[1].trim()); got = true; }
+        catch(e){ /* malformed encoding — fall through to the ASCII fallback */ }
+      }
+      if(!got){
+        var m = cd.match(/filename="([^"]+)"/);
+        if(m) name = m[1];
+      }
       return res.blob().then(function(blob){
         // A header-authenticated URL can't be used as a plain href, so the file is
         // fetched and handed over as a blob URL.
