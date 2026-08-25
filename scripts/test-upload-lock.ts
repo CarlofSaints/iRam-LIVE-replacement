@@ -1,7 +1,7 @@
 /* Verifies the rule that wedged production on 6 Aug 2026: an EXPIRED lock
    coming back from the read-after-write must never be treated as a live
    holder. Run: npx tsx scripts/test-upload-lock.ts */
-import { classifyVerify, isExpired, UploadLock } from "../lib/uploadLock";
+import { classifyVerify, classifyRelease, isExpired, UploadLock } from "../lib/uploadLock";
 
 const NOW = new Date("2026-08-06T10:00:00.000Z").getTime();
 const TTL_MIN = 6;
@@ -69,6 +69,43 @@ check(
 );
 // ...and the loop falls through to "we hold it" once attempts run out.
 check("all attempts inconclusive", verdicts.every((v) => v === "retry"), true);
+
+// ── RELEASING: the 25 Aug 2026 case ──
+// A load that finished at 14:32 still read as busy at 14:38:30 — its startedAt
+// plus exactly the TTL. The release had read the lock back, seen a stale value
+// that was not its own id, concluded "not mine to clear", and written nothing.
+// Every DISPO was blocking the next one for six minutes.
+check(
+  "THE BUG: a stale read of an OLDER lock must not stop us clearing ours",
+  classifyRelease(lock("previous", 8), "ours", lock("ours", 5).startedAt),
+  "clear",
+);
+check("our own id reads back = clear", classifyRelease(lock("ours", 2), "ours", lock("ours", 2).startedAt), "clear");
+check("nothing there = clear", classifyRelease(null, "ours", lock("ours", 2).startedAt), "clear");
+// The guard still has to work: a genuine successor took the lock after we did.
+check(
+  "a NEWER lock is a real successor — leave it",
+  classifyRelease(lock("successor", 1), "ours", lock("ours", 5).startedAt),
+  "leave",
+);
+// Same instant is not a successor: it cannot have started after us.
+check(
+  "an identical timestamp is not a successor",
+  classifyRelease(lock("other", 5), "ours", lock("ours", 5).startedAt),
+  "clear",
+);
+// Called with only an id (no clock), we cannot tell the two apart — leave it,
+// because freeing a live lock loses data and the TTL still bounds ours.
+check(
+  "no clock to compare = leave the other lock alone",
+  classifyRelease(lock("other", 8), "ours", null),
+  "leave",
+);
+check(
+  "an unparseable timestamp is treated the same way",
+  classifyRelease({ ...lock("other", 8), startedAt: "not a date" }, "ours", lock("ours", 5).startedAt),
+  "leave",
+);
 
 console.log(failed === 0 ? "\nAll upload-lock checks passed." : `\n${failed} FAILED`);
 process.exit(failed === 0 ? 0 : 1);

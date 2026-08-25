@@ -333,11 +333,11 @@ export default function DataLoadPage() {
           <div className="text-sm text-amber-800">
             <div className="font-semibold">The upload queue is busy</div>
             <p className="mt-0.5 leading-relaxed">
-              {/* The server's sentence ends in a full stop and JSX drops the
-                  newline after an expression, so the space has to be explicit. */}
+              {/* `lockMessage` already explains one-at-a-time and says to try
+                  again shortly, so repeating it here just said the same thing
+                  twice in one paragraph. Add only what it does NOT say. */}
               {lockHolder.message || `${lockHolder.userName} is loading a DISPO.`}{" "}
-              Uploads run one at a time so they can&apos;t overwrite each other&apos;s data. You can
-              set everything up now — this clears on its own, usually within a minute.
+              You can set everything up while you wait.
             </p>
           </div>
         </div>

@@ -142,14 +142,68 @@ export async function acquireUploadLock(
  * overran the TTL and someone else legitimately took over, clearing the key
  * would hand a third upload a lock the second one thinks it owns.
  */
-export async function releaseUploadLock(id: string): Promise<void> {
+/**
+ * Release the lock we hold.
+ *
+ * THIS USED TO TAKE ONLY AN ID AND BAIL WHENEVER THE READ-BACK SHOWED A
+ * DIFFERENT ONE, AND THAT STRANDED EVERY LOAD FOR THE FULL SIX-MINUTE TTL.
+ * The store is eventually consistent — this file already documents a re-read
+ * returning the PREVIOUS value long past a second — so a release that reads
+ * stale saw "someone else's lock", concluded it was not ours to clear, and
+ * wrote nothing. Measured 25 Aug 2026: a load that finished at 14:32 still
+ * read as busy at 14:38:30, which is its startedAt plus exactly LOCK_TTL_MS.
+ * The team was absorbing this as multi-minute waits between every DISPO.
+ *
+ * The guard exists to avoid clearing a SUCCESSOR's lock. A successor started
+ * after we did; a stale read shows something that started before. So compare
+ * the clock, not the id — that keeps the guard and drops the false positive.
+ */
+/**
+ * May we clear what the store currently shows, given the lock WE hold?
+ *
+ * Pure, so the rule that cost the team minutes on every load is testable
+ * without a blob store.
+ *
+ *   "clear"  — it is ours, it is absent, or it is older than ours (a stale
+ *              read of a value we already replaced).
+ *   "leave"  — a DIFFERENT lock that started AFTER ours. A real successor.
+ */
+export function classifyRelease(
+  current: UploadLock | null,
+  ourId: string,
+  ourStartedAt: string | null,
+): "clear" | "leave" {
+  if (!current?.id || current.id === ourId) return "clear";
+  const theirStart = new Date(current.startedAt).getTime();
+  const ourStart = ourStartedAt === null ? NaN : new Date(ourStartedAt).getTime();
+  // Without both clocks we cannot tell a successor from a stale read. Leave it:
+  // guessing wrong here frees someone else's live lock, and the TTL still
+  // bounds ours.
+  if (!Number.isFinite(theirStart) || !Number.isFinite(ourStart)) return "leave";
+  return theirStart > ourStart ? "leave" : "clear";
+}
+
+export async function releaseUploadLock(lock: UploadLock | string): Promise<void> {
+  const id = typeof lock === "string" ? lock : lock.id;
+  const ourStartedAt = typeof lock === "string" ? null : lock.startedAt;
+
+  let current: UploadLock | null = null;
   try {
-    const current = await readJsonStrict<UploadLock | null>(KEY, null, { skipCache: true });
-    if (current?.id && current.id !== id) return;
+    current = await readJsonStrict<UploadLock | null>(KEY, null, { skipCache: true });
+  } catch {
+    // Could not read. Do NOT bail: a stranded lock blocks every person in the
+    // business for the full TTL, which is far worse than the rare case of
+    // clearing a lock that had genuinely been taken over. `current` stays null,
+    // which classifies as "clear".
+  }
+
+  if (classifyRelease(current, id, ourStartedAt) === "leave") return;
+
+  try {
     await writeJson(KEY, null);
   } catch {
-    // Never fail an otherwise-successful upload on cleanup. A stranded lock
-    // expires on its own after LOCK_TTL_MS.
+    // Never fail an otherwise-successful upload on cleanup. A lock that
+    // survives this expires on its own after LOCK_TTL_MS.
   }
 }
 

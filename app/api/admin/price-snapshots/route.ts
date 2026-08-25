@@ -232,7 +232,7 @@ export async function POST(req: NextRequest) {
         { headers: noCacheHeaders() },
       );
     } finally {
-      await releaseUploadLock(lock.lock.id);
+      await releaseUploadLock(lock.lock);
     }
   } catch (err) {
     return handleAuthError(err);

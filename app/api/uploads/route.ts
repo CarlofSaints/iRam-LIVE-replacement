@@ -16,7 +16,7 @@ import { buildPrincipalMap, resolveVendors, principalCoverage } from "@/lib/prin
 import { getProductMaster } from "@/lib/productMasterData";
 import { requireLogin, requirePermission, noCacheHeaders, handleAuthError } from "@/lib/auth";
 import { addLog } from "@/lib/activityLog";
-import { acquireUploadLock, releaseUploadLock, lockMessage } from "@/lib/uploadLock";
+import { acquireUploadLock, releaseUploadLock, lockMessage, type UploadLock } from "@/lib/uploadLock";
 import { PARSER_VERSION } from "@/lib/parserVersion";
 import { buildChannelGroup } from "@/lib/channelGroup";
 import type { FileType } from "@/lib/types";
@@ -53,7 +53,9 @@ export async function POST(req: NextRequest) {
   // temp blob (unless we're mid-confirmation and expect a follow-up force call).
   let tempBlobUrl: string | null = null;
   let keepBlob = false;
-  let lockId: string | null = null;
+  // The WHOLE lock, not just its id — releasing needs our startedAt to tell a
+  // real successor from a stale read. See lib/uploadLock.ts.
+  let heldLock: UploadLock | null = null;
   try {
     const session = await requirePermission(req, "upload_data");
 
@@ -140,7 +142,7 @@ export async function POST(req: NextRequest) {
         { status: 409, headers: noCacheHeaders() },
       );
     }
-    lockId = acquired.lock.id;
+    heldLock = acquired.lock;
 
     if (fileType === "dispo") {
       const result = parseDispo(buffer);
@@ -649,7 +651,7 @@ export async function POST(req: NextRequest) {
     // Release on EVERY exit — success, validation error, thrown parse error,
     // and the needsConfirmation early return. Anything else strands the whole
     // team behind this request until the lock's TTL expires.
-    if (lockId) await releaseUploadLock(lockId);
+    if (heldLock) await releaseUploadLock(heldLock);
 
     // Clean up the browser-uploaded temp blob once we're done with it. Skipped
     // when we returned needsConfirmation (the follow-up force call re-reads it).
