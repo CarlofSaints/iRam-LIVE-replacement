@@ -208,10 +208,21 @@ if (argv.includes("--every-file")) {
     for (const s of failed) console.log(`  ${s}`);
   }
 
-  console.log(`\n${candidates.length} file(s): ${toReload.length} to reload, ${toEyeball.length} to eyeball, ${clean} clean.`);
+  console.log(`\n${candidates.length} file(s): ${toReload.length} affected, ${toEyeball.length} to eyeball, ${clean} clean.`);
   console.log(
-    "\nReload each file listed, into the same client/channel/period it was loaded as.\n" +
-    "Fixing the parser does not repair a number already written to the ledger."
+    "\nFixing the parser does not repair a number already written to the ledger.\n" +
+    "\nBUT DO NOT RELOAD EVERY WEEK LISTED. Nearly every value this defect hits is\n" +
+    "in `Curr Y/S`, and `Curr Y/S` is a SNAPSHOT: mergeDispo lets only a\n" +
+    "same-or-newer period write it, so reloading a June file changes nothing once\n" +
+    "July has loaded. It is also cumulative, so the NEWEST file already carries the\n" +
+    "right year-to-date. Reload the LATEST DISPO for each client+channel named\n" +
+    "above and the whole stream is repaired.\n" +
+    "\nThat holds by construction for the `totals-exceed-parts` rows: the only cells\n" +
+    "that oracle can vouch for are `Curr Y/S` and the keyless footer, and the footer\n" +
+    "never reaches the ledger. A `star-totals` row can also carry rescaled MONTH\n" +
+    "columns, which ARE date columns and DO accept a back-load — reload those weeks\n" +
+    "individually. The weeks are listed either way, so you can see how long each\n" +
+    "stream has been wrong."
   );
   if (CSV) {
     const esc = (v: unknown) => `"${String(v).replace(/"/g, '""')}"`;
