@@ -798,15 +798,18 @@ export default function DataLoadPage() {
                   ) : null}
                   {/* A forced load succeeds WITH warnings — do not let a green
                       tick imply the data was clean. */}
-                  {(result.warnings?.missingArticles?.length ||
-                    result.warnings?.missingSites?.length) && (
+                  {/* `> 0`, not a bare length: `0 && <p/>` renders the NUMBER
+                      zero, and a stray "0" was appearing under the notes on
+                      every clean load. */}
+                  {((result.warnings?.missingArticles?.length ?? 0) > 0 ||
+                    (result.warnings?.missingSites?.length ?? 0) > 0) && (
                     <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
                       Loaded with warnings:{" "}
                       {result.warnings?.missingArticles?.length
                         ? `${result.warnings.missingArticles.length} article(s) not in LINKS`
                         : ""}
-                      {result.warnings?.missingArticles?.length &&
-                      result.warnings?.missingSites?.length
+                      {(result.warnings?.missingArticles?.length ?? 0) > 0 &&
+                      (result.warnings?.missingSites?.length ?? 0) > 0
                         ? ", "
                         : ""}
                       {result.warnings?.missingSites?.length
