@@ -5,6 +5,7 @@ import { useTableTools } from "@/lib/useTableTools";
 import { SortableTh, TableSearch } from "@/components/TableTools";
 import { authFetch, useAuth } from "@/lib/useAuth";
 import PackPriceAudit from "@/components/PackPriceAudit";
+import ParserVersionAudit from "@/components/ParserVersionAudit";
 
 interface LedgerDescIssue {
   clientId: string;
@@ -146,6 +147,8 @@ export default function DataHealthPage() {
       {/* Only a super admin may run the repair; everyone who can reach this page
           can still SCAN, because seeing the damage is not the dangerous half. */}
       <PackPriceAudit canRepair={user?.role === "super_admin"} />
+
+      <ParserVersionAudit />
     </div>
   );
 }

@@ -17,6 +17,7 @@ import { getProductMaster } from "@/lib/productMasterData";
 import { requireLogin, requirePermission, noCacheHeaders, handleAuthError } from "@/lib/auth";
 import { addLog } from "@/lib/activityLog";
 import { acquireUploadLock, releaseUploadLock, lockMessage } from "@/lib/uploadLock";
+import { PARSER_VERSION } from "@/lib/parserVersion";
 import { buildChannelGroup } from "@/lib/channelGroup";
 import type { FileType } from "@/lib/types";
 
@@ -471,6 +472,11 @@ export async function POST(req: NextRequest) {
         ? ` ${result.thousands.notes.join(" ")}`
         : "";
 
+      /* Which read path produced these numbers. On the record because a reload
+         that ran minutes before a parser fix went live looks identical to one
+         that ran after it — see lib/parserVersion.ts. */
+      const parserSuffix = ` Parser v${PARSER_VERSION}.`;
+
       /* How each row's vendor was decided. "guessed" is the number that
          matters: it is rows the PMF could not answer for, which in a
          multi-vendor file may be attributed to the wrong vendor. */
@@ -488,7 +494,7 @@ export async function POST(req: NextRequest) {
         userId: session.userId,
         userName: session.name,
         action: "upload_dispo",
-        details: `Uploaded DISPO for ${client.name} / ${mainChannelName} (${result.totalRows} rows, vendor(s) ${vendorLabel}). Ledger merge: ${mergeTotals.inserted} new, ${mergeTotals.updated} updated, ${mergeTotals.unchanged} unchanged.${splitSuffix}${repairSuffix}${thousandsSuffix}${vendorSuffix}${logSuffix}`,
+        details: `Uploaded DISPO for ${client.name} / ${mainChannelName} (${result.totalRows} rows, vendor(s) ${vendorLabel}). Ledger merge: ${mergeTotals.inserted} new, ${mergeTotals.updated} updated, ${mergeTotals.unchanged} unchanged.${splitSuffix}${repairSuffix}${thousandsSuffix}${parserSuffix}${vendorSuffix}${logSuffix}`,
         status: "success",
         clientId: client.id,
         clientName: client.name,

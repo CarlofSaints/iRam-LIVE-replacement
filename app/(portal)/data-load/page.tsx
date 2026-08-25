@@ -55,6 +55,9 @@ export default function DataLoadPage() {
   const [busyMessage, setBusyMessage] = useState<string | null>(null);
   const [showResultModal, setShowResultModal] = useState(false);
   const [clearing, setClearing] = useState(false);
+  /* Someone else's upload holding the app-wide queue, polled rather than
+     discovered the hard way — see the effect below. */
+  const [lockHolder, setLockHolder] = useState<{ message: string; userName: string } | null>(null);
   const [clearResult, setClearResult] = useState<string | null>(null);
 
   const [confirmData, setConfirmData] = useState<{
@@ -283,6 +286,31 @@ export default function DataLoadPage() {
     }
   }
 
+  /* WHO HAS THE QUEUE, BEFORE YOU SPEND FIVE MINUTES PUSHING A FILE UP.
+
+     Uploads are one-at-a-time app-wide, but the only way to find that out used
+     to be a 409 — and the server does not acquire the lock until it has read
+     the whole request body, so a 20MB DISPO went all the way to Blob and back
+     before anyone was told to try again. This just asks. */
+  useEffect(() => {
+    // Not while our own upload is in flight: the lock would be ours, and
+    // "you are blocked by yourself" is noise on top of the Processing state.
+    if (uploading || step === "result" || step === "confirm") { setLockHolder(null); return; }
+
+    let alive = true;
+    const check = async () => {
+      try {
+        const res = await authFetch("/api/uploads/lock");
+        if (!alive || !res.ok) return;
+        const data = await res.json();
+        setLockHolder(data?.lock ? { message: data.message ?? "", userName: data.lock.userName ?? "Someone" } : null);
+      } catch { /* a failed poll is not worth surfacing — the 409 still guards us */ }
+    };
+    check();
+    const id = setInterval(check, 10_000);
+    return () => { alive = false; clearInterval(id); };
+  }, [uploading, step]);
+
   function reset() {
     setStep("select");
     setShowResultModal(false);
@@ -297,6 +325,21 @@ export default function DataLoadPage() {
   return (
     <div className="p-8">
       <h1 className="mb-6 text-2xl font-bold text-[var(--color-text)]">Data Load</h1>
+
+      {/* Said up front, not after the file has been pushed up and bounced. */}
+      {lockHolder && (
+        <div className="mb-6 flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3">
+          <span aria-hidden className="text-lg leading-none">⏳</span>
+          <div className="text-sm text-amber-800">
+            <div className="font-semibold">The upload queue is busy</div>
+            <p className="mt-0.5 leading-relaxed">
+              {lockHolder.message || `${lockHolder.userName} is loading a DISPO.`} Uploads run one at
+              a time so they can&apos;t overwrite each other&apos;s data. You can set everything up now —
+              this clears on its own, usually within a minute.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Step indicators */}
       <div className="mb-8 flex gap-4">
@@ -415,10 +458,18 @@ export default function DataLoadPage() {
               <strong>Period:</strong> {reportYear}{String(reportMonth).padStart(2, "0")} Wk{reportWeek}
             </div>
           </div>
+          {/* Held shut while someone else has the queue. Letting the drop
+              through would upload the whole file just to be told to retry. */}
           <UploadZone
             onFile={handleUpload}
-            label={uploading ? "Processing..." : `Drop your ${fileType === "dispo" ? "DISPO" : "Aged Stock"} Excel file here`}
-            disabled={uploading}
+            label={
+              uploading
+                ? "Processing..."
+                : lockHolder
+                  ? `Waiting for ${lockHolder.userName} to finish…`
+                  : `Drop your ${fileType === "dispo" ? "DISPO" : "Aged Stock"} Excel file here`
+            }
+            disabled={uploading || !!lockHolder}
           />
           <button onClick={() => setStep("select")} className="mt-3 text-sm text-[var(--color-text-muted)] hover:underline">
             Back to selection

@@ -1,4 +1,5 @@
 import { periodScore, snapshotWins, isInternalField, SNAPSHOT_PERIOD_FIELD } from "./dispoSnapshot";
+import { PARSER_VERSION, PARSER_VERSION_FIELD } from "./parserVersion";
 import type { SalesLedgerMeta } from "./types";
 import { readJson, readJsonStrict, writeJson, deleteBlob } from "./blob";
 import { DATE_COL_REGEX } from "./headers";
@@ -331,6 +332,7 @@ export async function mergeDispo(params: MergeDispoParams): Promise<MergeResult>
       // INSERT — new combination
       normalizedRow["_vendor"] = rowVendor;
       normalizedRow["_lastLoadedAt"] = loadStamp;
+      normalizedRow[PARSER_VERSION_FIELD] = PARSER_VERSION;
       normalizedRow[SNAPSHOT_PERIOD_FIELD] = incomingPeriod;
       ledgerMap.set(key, normalizedRow);
       inserted++;
@@ -384,6 +386,10 @@ export async function mergeDispo(params: MergeDispoParams): Promise<MergeResult>
       // latest load even if no field value changed.
       existingRow["_vendor"] = rowVendor;
       existingRow["_lastLoadedAt"] = loadStamp;
+      // Stamped on EVERY load, like _lastLoadedAt and for the same reason: this
+      // row was in this upload, so this parser is the one that last had the
+      // chance to write it — even if no value happened to change.
+      existingRow[PARSER_VERSION_FIELD] = PARSER_VERSION;
 
       if (changed) {
         updated++;
