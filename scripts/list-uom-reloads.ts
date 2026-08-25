@@ -1,19 +1,29 @@
 /* ──────────────────────────────────────────────────────────────
-   WHICH DISPO STREAMS NEED RE-UPLOADING AFTER THE 19 AUG 2026 FIXES.
+   WHICH DISPO STREAMS NEED RE-UPLOADING AFTER THE AUG 2026 PARSER FIXES.
 
-   Two parser defects understated sales, and neither repairs data already in
-   the ledger — only a re-upload does that:
+   Three parser defects understated sales, and none of them repairs data already
+   in the ledger — only a re-upload does that:
 
      1. collapseUomRows kept only the selling-unit row, dropping every CASE,
         PALLET, LAYER and SHRINK-WRAP sale. Affects any DISPO that lists an
         Article×Site once per UOM (a "**" total line is the tell).
      2. Some exports write thousands with a PERIOD — 1,525 as "1.525", 1,500
         as "1.5" — so those values loaded a thousandfold small.
+     3. (25 Aug) The fix for 2 was judged only against "**" total lines, which
+        Massbuild-style exports do not have, so it never fired on them. They are
+        now judged against their own running totals instead.
 
-   Affectedness is a property of the STREAM (client + vendor number), not of
-   each week's file: a client's Makro export is multi-UOM every week. So this
-   reads only the NEWEST file per stream, classifies it, and measures the gap
-   between what the old code would have loaded and what the file actually says.
+   Affectedness is a property of the STREAM (client + vendor number) for defect
+   1: a client's Makro export is multi-UOM every week. So this reads only the
+   NEWEST file per stream, classifies it, and measures the gap between what the
+   old code would have loaded and what the file actually says.
+
+   ⚠️ THAT IS NOT TRUE OF DEFECTS 2 AND 3, and this script will under-report
+   them. A period-thousand only appears in the weeks where some store's running
+   total actually crossed 1,000, so a stream can be clean in its newest file and
+   wrong in three earlier ones — BISCO 10548 is exactly that. To find every
+   affected WEEK, run the same detection over every file rather than the newest
+   per stream, and reload each one it names.
 
    ⚠️ ONEDRIVE: reading a cloud-only file downloads it. This touches at most one
    file per stream (~37), never the whole tree. Do NOT point a scanner at
@@ -25,14 +35,24 @@
    PowerShell enumerates the same thing in seconds, so GENERATE THE LIST FIRST
    and hand it in with --files:
 
+   ⚠️ Match the FOLDER, not the filename. Massbuild DISPOs are filed as
+   "USABCO (1063-W3) MB.xlsx" and "Halewood (1239-W4).xlsx" — a `-Filter
+   "*DISPO*"` misses every one of them, which is how the 19 Aug sweep decided
+   period-thousands was a VERIGREEN-only problem when it was not.
+
      Get-ChildItem "C:\Users\CarlDosSantos-(OUTER\IRAM\IRAM - Clients\CLIENTS" `
-       -Recurse -File -Filter "*DISPO*.xls*" |
+       -Recurse -File -Include *.xls,*.xlsx |
+       Where-Object { $_.DirectoryName -match 'DISPO' -and
+                      -not ($_.Attributes -band [IO.FileAttributes]::Offline) } |
        Select-Object -ExpandProperty FullName |
        Set-Content -Encoding utf8 "$env:TEMP\dispos.txt"
 
    Usage:
      npx tsx scripts/list-uom-reloads.ts --files "%TEMP%\dispos.txt"
      npx tsx scripts/list-uom-reloads.ts --files … --csv reload.csv
+     npx tsx scripts/list-uom-reloads.ts --files … --every-file
+                            (defects 2+3: names each WEEK to reload, not each
+                             stream — this is the one to run for thousands)
      To avoid downloading cloud-only files, filter the list in PowerShell first:
        … | Where-Object { -not ($_.Attributes -band [IO.FileAttributes]::Offline) } | …
      npx tsx scripts/list-uom-reloads.ts                          (slow: walks --root)
@@ -65,8 +85,28 @@ if (!Number.isFinite(SINCE_MS)) {
 }
 
 /* ── Find candidate DISPO files ────────────────────────────────────────────
-   Filename must contain DISPO — matching the PATH would pull in every file
-   that merely lives under a "DISPO's & DATA SOURCES" folder. */
+   ⚠️ THIS FILTER USED TO REQUIRE "DISPO" IN THE FILENAME, AND THAT WAS WRONG.
+   Half the estate does not name its DISPOs that way — Massbuild exports are
+   filed as "USABCO (1063-W3) MB.xlsx", "VD BISCO PLUS (10548-W2) MAKRO.xlsx",
+   "Halewood (1239-W4).xlsx". So the 19 Aug 2026 sweep that concluded
+   period-thousands was "VERIGREEN-only" had never looked at a single one of
+   them, and USABCO went on loading a thousandfold short until 25 Aug.
+
+   So: take anything sitting in a DISPO folder, and name the report artefacts
+   that share those folders rather than the DISPOs, which have no common shape.
+   Anything that slips through and is not a DISPO fails to parse and is listed
+   under "skipped". */
+const DISPO_FOLDER = /dispo/i;
+const NOT_A_DISPO =
+  /vital|month.?end|phantom|master|\bMF\b|links|ranging|promo|count.?sheet|scorecard|template|~\$/i;
+
+function looksLikeADispo(file: string): boolean {
+  if (!/\.xlsx?$/i.test(file)) return false;
+  const base = path.basename(file);
+  if (NOT_A_DISPO.test(base)) return false;
+  return DISPO_FOLDER.test(base) || DISPO_FOLDER.test(path.dirname(file));
+}
+
 interface Found { file: string; client: string; vendor: string; mtime: number }
 
 function walk(dir: string, depth: number, out: string[]) {
@@ -76,7 +116,7 @@ function walk(dir: string, depth: number, out: string[]) {
   for (const e of entries) {
     const full = path.join(dir, e.name);
     if (e.isDirectory()) walk(full, depth + 1, out);
-    else if (/dispo/i.test(e.name) && /\.xlsx?$/i.test(e.name)) out.push(full);
+    else if (looksLikeADispo(full)) out.push(full);
   }
 }
 
@@ -91,7 +131,7 @@ if (FILE_LIST) {
   files = fs.readFileSync(FILE_LIST, "utf8")
     .replace(/^﻿/, "")
     .split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
-    .filter((f) => /dispo/i.test(path.basename(f)) && /\.xlsx?$/i.test(f));
+    .filter(looksLikeADispo);
   console.log(`Reading ${files.length} path(s) from ${FILE_LIST} …`);
 } else {
   console.log(`Walking ${ROOT} … (slow on OneDrive — see --files in the header)`);
@@ -117,6 +157,69 @@ for (const f of files) {
   try { mtime = fs.statSync(f).mtimeMs; } catch { continue; }
   if (mtime < SINCE_MS) continue;                     // dormant stream
   candidates.push({ file: f, client, vendor, mtime });
+}
+
+/* ── --every-file: which WEEKS carry a period-thousand ─────────────────────
+   The stream-newest pass below cannot answer this (see the header): a file is
+   only affected in the weeks where some store's running total actually crossed
+   1,000. This mode reads every candidate and names the individual loads to
+   redo, plus the ones that still hold a decimal nothing in the file can
+   settle — those are for a human to look at, not for the parser to guess. */
+if (argv.includes("--every-file")) {
+  const rows: { file: string; client: string; vendor: string; basis: string; cells: number; left: number }[] = [];
+  let clean = 0;
+  const failed: string[] = [];
+  let i = 0;
+  for (const c of candidates.sort((a, b) => a.file.localeCompare(b.file))) {
+    process.stdout.write(`\r  [${++i}/${candidates.length}] ${c.client}          `);
+    let parsed;
+    try { parsed = parseDispo(fs.readFileSync(c.file)); }
+    catch (e) { failed.push(`${c.client} ${path.basename(c.file)} — ${(e as Error).message}`); continue; }
+    const t = parsed.thousands;
+    if (t.cellsRescaled > 0 || t.unjudged > 0) {
+      rows.push({
+        file: c.file, client: c.client, vendor: c.vendor,
+        basis: t.basis, cells: t.cellsRescaled, left: t.unjudged,
+      });
+    } else clean++;
+  }
+  process.stdout.write("\r" + " ".repeat(70) + "\r");
+
+  const toReload = rows.filter((r) => r.cells > 0);
+  const toEyeball = rows.filter((r) => r.cells === 0 && r.left > 0);
+
+  console.log("\n═══ RELOAD THESE LOADS — the ledger holds a value 1000x too small ═══\n");
+  if (!toReload.length) console.log("  (none)");
+  for (const r of toReload) {
+    console.log(`  ${r.client.slice(0, 22).padEnd(23)}${r.vendor.padEnd(7)}${String(r.cells).padStart(4)} value(s)  ` +
+      `${r.file.split(/[\\/]/).slice(-3).join("/")}${r.left > 0 ? `   (+${r.left} still unresolved)` : ""}`);
+  }
+
+  if (toEyeball.length) {
+    console.log("\n═══ LOOK AT THESE BY HAND — a decimal the file cannot explain ══════\n");
+    for (const r of toEyeball) {
+      console.log(`  ${r.client.slice(0, 22).padEnd(23)}${r.vendor.padEnd(7)}${String(r.left).padStart(4)} value(s)  ` +
+        `${r.file.split(/[\\/]/).slice(-3).join("/")}`);
+    }
+  }
+
+  if (failed.length) {
+    console.log(`\n⚠️  ${failed.length} file(s) NOT checked — treat as UNKNOWN, not as clean:`);
+    for (const s of failed) console.log(`  ${s}`);
+  }
+
+  console.log(`\n${candidates.length} file(s): ${toReload.length} to reload, ${toEyeball.length} to eyeball, ${clean} clean.`);
+  console.log(
+    "\nReload each file listed, into the same client/channel/period it was loaded as.\n" +
+    "Fixing the parser does not repair a number already written to the ledger."
+  );
+  if (CSV) {
+    const esc = (v: unknown) => `"${String(v).replace(/"/g, '""')}"`;
+    fs.writeFileSync(CSV, ["client,vendor,rescaled,unresolved,basis,file",
+      ...rows.map((r) => [r.client, r.vendor, r.cells, r.left, r.basis, r.file].map(esc).join(","))].join("\n"), "utf8");
+    console.log(`\nCSV → ${path.resolve(CSV)}`);
+  }
+  process.exit(0);
 }
 
 // Newest file per (client, vendor) stream.

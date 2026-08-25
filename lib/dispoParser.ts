@@ -4,6 +4,7 @@ import {
   FIXED_QUANTITY_COLUMN,
   detectPeriodThousands,
   applyPeriodThousands,
+  applyWitnessedThousands,
   describeDetection,
   type ThousandsDetection,
 } from "./dispoNumbers";
@@ -232,9 +233,14 @@ export function parseDispo(buffer: Buffer): DispoParseResult {
   // real decimals.
   const quantityColumns = [...dateColumns, FIXED_QUANTITY_COLUMN];
   const detection = detectPeriodThousands(rows, quantityColumns);
-  const cellsRescaled = detection.applies
-    ? applyPeriodThousands(rows, quantityColumns)
-    : 0;
+  // The `**` verdict is about the file's number format, so it rewrites every
+  // suspect. The totals-exceed-parts verdict is about individual cells, and
+  // rewrites only those — see the LIBRA note in dispoNumbers.
+  const cellsRescaled = !detection.applies
+    ? 0
+    : detection.basis === "star-totals"
+      ? applyPeriodThousands(rows, quantityColumns)
+      : applyWitnessedThousands(rows, quantityColumns);
 
   // Makro-style DISPOs list the same Article×Site once per UOM (EA, CS, PAL,
   // LAY, SW…). Stock sits only on the selling-unit row; the pack rows carry

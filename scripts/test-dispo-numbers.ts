@@ -17,6 +17,7 @@ import {
   readQtyScaled,
   detectPeriodThousands,
   applyPeriodThousands,
+  applyWitnessedThousands,
 } from "../lib/dispoNumbers";
 import { collapseUomRows } from "../lib/dispoParser";
 
@@ -114,6 +115,145 @@ console.log("\n── Detection is decided by the file's own ** lines ───�
   ];
   const d5 = detectPeriodThousands(mixed, COLS);
   ok("one disagreeing key vetoes the whole file", !d5.applies);
+}
+
+console.log("\n── Massbuild files: a total cannot be less than its parts ─");
+{
+  // USABCO/MASSBUILD, found 25 Aug 2026. One row per Article|Site and no "**"
+  // line anywhere, so the ** oracle above never fires — which is exactly why
+  // these loaded ~1000x short for months while VERIGREEN was fixed.
+  //
+  // `Curr Y/S` is a running year-to-date on the same row as the months feeding
+  // it. Site B14 claims 1.104 units YTD against 689 sold in six months. That is
+  // not a judgement call, it is arithmetic.
+  const COLS = ["Mar26", "Apr26", "May26", "Jun26", "Jul26", "Aug26", "Curr Y/S"];
+  const PARTS = { Mar26: "82", Apr26: "185", May26: "168", Jun26: "172", Jul26: "74", Aug26: "8" };
+
+  /** A Massbuild-shaped file: `n` ordinary whole-number rows plus whatever
+      `extra` rows the case under test needs. */
+  const massbuild = (n: number, extra: Record<string, unknown>[] = []) => [
+    ...Array.from({ length: n }, (_, i) => ({
+      Article: `A${i}`, Site: `B${i % 50}`, UOM: "EA", Compo: "1",
+      ...PARTS, "Curr Y/S": String(700 + (i % 170)),
+    })),
+    ...extra,
+  ];
+  const suspectRow = { Article: "X", Site: "B14", UOM: "EA", Compo: "1", ...PARTS, "Curr Y/S": "1.104" };
+
+  const d6 = detectPeriodThousands(massbuild(100, [suspectRow]), COLS);
+  ok("a year-to-date below its own months is rescaled", d6.applies);
+  eq("  on the totals-exceed-parts oracle", d6.basis, "totals-exceed-parts");
+  eq("  one impossible plain reading", d6.impossiblePlain, 1);
+  eq("  which scaling repairs", d6.repairedByScaling, 1);
+  ok("  and the shape backs it up", d6.shape.ok);
+
+  // The guard. Each of these on its own is proof the period means something
+  // else, and each must veto the rescale on its own.
+  const withBigNumber = detectPeriodThousands(
+    massbuild(100, [suspectRow, { Article: "Z", Site: "B01", UOM: "EA", Compo: "1", ...PARTS, "Curr Y/S": "4207" }]),
+    COLS,
+  );
+  ok("one plain value reaching 1000 vetoes it", !withBigNumber.applies,
+    "the export can write a thousand without a separator, so it had no need of a period");
+  eq("  and the suspect is reported instead", withBigNumber.unjudged, 1);
+
+  const withComma = detectPeriodThousands(
+    massbuild(100, [suspectRow, { Article: "Z", Site: "B01", UOM: "EA", Compo: "1", ...PARTS, "Curr Y/S": "4,207" }]),
+    COLS,
+  );
+  ok("one comma-separated value vetoes it", !withComma.applies,
+    "this export separates thousands with a comma, so a period is a decimal point");
+
+  // A file measured in kg or litres. Note "12.75" would NOT do here — by shape
+  // it is indistinguishable from 12,750, and that is the point: what saves such
+  // a file is that fractions are its CONVENTION, not a rare tail. So the guard
+  // that has to hold is the share, and separately the presence of fractions no
+  // period-thousand could produce (four decimal places).
+  const fractional = detectPeriodThousands(
+    massbuild(100, [
+      suspectRow,
+      ...Array.from({ length: 40 }, (_, i) => ({
+        Article: `KG${i}`, Site: "B01", UOM: "KG", Compo: "1", ...PARTS, "Curr Y/S": "12.5",
+      })),
+    ]),
+    COLS,
+  );
+  ok("a file where fractions are the convention vetoes it", !fractional.applies,
+    "40 fractional quantities is a unit of measure, not a handful of items past a thousand");
+
+  const fourPlaces = detectPeriodThousands(
+    massbuild(100, [suspectRow, { Article: "Z", Site: "B01", UOM: "KG", Compo: "1", ...PARTS, "Curr Y/S": "12.3456" }]),
+    COLS,
+  );
+  ok("one fraction no thousands separator could make vetoes it", !fourPlaces.applies,
+    "12.3456 is a real decimal, so this file's periods are decimal points");
+
+  const tooSmall = detectPeriodThousands(massbuild(2, [suspectRow]), COLS);
+  ok("a handful of rows is not a corpus", !tooSmall.applies);
+
+  // No witness: 1.5 with nothing on the row to contradict it stays put.
+  const noWitness = detectPeriodThousands(
+    massbuild(100, [{ Article: "X", Site: "B14", UOM: "EA", Compo: "1", Mar26: "1", "Curr Y/S": "1.5" }]),
+    COLS,
+  );
+  ok("shape alone is not enough — something must be impossible", !noWitness.applies);
+  eq("  nothing was contradicted", noWitness.impossiblePlain, 0);
+
+  // The keyless footer row carries the same proof when no single row does. It
+  // spans the whole report, so it can never be less than this file's own sum.
+  // The 100 rows above carry 700..799 in `Curr Y/S`, so this file sums to
+  // 74,950 — a grand total of sixty-nine is impossible, one of 98,354 is not.
+  const footer = { Article: "", Site: "", UOM: "", Compo: "", ...PARTS, "Curr Y/S": "98.354" };
+  const d7 = detectPeriodThousands(massbuild(100, [footer]), COLS);
+  ok("a grand total below the rows it totals is rescaled", d7.applies);
+  eq("  on the same oracle", d7.basis, "totals-exceed-parts");
+  ok("  the footer's suspects are counted", d7.suspects >= 1);
+
+  // The ** oracle stays in charge wherever it has anything to say: a file whose
+  // ** lines vote "genuine decimals" must NOT be overridden by shape.
+  const starSaysDecimal = detectPeriodThousands(
+    [...massbuild(100), ...[
+      { Article: "A", Site: "M01", UOM: "EA", Compo: "1", ...PARTS, "Curr Y/S": "1.5" },
+      { Article: "A", Site: "M01", UOM: "CS", Compo: "25", ...PARTS, "Curr Y/S": "1" },
+      { Article: "A", Site: "M01", UOM: "**", Compo: "1", ...PARTS, "Curr Y/S": "26.5" },
+    ]],
+    COLS,
+  );
+  ok("a ** verdict of 'genuine decimals' is not overridden", !starSaysDecimal.applies);
+  ok("  because that ** line discriminated", starSaysDecimal.informative > 0);
+
+  // …but a ** line on a group that sells in ONE uom is a copy of the selling
+  // row. It reconciles whichever way you read it, so it has no verdict to give
+  // and must not veto Oracle 2. CARTOON CANDY 8149 Jul-2026 Wk1: one EA line at
+  // "2.248" with empty PAL and LAY lines, and a ** line reading "2.248" too.
+  const starIsACopy = detectPeriodThousands(
+    [...massbuild(100), ...[
+      { Article: "A", Site: "W24", UOM: "EA", Compo: "1", ...PARTS, "Curr Y/S": "2.248" },
+      { Article: "A", Site: "W24", UOM: "PAL", Compo: "184", ...PARTS, "Curr Y/S": "0" },
+      { Article: "A", Site: "W24", UOM: "**", Compo: "1", ...PARTS, "Curr Y/S": "2.248" },
+    ]],
+    COLS,
+  );
+  eq("a ** line that reconciles both ways is no verdict", starIsACopy.informative, 0);
+  ok("  so the second oracle still gets to look", starIsACopy.applies);
+  eq("  and it rescales", starIsACopy.basis, "totals-exceed-parts");
+
+  // LIBRA MARKETING 119 Aug-2026 Wk3 — the case that decides how MUCH gets
+  // rewritten. SKI ROPE is sold by the metre, so "1.5" in a month column is a
+  // real metre and a half; on another row a `Curr Y/S` of "1.065" is a real
+  // 1,065. The file passes the shape guard, so a file-wide rescale would have
+  // turned that rope into 1,500m. Only the witnessed cell may move.
+  const rope = { Article: "38809", Site: "I004", UOM: "M", Compo: "1", ...PARTS, Jul26: "1.5", "Curr Y/S": "347" };
+  const specOrd = { Article: "740103", Site: "M500", UOM: "EA", Compo: "1", Apr26: "15", "Curr Y/S": "1.065" };
+  const mixedRows = [...massbuild(100), rope, specOrd];
+  const d8 = detectPeriodThousands(mixedRows, [...COLS, "Jul26"]);
+  ok("a per-metre file still gets its impossible totals fixed", d8.applies);
+  const moved = applyWitnessedThousands(mixedRows, [...COLS, "Jul26"]);
+  eq("  the special-order year-to-date is corrected", specOrd["Curr Y/S"], 1065);
+  eq("  the metre and a half is left alone", rope.Jul26, "1.5");
+  ok("  and the ones left alone are reported", d8.unjudged > 0);
+  ok("  only witnessed cells moved", moved < d8.suspects,
+    `moved ${moved} of ${d8.suspects} suspects`);
 }
 
 console.log("\n── Rescaling only touches the quantity columns ──────────");
