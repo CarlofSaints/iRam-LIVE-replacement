@@ -21,6 +21,7 @@ import { resolveReportPeriod } from "../lib/reportPeriod";
 const CLIENT = "__test_stamp_client";
 const CHANNEL_A = "__test_stamp_makro";
 const CHANNEL_B = "__test_stamp_massbuild";
+const CHANNEL_C = "__test_stamp_walmart";
 
 let pass = 0, fail = 0;
 const ok = (l: string, c: boolean, d = "") => { if (c) { pass++; console.log(`  ✓ ${l}`); } else { fail++; console.log(`  ✗ ${l}${d ? "  — " + d : ""}`); } };
@@ -111,6 +112,30 @@ async function integration() {
   await mergeDispo({ ...base, rows: rows("09-2026"), dateColumns: ["09-2026"], uploadId: "u5" });
   eq("an unstamped load leaves the stamp alone",
     label((await getSalesLedgerMeta(CLIENT, CHANNEL_A))!), "2026-9Wk1");
+
+  console.log("\nWhat the load dialog now reports (mergeDispo's return value)");
+
+  /* The dialog is driven entirely by these fields. Until they existed, a
+     back-load and a current-week load produced an identical green tick, which
+     is how 45 of them went unnoticed. Assert the SHAPE the UI reads, not just
+     the stamp that ends up stored. */
+  const fresh = { ...base, channelId: CHANNEL_C, channelName: "WALMART" };
+  const first = await mergeDispo({ ...fresh, rows: rows("08-2026"), dateColumns: ["08-2026"], uploadId: "v1", ...S(2026, 8, 3) });
+  ok("a current-week load reports its stamp ACCEPTED", first.stampAccepted === true);
+  eq("...and names the period the ledger now speaks for", label(first.ledgerPeriod), "2026-8Wk3");
+  eq("...with nothing skipped on a first load", first.snapshotsSkipped, 0);
+
+  const back = await mergeDispo({ ...fresh, rows: rows("12-2025"), dateColumns: ["12-2025"], uploadId: "v2", ...S(2025, 12, 4) });
+  ok("a back-load reports its stamp REFUSED", back.stampAccepted === false);
+  eq("...and still names Aug 2026 Wk3 as the ledger period", label(back.ledgerPeriod), "2026-8Wk3");
+  ok("...and reports the stock rows it was not allowed to touch", back.snapshotsSkipped > 0,
+    `snapshotsSkipped = ${back.snapshotsSkipped}`);
+  ok("...while its SALES still merged", back.inserted + back.updated > 0);
+
+  /* An unstamped load has no period to refuse, so it must NOT raise the amber
+     block — otherwise every legacy load shouts at the user for no reason. */
+  const bare = await mergeDispo({ ...fresh, rows: rows("08-2026"), dateColumns: ["08-2026"], uploadId: "v3" });
+  ok("an unstamped load is not reported as refused", bare.stampAccepted === true);
 
   console.log("\nWhat the Reports page then resolves on Auto");
 

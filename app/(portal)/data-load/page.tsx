@@ -71,7 +71,11 @@ export default function DataLoadPage() {
     ok: boolean;
     message: string;
     rowCount?: number;
-    merge?: { inserted: number; updated: number; unchanged: number };
+    merge?: {
+      inserted: number; updated: number; unchanged: number;
+      snapshotsApplied?: number; snapshotsSkipped?: number;
+    };
+    heldBack?: { channel: string; vendor: string; ledgerPeriod: string; skipped: number; stampAccepted: boolean }[];
     numberFormat?: { notes: string[]; cellsRescaled: number };
     warnings?: {
       missingArticles: MissingArticleDetail[];
@@ -211,6 +215,7 @@ export default function DataLoadPage() {
           rowCount: data.rowCount,
           merge: data.merge,
           numberFormat: data.numberFormat,
+          heldBack: data.heldBack,
           warnings: data.warnings,
         });
       } else {
@@ -625,6 +630,14 @@ export default function DataLoadPage() {
                 </span>
               </div>
             )}
+            {(result.heldBack?.length ?? 0) > 0 && (
+              <p className="mt-2 text-xs text-amber-700">
+                Not everything was applied. Sales merged, but the ledger already holds a
+                newer DISPO:{" "}
+                {result.heldBack!.map((h) => `${h.channel}/${h.vendor} (${h.ledgerPeriod})`).join(", ")}
+                {" "}— so stock and the report period were left as they were.
+              </p>
+            )}
           </div>
 
           {/* Warnings on successful forced upload */}
@@ -775,6 +788,37 @@ export default function DataLoadPage() {
                       <span className="inline-flex items-center rounded-md bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600">
                         {result.merge.unchanged.toLocaleString()} unchanged
                       </span>
+                    </div>
+                  )}
+                  {/* A back-load succeeds and CORRECTLY changes less than it
+                      looks like it did: sales merge from any period, but stock
+                      and the report period belong to the newest DISPO. Until
+                      this block existed that was invisible, so re-loading an
+                      old file looked identical to loading the current one and
+                      nobody could tell why the numbers had not moved. */}
+                  {(result.heldBack?.length ?? 0) > 0 && (
+                    <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                      <p className="font-medium">
+                        Sales merged. Some of this load was not applied, because the ledger already holds a newer DISPO.
+                      </p>
+                      <ul className="mt-1 list-disc pl-5">
+                        {result.heldBack!.map((h, i) => (
+                          <li key={i} className={i > 0 ? "mt-1" : ""}>
+                            <strong>{h.channel} / {h.vendor}</strong> — the ledger already holds{" "}
+                            <strong>{h.ledgerPeriod}</strong>.
+                            {h.skipped > 0 && (
+                              <> Stock, status and prices were left alone for{" "}
+                                {h.skipped.toLocaleString()} row(s).</>
+                            )}
+                            {!h.stampAccepted && (
+                              <> Reports will keep using <strong>{h.ledgerPeriod}</strong>, not the week you selected.</>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                      <p className="mt-1">
+                        This is correct for a back-load. If you meant to load the CURRENT week, check the period you picked.
+                      </p>
                     </div>
                   )}
                   {/* How the quantity columns were read. A DISPO that writes

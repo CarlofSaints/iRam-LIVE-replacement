@@ -233,6 +233,20 @@ export interface MergeResult {
   inserted: number;
   updated: number;
   unchanged: number;
+
+  /* Point-in-time fields (SOH, status, prices) this load was NOT allowed to
+     write because the ledger already holds a newer period. A large number is
+     EXPECTED and correct when back-loading history — but until now it only
+     reached the Vercel logs, so from the UI a rejected snapshot looked exactly
+     like an accepted one. That is how 45 back-loads passed unnoticed. */
+  snapshotsApplied: number;
+  snapshotsSkipped: number;
+
+  /* The period the LEDGER speaks for after this load, and whether this load is
+     what set it. `stampAccepted: false` means this DISPO is older than what the
+     ledger already had, so Reports keeps reporting the newer period. */
+  ledgerPeriod: { reportYear?: number; reportMonth?: number; reportWeek?: number };
+  stampAccepted: boolean;
 }
 
 export async function mergeDispo(params: MergeDispoParams): Promise<MergeResult> {
@@ -500,7 +514,18 @@ export async function mergeDispo(params: MergeDispoParams): Promise<MergeResult>
   }
   await writeJson(clientMetaIndexKey(clientId), clientIndex);
 
-  return { inserted, updated, unchanged };
+  return {
+    inserted, updated, unchanged,
+    snapshotsApplied, snapshotsSkipped,
+    ledgerPeriod: {
+      reportYear: stamp.reportYear,
+      reportMonth: stamp.reportMonth,
+      reportWeek: stamp.reportWeek,
+    },
+    stampAccepted:
+      incomingScore === 0 ||
+      periodScore(stamp.reportYear, stamp.reportMonth, stamp.reportWeek) === incomingScore,
+  };
 }
 
 // ── Helpers ──

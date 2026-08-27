@@ -4,7 +4,7 @@ import { getUploadIndex, getUploadsByClient, addUpload } from "@/lib/uploadData"
 import { getClientById } from "@/lib/clientData";
 import { getChannelById, getChannels } from "@/lib/channelData";
 import { parseDispo } from "@/lib/dispoParser";
-import { mergeDispo, normalizeDateCol } from "@/lib/salesData";
+import { mergeDispo, normalizeDateCol, type MergeResult } from "@/lib/salesData";
 import { getLinksLookup, normalizeArticle } from "@/lib/linksLookup";
 import { getMergedStores } from "@/lib/storeFileData";
 import { normalizeSiteKey } from "@/lib/siteCode";
@@ -20,6 +20,8 @@ import { acquireUploadLock, releaseUploadLock, lockMessage, type UploadLock } fr
 import { PARSER_VERSION } from "@/lib/parserVersion";
 import { buildChannelGroup } from "@/lib/channelGroup";
 import type { FileType } from "@/lib/types";
+
+const MONTH_ABBR = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 // Large DISPOs take real time to parse + merge. Give the function headroom so a
 // big file finishes instead of timing out (which the browser sees as a failure).
@@ -409,8 +411,17 @@ export async function POST(req: NextRequest) {
       }
       const groupList = [...groups.values()].filter((g) => g.rows.length > 0);
 
-      const mergeTotals = { inserted: 0, updated: 0, unchanged: 0 };
-      const perChannel: { channel: string; vendor: string; rows: number; inserted: number; updated: number; unchanged: number }[] = [];
+      const mergeTotals = { inserted: 0, updated: 0, unchanged: 0, snapshotsApplied: 0, snapshotsSkipped: 0 };
+      type PerChannel = { channel: string; vendor: string; rows: number } & MergeResult;
+      const perChannel: PerChannel[] = [];
+
+      /* Groups whose SNAPSHOT fields or LEDGER PERIOD this load was not allowed
+         to move, because the ledger already holds a newer DISPO. Both are
+         correct outcomes for a back-load, and both used to be invisible from
+         the UI — a held-back load looked exactly like an accepted one, which is
+         how 45 back-loads on 25 Aug 2026 walked 23 ledgers back eight months
+         with nobody noticing. */
+      const heldBack: { channel: string; vendor: string; ledgerPeriod: string; skipped: number; stampAccepted: boolean }[] = [];
       let firstUploadId = "";
       for (const g of groupList) {
         const upload = await addUpload(
@@ -453,6 +464,20 @@ export async function POST(req: NextRequest) {
         mergeTotals.inserted += merge.inserted;
         mergeTotals.updated += merge.updated;
         mergeTotals.unchanged += merge.unchanged;
+        mergeTotals.snapshotsApplied += merge.snapshotsApplied;
+        mergeTotals.snapshotsSkipped += merge.snapshotsSkipped;
+        if (!merge.stampAccepted || merge.snapshotsSkipped > 0) {
+          const lp = merge.ledgerPeriod;
+          heldBack.push({
+            channel: g.channel.name,
+            vendor: g.vendor,
+            ledgerPeriod: lp.reportYear
+              ? `Wk${lp.reportWeek ?? "?"} ${MONTH_ABBR[lp.reportMonth ?? 0] ?? lp.reportMonth} ${lp.reportYear}`
+              : "an unstamped load",
+            skipped: merge.snapshotsSkipped,
+            stampAccepted: merge.stampAccepted,
+          });
+        }
         perChannel.push({ channel: g.channel.name, vendor: g.vendor, rows: g.rows.length, ...merge });
       }
 
@@ -461,6 +486,12 @@ export async function POST(req: NextRequest) {
         : "";
       const splitSuffix = perChannel.length > 1
         ? ` Split by channel×vendor: ${perChannel.map((p) => `${p.channel}/${p.vendor} ${p.rows}`).join(", ")}.`
+        : "";
+      /* Say it in the LOG as well as the dialog. The dialog is seen once by
+         one person; the log is what anyone reconstructing "why does this
+         client report the wrong week" actually reads. */
+      const heldBackSuffix = heldBack.length > 0
+        ? ` Held back: ${heldBack.map((h) => `${h.channel}/${h.vendor} — ledger already holds ${h.ledgerPeriod}` + (h.skipped > 0 ? `, ${h.skipped} stock snapshot(s) not updated` : "") + (h.stampAccepted ? "" : ", report period unchanged")).join("; ")}.`
         : "";
       const repairSuffix = sitesRepaired > 0
         ? ` Repaired ${sitesRepaired} Excel-mangled site code(s) against the store master.`
@@ -496,7 +527,7 @@ export async function POST(req: NextRequest) {
         userId: session.userId,
         userName: session.name,
         action: "upload_dispo",
-        details: `Uploaded DISPO for ${client.name} / ${mainChannelName} (${result.totalRows} rows, vendor(s) ${vendorLabel}). Ledger merge: ${mergeTotals.inserted} new, ${mergeTotals.updated} updated, ${mergeTotals.unchanged} unchanged.${splitSuffix}${repairSuffix}${thousandsSuffix}${parserSuffix}${vendorSuffix}${logSuffix}`,
+        details: `Uploaded DISPO for ${client.name} / ${mainChannelName} (${result.totalRows} rows, vendor(s) ${vendorLabel}). Ledger merge: ${mergeTotals.inserted} new, ${mergeTotals.updated} updated, ${mergeTotals.unchanged} unchanged.${splitSuffix}${repairSuffix}${thousandsSuffix}${parserSuffix}${vendorSuffix}${heldBackSuffix}${logSuffix}`,
         status: "success",
         clientId: client.id,
         clientName: client.name,
@@ -625,6 +656,7 @@ export async function POST(req: NextRequest) {
             ? { numberFormat: { notes: result.thousands.notes, cellsRescaled: result.thousands.cellsRescaled } }
             : {}),
           ...(perChannel.length > 1 ? { perChannel } : {}),
+          ...(heldBack.length > 0 ? { heldBack } : {}),
           ...(hasWarnings ? {
             warnings: {
               missingArticles: missingArticleDetails,
