@@ -1,4 +1,4 @@
-import { periodScore, snapshotWins, isInternalField, SNAPSHOT_PERIOD_FIELD } from "./dispoSnapshot";
+import { periodScore, snapshotWins, winningStamp, isInternalField, SNAPSHOT_PERIOD_FIELD } from "./dispoSnapshot";
 import { PARSER_VERSION, PARSER_VERSION_FIELD } from "./parserVersion";
 import type { SalesLedgerMeta } from "./types";
 import { readJson, readJsonStrict, writeJson, deleteBlob } from "./blob";
@@ -165,6 +165,39 @@ export async function getAllSalesLedgers(
   clientId: string,
 ): Promise<SalesLedgerMeta[]> {
   return readJson<SalesLedgerMeta[]>(clientMetaIndexKey(clientId), []);
+}
+
+/* Set a ledger’s period stamp WITHOUT touching a single row.
+
+   The repair half of the back-load bug (app/api/admin/ledger-stamps). A stamp
+   that already walked backwards does not self-heal: the guard in mergeDispo
+   stops it happening again, but the wrong value sits there until something
+   newer is loaded. See [derived-data-keeps-the-old-bug] — fixing the generator
+   never fixes what it already wrote.
+
+   Writes BOTH the per-channel meta blob and the client-level index entry,
+   because mergeDispo writes both and Reports reads the index. Updating one and
+   not the other is how the two views start disagreeing.
+
+   Reads with readJsonStrict so a transient blob failure cannot turn "restamp
+   one channel" into "drop every other channel from the client index" — the
+   same trap the sales merge hit in 59afa4a. Callers must hold the upload lock. */
+export async function setSalesLedgerPeriod(
+  clientId: string,
+  channelId: string,
+  stamp: { reportYear?: number; reportMonth?: number; reportWeek?: number },
+): Promise<void> {
+  const meta = await readJsonStrict<SalesLedgerMeta | null>(metaKey(clientId, channelId), null);
+  if (!meta) throw new Error(`setSalesLedgerPeriod: no meta for ${clientId}/${channelId}`);
+
+  const updated: SalesLedgerMeta = { ...meta, ...stamp };
+  await writeJson(metaKey(clientId, channelId), updated);
+
+  const index = await readJsonStrict<SalesLedgerMeta[]>(clientMetaIndexKey(clientId), []);
+  const idx = index.findIndex((m) => m.channelId === channelId);
+  if (idx >= 0) index[idx] = { ...index[idx], ...stamp };
+  else index.push(updated);
+  await writeJson(clientMetaIndexKey(clientId), index);
 }
 
 export async function deleteSalesLedger(
@@ -421,6 +454,26 @@ export async function mergeDispo(params: MergeDispoParams): Promise<MergeResult>
     mergedUploadIds.push(uploadId);
   }
 
+  /* The period this ledger now speaks for. A back-load must NOT drag it
+     backwards — see winningStamp in lib/dispoSnapshot.ts, which is the same
+     rule the snapshot fields above already follow. Resolved as ONE period, not
+     three independent fields, so a partial stamp can never mint a period that
+     was never loaded (a new year against an old week). */
+  const stamp = winningStamp(existingMeta, { reportYear, reportMonth, reportWeek });
+  const incomingScore = periodScore(reportYear, reportMonth, reportWeek);
+  if (
+    incomingScore > 0 &&
+    periodScore(stamp.reportYear, stamp.reportMonth, stamp.reportWeek) !== incomingScore
+  ) {
+    /* Visible in the Vercel logs for the same reason the skipped-snapshot count
+       is: from the UI a held-back stamp looks identical to an accepted one. */
+    console.log(
+      `[mergeDispo] ${clientName}/${channelName}: KEPT ledger stamp ` +
+      `${stamp.reportYear}-${stamp.reportMonth}Wk${stamp.reportWeek} — this load is the older ` +
+      `${reportYear}-${reportMonth}Wk${reportWeek}. Sales merged; the report period is unchanged.`,
+    );
+  }
+
   const meta: SalesLedgerMeta = {
     clientId,
     clientName,
@@ -431,9 +484,7 @@ export async function mergeDispo(params: MergeDispoParams): Promise<MergeResult>
     dateColumns: Array.from(allDateCols).sort(),
     mergedUploadIds,
     lastMergedAt: loadStamp,
-    reportYear: reportYear ?? existingMeta?.reportYear,
-    reportMonth: reportMonth ?? existingMeta?.reportMonth,
-    reportWeek: reportWeek ?? existingMeta?.reportWeek,
+    ...stamp,
   };
 
   await writeJson(metaKey(clientId, channelId), meta);

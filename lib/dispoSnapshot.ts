@@ -52,3 +52,58 @@ export function isInternalField(col: string): boolean {
 }
 
 export const SNAPSHOT_PERIOD_FIELD = "_snapshotPeriod";
+
+/* ── The LEDGER's period stamp obeys the same rule ────────────────────────────
+
+   `mergeDispo` writes `reportYear/Month/Week` onto the client × channel ledger
+   meta, and used to write it like this:
+
+       reportWeek: reportWeek ?? existingMeta?.reportWeek,
+
+   which is LAST LOAD WINS. The snapshot rule above sits three lines earlier in
+   the same write block and was period-guarded; this one was not, so a back-load
+   correctly refused to roll back the STOCK while quietly rolling back the STAMP.
+
+   That stamp is what "Auto" resolves on the Reports page (lib/reportPeriod.ts),
+   and `latestStamp()` cannot recover from it — taking the max across channels
+   is a max over values that are themselves already stale.
+
+   Measured on 27 Aug 2026: one morning of Dec-2025 back-loads (45 files, MAKRO
+   + WALMART, 08:43–10:13) left **23 of 52 live ledgers** stamped Dec 2025 Wk4
+   over data running to Aug 2026. Week is only a label, but Year and Month reach
+   the DATA — month-end builds its Phantom reference date and the Numerical
+   Distribution window from them — so on Auto those reports were computed
+   against December 2025.
+
+   The three fields move TOGETHER. Resolving them independently (as the old `??`
+   chain did whenever one arrived undefined) can mint a period that was never
+   loaded: a new year against an old week. */
+
+export interface LedgerStamp {
+  reportYear?: number;
+  reportMonth?: number;
+  reportWeek?: number;
+}
+
+/* Which stamp the ledger should carry after this load.
+
+   - Incoming has no period at all → keep what's there. An unstamped load says
+     nothing about the period and must not blank a good stamp.
+   - Nothing on the ledger yet → take the incoming one.
+   - Equal period → take the incoming one, matching `snapshotWins`: re-loading
+     the same week is how a bad file gets corrected.
+   - Older period → KEEP THE EXISTING STAMP. This is the fix. */
+export function winningStamp(existing: LedgerStamp | null | undefined, incoming: LedgerStamp): LedgerStamp {
+  const inScore = periodScore(incoming.reportYear, incoming.reportMonth, incoming.reportWeek);
+  const exScore = periodScore(existing?.reportYear, existing?.reportMonth, existing?.reportWeek);
+
+  const keep: LedgerStamp = {
+    reportYear: existing?.reportYear,
+    reportMonth: existing?.reportMonth,
+    reportWeek: existing?.reportWeek,
+  };
+
+  if (inScore === 0) return keep;
+  if (exScore === 0) return { ...incoming };
+  return inScore >= exScore ? { ...incoming } : keep;
+}
