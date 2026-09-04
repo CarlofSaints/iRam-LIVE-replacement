@@ -200,6 +200,100 @@ export async function setSalesLedgerPeriod(
   await writeJson(clientMetaIndexKey(clientId), index);
 }
 
+/* Remove rows from a ledger that never belonged there.
+
+   The sibling of overwriteSalesLedger, which deliberately REFUSES a row-count
+   change so an in-place repair can never turn into a truncation. This one is
+   allowed to shrink the ledger, so every guard that helper gets for free has to
+   be spelled out here instead:
+
+     • the caller states how many rows it expects to lose, and a mismatch aborts
+       before anything is written — a predicate that has quietly widened its
+       reach fails loudly instead of eating the ledger;
+     • removing everything, or nothing, is refused;
+     • the read is strict, so a transient blob failure cannot present as "the
+       ledger is empty, so nothing matched" (59afa4a);
+     • `mergedUploadIds` loses the upload being undone, so the ledger stops
+       claiming a load it no longer holds.
+
+   Why it exists: a DISPO loaded against the WRONG CHANNEL merges cleanly and is
+   then indistinguishable from real data — mergeDispo is additive by design and
+   nothing downstream carries a row's upload id. Deleting the upload RECORD does
+   not touch the rows it merged, so the record-only delete hides the evidence and
+   leaves the bad numbers in every report. This removes the rows first.
+
+   dateColumns is left alone on purpose: it is cumulative and is never pruned on
+   a normal merge either, so pruning it here would be a new rule invented during
+   a repair.
+
+   Callers must hold the upload lock. */
+export interface LedgerRowRemoval {
+  before: number;
+  removed: number;
+  kept: number;
+}
+
+export async function removeLedgerRows(
+  clientId: string,
+  channelId: string,
+  matches: (row: Record<string, unknown>) => boolean,
+  expectRemoved: number,
+  undoUploadId?: string,
+): Promise<LedgerRowRemoval> {
+  const rows = await readJsonStrict<Record<string, unknown>[]>(
+    ledgerKey(clientId, channelId),
+    [],
+  );
+
+  const keep: Record<string, unknown>[] = [];
+  let removed = 0;
+  for (const r of rows) {
+    if (matches(r)) removed++;
+    else keep.push(r);
+  }
+
+  if (removed !== expectRemoved) {
+    throw new Error(
+      `removeLedgerRows: expected to remove ${expectRemoved} row(s) from ` +
+      `${clientId}/${channelId} but matched ${removed} of ${rows.length} — ` +
+      `refusing to write. Re-run the dry run.`,
+    );
+  }
+  if (removed === 0) throw new Error("removeLedgerRows: nothing matched — refusing to write");
+  if (keep.length === 0) {
+    throw new Error(
+      `removeLedgerRows: refusing to empty ${clientId}/${channelId} — ` +
+      `use deleteSalesLedger if that is really the intent`,
+    );
+  }
+
+  await writeJson(ledgerKey(clientId, channelId), keep);
+
+  /* Both meta copies, for the same reason setSalesLedgerPeriod writes both:
+     mergeDispo writes the per-channel blob AND the client index, and Reports
+     reads the index. Updating one is how the two views start disagreeing. */
+  const meta = await readJsonStrict<SalesLedgerMeta | null>(metaKey(clientId, channelId), null);
+  if (meta) {
+    const updated: SalesLedgerMeta = {
+      ...meta,
+      totalRows: keep.length,
+      mergedUploadIds: undoUploadId
+        ? (meta.mergedUploadIds ?? []).filter((id) => id !== undoUploadId)
+        : meta.mergedUploadIds,
+    };
+    await writeJson(metaKey(clientId, channelId), updated);
+
+    const index = await readJsonStrict<SalesLedgerMeta[]>(clientMetaIndexKey(clientId), []);
+    const idx = index.findIndex((m) => m.channelId === channelId);
+    if (idx >= 0) {
+      index[idx] = { ...index[idx], totalRows: updated.totalRows, mergedUploadIds: updated.mergedUploadIds };
+      await writeJson(clientMetaIndexKey(clientId), index);
+    }
+  }
+
+  return { before: rows.length, removed, kept: keep.length };
+}
+
 export async function deleteSalesLedger(
   clientId: string,
   channelId: string,
