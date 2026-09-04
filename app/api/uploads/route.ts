@@ -19,6 +19,7 @@ import { addLog } from "@/lib/activityLog";
 import { acquireUploadLock, releaseUploadLock, lockMessage, type UploadLock } from "@/lib/uploadLock";
 import { PARSER_VERSION } from "@/lib/parserVersion";
 import { buildChannelGroup } from "@/lib/channelGroup";
+import { judgeChannelFit, wrongChannelMessage } from "@/lib/channelFit";
 import type { FileType } from "@/lib/types";
 
 const MONTH_ABBR = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -244,6 +245,28 @@ export async function POST(req: NextRequest) {
       // split per site's own channel). A site is "known" if it appears in any
       // accept channel's store master.
       const mergedStores = await getMergedStores();
+
+      /* ── Is this file even for the channel that was picked? ──
+         BEFORE the site repair below, and that order is the whole point: the
+         repair folds "M01" onto "M001", so once it has run a Makro file looks
+         like a clean Massbuild one and every later check agrees. Judged on the
+         RAW codes, and only ever refuses when another channel claims nearly the
+         whole file while this one claims almost none of it — a genuinely
+         Excel-mangled file matches nothing anywhere and still loads.
+         See lib/channelFit.ts for the incident this exists for. */
+      const fit = judgeChannelFit(
+        result.rows.map((r) => r["Site"]),
+        mainChannelId,
+        allChannels,
+        mergedStores,
+      );
+      if (fit.wrongChannel) {
+        return Response.json(
+          { error: wrongChannelMessage(fit, mainChannelName), channelFit: fit },
+          { status: 400, headers: noCacheHeaders() },
+        );
+      }
+
       const siteChannel = new Map<string, { id: string; name: string }>();
       // Canonical store code by normalized key, so a DISPO site that Excel
       // mangled into a Rand value ("R001" → "R1" / "R 1.00") can be repaired to
