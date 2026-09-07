@@ -11,6 +11,9 @@ import SearchSelect from "@/components/SearchSelect";
 // already human-readable (e.g. "Downloaded Month-End report") and passes through.
 const ACTION_LABELS: Record<string, string> = {
   upload_dispo: "Loaded DISPO",
+  upload_refused: "Load Refused",
+  upload_failed: "Load Failed",
+  upload_warned: "Load Held for Confirmation",
   upload_control_file: "Loaded Control File",
   upload_store_file: "Loaded Store File",
   create_client: "Added Client",
@@ -264,7 +267,11 @@ export default function ActivityLogPage() {
                           className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${
                             log.status === "success"
                               ? "bg-green-50 text-green-700"
-                              : "bg-red-50 text-red-700"
+                              : log.status === "warning"
+                                // Amber, not red: a warning means the load was
+                                // HELD at a dialog, not that anything broke.
+                                ? "bg-amber-50 text-amber-700"
+                                : "bg-red-50 text-red-700"
                           }`}
                         >
                           {log.status}

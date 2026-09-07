@@ -59,12 +59,23 @@ export async function POST(req: NextRequest) {
   // The WHOLE lock, not just its id — releasing needs our startedAt to tell a
   // real successor from a stale read. See lib/uploadLock.ts.
   let heldLock: UploadLock | null = null;
+  /* Who is loading, hoisted out of the try so the catch below can still name
+     them. Set immediately after the permission check, which is the one thing
+     that can throw BEFORE there is anyone to attribute a failure to. */
+  let who: { userId: string; name: string } | null = null;
+  /* The attempt's identity, hoisted for the same reason: a thrown error lands
+     in the catch, outside the scope of everything that would name it. Both are
+     filled in as soon as they are known, so a failure at any depth still says
+     WHICH file, client, channel and period it was. */
+  let logClient: { id: string; name: string } | null = null;
+  let describeAttempt: () => string = () => "an upload";
   try {
     const session = await requirePermission(req, "upload_data");
+    who = { userId: session.userId, name: session.name };
 
     const contentType = req.headers.get("content-type") || "";
     let buffer: Buffer;
-    let fileName: string;
+    let fileName = "";
     let clientId: string | null;
     let channelId: string | null;
     let fileType: FileType | null;
@@ -72,6 +83,49 @@ export async function POST(req: NextRequest) {
     let reportMonth: number | undefined;
     let reportWeek: number | undefined;
     let force: boolean;
+
+    /* ── Every refusal leaves a record ──────────────────────────────────────
+       A refused load used to vanish completely. The upload INDEX holds
+       successes only, and none of the early returns below wrote to the
+       activity log, so "it wouldn't let me load it" left nothing at all to
+       look at: no attempt, no reason, no file name, not even a timestamp. The
+       loader's own screen keeps the message, but that screen is seen once by
+       one person and is gone by the time anyone is asked about it.
+
+       Every early return goes through refuse() so a new one cannot quietly
+       skip the record, and the SENTENCE THE LOADER SAW is what gets logged —
+       that is the only thing that reliably matches a support message ("it said
+       the month wasn't in the dispo") to an attempt.
+
+       Deliberately NOT written to the upload index: the DISPO checklist reads
+       that index, and a refused load must never make a week look loaded. */
+    let logChannelName = "";
+    const periodLabel = () =>
+      reportYear && reportMonth
+        ? `Wk${reportWeek ?? "?"} ${MONTH_ABBR[reportMonth] ?? reportMonth} ${reportYear}`
+        : "";
+    describeAttempt = () =>
+      `${fileType === "dispo" ? "DISPO" : fileType === "aged_stock" ? "Aged Stock file" : "file"} ` +
+      `"${fileName || "(no file name)"}"` +
+      (logClient ? ` for ${logClient.name}` : "") +
+      (logChannelName ? ` / ${logChannelName}` : "") +
+      (periodLabel() ? ` (${periodLabel()})` : "");
+
+    async function refuse(
+      httpStatus: number,
+      body: Record<string, unknown> & { error: string },
+      reason: string,
+    ) {
+      await addLog({
+        userId: session.userId,
+        userName: session.name,
+        action: "upload_refused",
+        details: `Refused ${describeAttempt()}. ${reason}. The loader was shown: "${body.error}"`,
+        status: "error",
+        ...(logClient ? { clientId: logClient.id, clientName: logClient.name } : {}),
+      });
+      return Response.json(body, { status: httpStatus, headers: noCacheHeaders() });
+    }
 
     if (contentType.includes("application/json")) {
       const body = await req.json();
@@ -85,11 +139,11 @@ export async function POST(req: NextRequest) {
       reportWeek = body.reportWeek != null && body.reportWeek !== "" ? Number(body.reportWeek) : undefined;
       force = body.force === true || body.force === "true";
       if (!tempBlobUrl) {
-        return Response.json({ error: "Missing uploaded file reference" }, { status: 400, headers: noCacheHeaders() });
+        return refuse(400, { error: "Missing uploaded file reference" }, "The browser sent no reference to the uploaded file");
       }
       const r = await fetch(tempBlobUrl);
       if (!r.ok) {
-        return Response.json({ error: "Could not read the uploaded file — please try again" }, { status: 400, headers: noCacheHeaders() });
+        return refuse(400, { error: "Could not read the uploaded file — please try again" }, `The temporary upload could not be fetched back (HTTP ${r.status})`);
       }
       buffer = Buffer.from(await r.arrayBuffer());
     } else {
@@ -103,27 +157,33 @@ export async function POST(req: NextRequest) {
       reportWeek = formData.get("reportWeek") ? Number(formData.get("reportWeek")) : undefined;
       force = formData.get("force") === "true";
       if (!file) {
-        return Response.json({ error: "File, clientId, channelId, and fileType are required" }, { status: 400, headers: noCacheHeaders() });
+        return refuse(400, { error: "File, clientId, channelId, and fileType are required" }, "The form carried no file");
       }
       fileName = file.name;
       buffer = Buffer.from(await file.arrayBuffer());
     }
 
     if (!clientId || !channelId || !fileType) {
-      return Response.json({ error: "File, clientId, channelId, and fileType are required" }, { status: 400, headers: noCacheHeaders() });
+      return refuse(
+        400,
+        { error: "File, clientId, channelId, and fileType are required" },
+        `The request was incomplete (missing ${[!clientId && "client", !channelId && "channel", !fileType && "file type"].filter(Boolean).join(", ")})`,
+      );
     }
 
     // A DISPO load must be stamped with the week it is for — the load checklist
     // buckets loads by (year, month, week), so a missing week can't be placed.
     if (fileType === "dispo" && (reportWeek === undefined || isNaN(reportWeek) || reportWeek < 1)) {
-      return Response.json({ error: "A report week is required for DISPO uploads" }, { status: 400, headers: noCacheHeaders() });
+      return refuse(400, { error: "A report week is required for DISPO uploads" }, "No report week was chosen");
     }
 
     const client = await getClientById(clientId);
-    if (!client) return Response.json({ error: "Client not found" }, { status: 404, headers: noCacheHeaders() });
+    if (!client) return refuse(404, { error: "Client not found" }, `Client id ${clientId} does not exist`);
+    logClient = { id: client.id, name: client.name };
 
     const channel = await getChannelById(channelId);
-    if (!channel) return Response.json({ error: "Channel not found" }, { status: 404, headers: noCacheHeaders() });
+    if (!channel) return refuse(404, { error: "Channel not found" }, `Channel id ${channelId} does not exist`);
+    logChannelName = channel.name;
 
     // ── One upload at a time, app-wide ──
     // Taken BEFORE parsing (the expensive part) and held until this request
@@ -140,9 +200,14 @@ export async function POST(req: NextRequest) {
       // Nothing was processed, so keep the browser-uploaded temp blob — the
       // retry reuses it instead of pushing 20MB up the wire a second time.
       keepBlob = true;
-      return Response.json(
+      /* Logged like any other refusal even though nobody did anything wrong:
+         from the loader's side this is still "it wouldn't let me load it", and
+         a run of these is the only visible sign that the team is queueing
+         behind one another. */
+      return refuse(
+        409,
         { busy: true, error: lockMessage(acquired.heldBy) },
-        { status: 409, headers: noCacheHeaders() },
+        `Another upload held the app-wide lock (${acquired.heldBy?.userName ?? "unknown user"}, ${acquired.heldBy?.fileName ?? "unknown file"})`,
       );
     }
     heldLock = acquired.lock;
@@ -156,9 +221,13 @@ export async function POST(req: NextRequest) {
       if (client.vendorNumbers.length > 0 && result.vendorNumbers.length > 0) {
         const bad = result.vendorNumbers.filter((v) => !client.vendorNumbers.includes(v));
         if (bad.length > 0) {
-          return Response.json({
-            error: `Vendor number(s) ${bad.join(", ")} from file do not match client's vendor numbers (${client.vendorNumbers.join(", ")})`,
-          }, { status: 400, headers: noCacheHeaders() });
+          return refuse(
+            400,
+            {
+              error: `Vendor number(s) ${bad.join(", ")} from file do not match client's vendor numbers (${client.vendorNumbers.join(", ")})`,
+            },
+            `File carries vendor(s) ${bad.join(", ")}, which are not on this client`,
+          );
         }
       }
 
@@ -192,9 +261,18 @@ export async function POST(req: NextRequest) {
           const availMsg = available.length
             ? `This DISPO contains: ${available.join(", ")}.`
             : `This DISPO contains no recognizable monthly sales columns.`;
-          return Response.json({
-            error: `You selected ${label(selected)}, but that month is not in this DISPO. ${availMsg} Pick the correct month/year (or upload the DISPO that actually contains ${label(selected)}).`,
-          }, { status: 400, headers: noCacheHeaders() });
+          /* The reason names the file's OWN months, because the usual cause is
+             not a mis-picked month but a column header the parser could not
+             read as a date — and then the months it DID find is the only clue
+             that says so. */
+          return refuse(
+            400,
+            {
+              error: `You selected ${label(selected)}, but that month is not in this DISPO. ${availMsg} Pick the correct month/year (or upload the DISPO that actually contains ${label(selected)}).`,
+            },
+            `Selected ${label(selected)} is not among the months the parser read from the file` +
+              (available.length ? ` (it found ${available.join(", ")})` : " (it found none at all)"),
+          );
         }
       }
 
@@ -204,6 +282,9 @@ export async function POST(req: NextRequest) {
       const channelById = new Map(allChannels.map((c) => [c.id, c]));
       const mainRecord = channelById.get(mainChannelId) ?? channel;
       const mainChannelName = mainRecord.name;
+      // Refusals from here on name the MAIN channel, which is the one the
+      // loader picked and the one every message below talks about.
+      logChannelName = mainChannelName;
 
       // ── Companion-channel group ──
       // A main channel's DISPO export can carry sites belonging to companion
@@ -261,9 +342,16 @@ export async function POST(req: NextRequest) {
         mergedStores,
       );
       if (fit.wrongChannel) {
-        return Response.json(
+        /* The scores go in the log, not just the response. This guard refuses
+           a load nobody expected to be refused, so the first question is
+           always "was it right?" — and that is answerable only from the
+           numbers it judged on. See lib/channelFit.ts. */
+        return refuse(
+          400,
           { error: wrongChannelMessage(fit, mainChannelName), channelFit: fit },
-          { status: 400, headers: noCacheHeaders() },
+          `Channel-fit check refused the file: of ${fit.siteCount} distinct site code(s), ` +
+            `${fit.selected.exact} match ${fit.selected.label}` +
+            (fit.rival ? ` and ${fit.rival.exact} match ${fit.rival.label}` : ""),
         );
       }
 
@@ -384,6 +472,24 @@ export async function POST(req: NextRequest) {
         if (missingArticleDetails.length > 0) parts.push(`${missingArticleDetails.length} unrecognized article(s)`);
         if (missingSites.length > 0) parts.push(`${missingSites.length} unknown store(s)`);
         if (result.collisions.length > 0) parts.push(`${result.collisions.length} column-mapping conflict(s)`);
+
+        /* The dialog is a decision put to a person, not an outcome — they can
+           force it through or leave to fix the files. Walking away wrote
+           nothing down, so an abandoned load looked exactly like a load nobody
+           ever attempted. Logged as a warning, never a success: if they DO
+           continue, the forced load logs its own "forced with …" line, and the
+           two entries together are the whole story. */
+        await addLog({
+          userId: session.userId,
+          userName: session.name,
+          action: "upload_warned",
+          details:
+            `Held ${describeAttempt()} at the confirmation dialog: ${parts.join(" and ")}. ` +
+            `Nothing was loaded — the loader either continues anyway or cancels to fix the files.`,
+          status: "warning",
+          clientId: client.id,
+          clientName: client.name,
+        });
 
         return Response.json(
           {
@@ -693,11 +799,33 @@ export async function POST(req: NextRequest) {
     }
 
     if (fileType === "aged_stock") {
-      return Response.json({ error: "Aged Stock parsing is not yet implemented" }, { status: 400, headers: noCacheHeaders() });
+      return refuse(400, { error: "Aged Stock parsing is not yet implemented" }, "Aged Stock loading is not built yet");
     }
 
-    return Response.json({ error: "Invalid file type" }, { status: 400, headers: noCacheHeaders() });
+    return refuse(400, { error: "Invalid file type" }, `File type "${fileType}" is not one this route can load`);
   } catch (err) {
+    /* A THROWN failure is the worst case for diagnosis, and it was the one
+       case with no record at all. Only "Could not find header row" reaches the
+       loader intact; everything else — a corrupt workbook, an out-of-memory
+       parse, a blob read that failed — is flattened to "Internal server error"
+       by handleAuthError, with the real cause left in the Vercel logs where it
+       ages out and nobody looks. Write it down here, the one place every
+       unexpected failure passes through.
+
+       Guarded on `who`: requirePermission throws before there is anyone to
+       attribute this to, and an auth refusal is not an upload failure. Its own
+       .catch keeps a logging problem from replacing the real error. */
+    if (who) {
+      const cause = err instanceof Error ? err.message : String(err);
+      await addLog({
+        userId: who.userId,
+        userName: who.name,
+        action: "upload_failed",
+        details: `Loading ${describeAttempt()} failed with an error: ${cause}`,
+        status: "error",
+        ...(logClient ? { clientId: logClient.id, clientName: logClient.name } : {}),
+      }).catch(() => {});
+    }
     if (err instanceof Error && err.message.includes("Could not find header row")) {
       return Response.json({ error: err.message }, { status: 400, headers: noCacheHeaders() });
     }

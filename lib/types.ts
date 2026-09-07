@@ -400,7 +400,12 @@ export interface LogEntry {
   userName: string;
   action: string;
   details?: string;
-  status?: "success" | "error";
+  /* "warning" is not a third outcome, it is a DECISION POINT that was put to a
+     person: the load was held at a confirmation dialog and may still be forced
+     through or abandoned. It exists so that walking away from that dialog is
+     on the record — without it, an abandoned load is indistinguishable from
+     one that was never attempted. */
+  status?: "success" | "error" | "warning";
   clientId?: string;   // set on client-scoped actions (DISPO / control-file loads, etc.)
   clientName?: string; // denormalised for filtering/display without a client lookup
 }
