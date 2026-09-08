@@ -53,6 +53,10 @@ export async function createClient(data: {
   channelIds: string[];
   linkedClientIds?: string[];
   notes?: string;
+  /* Set at creation now that the name is PICKED from SQL Server's own list —
+     the two are the same string, so the mapping the SQL Direct pilot needs
+     exists from the start instead of being typed in later. */
+  sqlClientName?: string;
 }): Promise<Client> {
   const clients = await getClients();
   const client: Client = {
@@ -66,6 +70,7 @@ export async function createClient(data: {
     linkedClientIds: data.linkedClientIds ?? [],
     controlFiles: { ...EMPTY_CONTROL_FILES },
     notes: data.notes,
+    sqlClientName: data.sqlClientName?.trim() || undefined,
   };
   clients.push(client);
   await writeJson(KEY, clients);

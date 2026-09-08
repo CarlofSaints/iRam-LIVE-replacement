@@ -3,9 +3,21 @@
 import { useEffect, useState, FormEvent } from "react";
 import { useTableTools } from "@/lib/useTableTools";
 import { SortableTh, TableSearch } from "@/components/TableTools";
+import SearchSelect from "@/components/SearchSelect";
 import Link from "next/link";
 import { authFetch, useAuth, usePermissions } from "@/lib/useAuth";
 import type { Client, Channel, CAM, ControlFileType } from "@/lib/types";
+
+/* The client names SQL Server holds for iRam LIVE. Nobody types a client name
+   into this app any more — a typed name is how iRam and SQL drifted apart in
+   the first place (only 1 of 30 matched by exact string), and a wrong name is
+   indistinguishable from "SQL has no data for this client". */
+interface SqlNamesResponse {
+  configured: boolean;
+  names: string[];
+  error: string | null;
+  taken: { name: string; id: string; active: boolean }[];
+}
 
 interface PurgeItem { label: string; blobCount: number; bytes: number }
 interface PurgePreview {
@@ -51,6 +63,18 @@ export default function ClientsPage() {
   });
   const [error, setError] = useState("");
   const [view, setView] = useState<"active" | "archived">("active");
+
+  // The SQL name list, fetched when the add form is opened rather than on
+  // every visit — it is a live call to SQL Server and most visits only read.
+  const [sqlNames, setSqlNames] = useState<SqlNamesResponse | null>(null);
+  const [namesLoading, setNamesLoading] = useState(false);
+  const [nameNotice, setNameNotice] = useState("");
+
+  // "Email OJ" — the way out when the client genuinely is not on the list.
+  const [showRequest, setShowRequest] = useState(false);
+  const [reqForm, setReqForm] = useState({ clientName: "", vendorNumbers: "", channels: "", notes: "" });
+  const [reqBusy, setReqBusy] = useState(false);
+  const [reqError, setReqError] = useState("");
   const [busyId, setBusyId] = useState("");
   const [toast, setToast] = useState("");
 
@@ -143,6 +167,75 @@ export default function ClientsPage() {
   }
 
   useEffect(() => { load(); }, []);
+
+  async function loadSqlNames() {
+    setNamesLoading(true);
+    try {
+      const res = await authFetch("/api/clients/sql-names");
+      if (res.ok) setSqlNames(await res.json());
+      else setSqlNames({
+        configured: false, names: [], taken: [],
+        error: (await res.json().catch(() => ({}))).error || `The client list could not be read (${res.status}).`,
+      });
+    } catch {
+      setSqlNames({ configured: false, names: [], taken: [], error: "Could not reach the server to read the client list." });
+    }
+    setNamesLoading(false);
+  }
+
+  // Opening the form is what asks SQL Server for the list; closing and
+  // reopening re-reads it, so a client added at the source shows up without a
+  // page reload.
+  function toggleForm() {
+    const opening = !showForm;
+    setShowForm(opening);
+    setError("");
+    setNameNotice("");
+    if (opening) loadSqlNames();
+  }
+
+  const takenNames = new Map(
+    (sqlNames?.taken ?? []).map((t) => [t.name.trim().toUpperCase(), t]),
+  );
+
+  function pickClientName(name: string) {
+    setNameNotice("");
+    if (!name) { setForm((f) => ({ ...f, name: "" })); return; }
+    const already = takenNames.get(name.trim().toUpperCase());
+    if (already) {
+      // Adding it twice would split the client's data across two records, and
+      // an archived client still owns its name.
+      setNameNotice(
+        `${name} is already on iRam LIVE${already.active ? "" : " (archived — restore it instead of adding it again)"}.`,
+      );
+      return;
+    }
+    setForm((f) => ({ ...f, name }));
+  }
+
+  async function sendClientRequest(e: FormEvent) {
+    e.preventDefault();
+    setReqError("");
+    if (!reqForm.clientName.trim()) { setReqError("The client name is the one thing this has to carry."); return; }
+    setReqBusy(true);
+    try {
+      const res = await authFetch("/api/clients/request", {
+        method: "POST",
+        body: JSON.stringify(reqForm),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setShowRequest(false);
+        setReqForm({ clientName: "", vendorNumbers: "", channels: "", notes: "" });
+        flash(`Sent to ${d.to ?? "OuterJoin"} — they will reply to you directly`);
+      } else {
+        setReqError(d.error || "The request could not be sent.");
+      }
+    } catch {
+      setReqError("Network error — the request was not sent.");
+    }
+    setReqBusy(false);
+  }
 
   const mainChannels = channels.filter((c) => !c.parentId);
   const subChannels = channels.filter((c) => c.parentId);
@@ -295,7 +388,7 @@ export default function ClientsPage() {
     <div className="p-8">
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-bold text-[var(--color-text)]">Clients</h1>
-        <button onClick={() => { setShowForm(!showForm); setError(""); }} className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)]">
+        <button onClick={toggleForm} className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)]">
           {showForm ? "Cancel" : "+ Add Client"}
         </button>
       </div>
@@ -304,8 +397,64 @@ export default function ClientsPage() {
         <div className="mb-6 rounded-xl border border-[var(--color-border)] bg-white p-6">
           <form onSubmit={handleSubmit} className="space-y-4">
             {error && <div className="rounded-lg bg-red-50 px-4 py-2 text-sm text-red-700">{error}</div>}
+            {/* The name is PICKED, never typed — see SqlNamesResponse above. */}
+            <div>
+              <label className="mb-2 block text-sm font-medium text-[var(--color-text)]">Client Name</label>
+              {namesLoading ? (
+                <div className="rounded-lg border border-[var(--color-border)] bg-zinc-50 px-3 py-2 text-sm text-[var(--color-text-muted)]">
+                  Reading the client list from SQL Server…
+                </div>
+              ) : sqlNames && sqlNames.names.length > 0 ? (
+                <SearchSelect
+                  value={form.name}
+                  options={sqlNames.names.map((n) => ({
+                    value: n,
+                    label: takenNames.has(n.trim().toUpperCase()) ? `${n} · already added` : n,
+                  }))}
+                  onChange={pickClientName}
+                  allLabel="Choose a client…"
+                  searchLabel="client names"
+                  widthClass="w-full"
+                />
+              ) : (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                  <div className="font-medium">The client list could not be read from SQL Server.</div>
+                  <div className="mt-1 break-words font-mono text-[11px] leading-relaxed">
+                    {sqlNames?.error || "The stored procedure returned no names."}
+                  </div>
+                  <div className="mt-1 text-xs">
+                    A client cannot be added until this is working — names are not typed in by hand any more.
+                    Use Email OJ if the client needs adding urgently.
+                  </div>
+                  <button type="button" onClick={loadSqlNames} className="mt-2 text-xs font-medium underline">
+                    Try again
+                  </button>
+                </div>
+              )}
+              <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-[var(--color-text-muted)]">
+                <span>
+                  Names come from SQL Server
+                  {sqlNames && sqlNames.names.length > 0
+                    /* Count the overlap, not every client iRam has: clients
+                       created before this list existed are not on it, and
+                       counting them would say "12 already added" over a list
+                       of 8. */
+                    ? ` — ${sqlNames.names.length} on the list, ${
+                        sqlNames.names.filter((n) => takenNames.has(n.trim().toUpperCase())).length
+                      } already added`
+                    : ""}.
+                </span>
+                <button type="button"
+                  onClick={() => { setReqError(""); setShowRequest(true); }}
+                  className="rounded-lg border border-[var(--color-border)] bg-white px-3 py-1.5 text-xs font-semibold text-[var(--color-text)] hover:border-zinc-400">
+                  ✉ Email OJ — client not on the list
+                </button>
+              </div>
+              {nameNotice && (
+                <div className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">{nameNotice}</div>
+              )}
+            </div>
             <div className="grid grid-cols-2 gap-4">
-              <input placeholder="Client Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm" />
               <input placeholder="Vendor Numbers (comma-separated)" value={form.vendorNumbers} onChange={(e) => setForm({ ...form, vendorNumbers: e.target.value })} required className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm" />
             </div>
             <select value={form.camId} onChange={(e) => setForm({ ...form, camId: e.target.value })} className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm">
@@ -324,7 +473,11 @@ export default function ClientsPage() {
               </div>
             </div>
             <textarea placeholder="Notes (optional)" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm" rows={2} />
-            <button type="submit" className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)]">Create Client</button>
+            <button type="submit" disabled={!form.name}
+              title={form.name ? "" : "Choose a client name from the SQL Server list first"}
+              className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)] disabled:cursor-not-allowed disabled:opacity-40">
+              Create Client
+            </button>
           </form>
         </div>
       )}
@@ -434,6 +587,67 @@ export default function ClientsPage() {
           </table>
         )}
       </div>
+
+      {/* Email OJ — the client is genuinely not on the SQL Server list, so it
+          has to be added at the source before it can exist here. */}
+      {showRequest && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <form onSubmit={sendClientRequest} className="w-full max-w-lg rounded-xl border border-[var(--color-border)] bg-white p-6 shadow-xl">
+            <h2 className="text-base font-semibold text-[var(--color-text)]">Ask OuterJoin to add a client</h2>
+            <p className="mt-1 text-sm text-[var(--color-text-muted)]">
+              Client names come from SQL Server, so a client that is not on the list cannot be
+              created here. This emails <strong>mark@outerjoin.co.za</strong> with the details, and
+              the reply comes back to you.
+            </p>
+
+            <label className="mt-4 block text-sm font-medium text-[var(--color-text)]">
+              Client name
+              <input autoFocus value={reqForm.clientName} required
+                onChange={(e) => setReqForm({ ...reqForm, clientName: e.target.value })}
+                placeholder="The client's name as it should appear"
+                className="mt-1 w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm font-normal" />
+            </label>
+
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <label className="block text-sm font-medium text-[var(--color-text)]">
+                Vendor number(s)
+                <input value={reqForm.vendorNumbers}
+                  onChange={(e) => setReqForm({ ...reqForm, vendorNumbers: e.target.value })}
+                  placeholder="e.g. 7629, 7425"
+                  className="mt-1 w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm font-normal" />
+              </label>
+              <label className="block text-sm font-medium text-[var(--color-text)]">
+                Channel(s)
+                <input value={reqForm.channels}
+                  onChange={(e) => setReqForm({ ...reqForm, channels: e.target.value })}
+                  placeholder="e.g. MAKRO, MASSBUILD"
+                  className="mt-1 w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm font-normal" />
+              </label>
+            </div>
+
+            <label className="mt-3 block text-sm font-medium text-[var(--color-text)]">
+              Anything else worth knowing
+              <textarea value={reqForm.notes} rows={3}
+                onChange={(e) => setReqForm({ ...reqForm, notes: e.target.value })}
+                placeholder="Who asked for it, when it is needed, which stores or products it covers…"
+                className="mt-1 w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm font-normal" />
+            </label>
+
+            {reqError && <div className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{reqError}</div>}
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={() => setShowRequest(false)} disabled={reqBusy}
+                className="rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm font-medium text-[var(--color-text)] hover:bg-zinc-50 disabled:opacity-50">
+                Cancel
+              </button>
+              <button type="submit" disabled={reqBusy || !reqForm.clientName.trim()}
+                className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)] disabled:cursor-not-allowed disabled:opacity-40">
+                {reqBusy ? "Sending…" : "Send request"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {/* Delete: show exactly what will be destroyed, then demand the name */}
       {delTarget && (

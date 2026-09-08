@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { getClients, createClient } from "@/lib/clientData";
 import { requireLogin, requirePermission, noCacheHeaders, handleAuthError } from "@/lib/auth";
 import { addLog } from "@/lib/activityLog";
+import { getIramLiveClientNames, canonicalClientName } from "@/lib/sqlClientNames";
 
 export async function GET(req: NextRequest) {
   try {
@@ -30,7 +31,53 @@ export async function POST(req: NextRequest) {
   try {
     const session = await requirePermission(req, "manage_clients");
     const data = await req.json();
-    const client = await createClient(data);
+
+    /* The name must be one SQL Server holds for iRam LIVE. The picker on the
+       Clients page only offers those, but a picker is a convenience, not a
+       rule — this endpoint is reachable without it, and the rule has to live
+       where the write happens.
+
+       A name that cannot be checked is refused rather than allowed through:
+       "the proxy is down" must not become "anything goes for the next hour".
+       The message says which of the two happened, because the fix differs. */
+    const requested = String(data?.name ?? "").trim();
+    if (!requested) {
+      return Response.json({ error: "A client name is required." }, { status: 400, headers: noCacheHeaders() });
+    }
+    const allowed = await getIramLiveClientNames();
+    if (allowed.error || allowed.names.length === 0) {
+      return Response.json(
+        {
+          error:
+            "The client list could not be read from SQL Server, so a new client cannot be created right now. " +
+            (allowed.error ?? "The stored procedure returned no names."),
+          sqlUnavailable: true,
+        },
+        { status: 503, headers: noCacheHeaders() },
+      );
+    }
+    const canonical = canonicalClientName(requested, allowed.names);
+    if (!canonical) {
+      await addLog({
+        userId: session.userId, userName: session.name, action: "create_client_refused",
+        details: `"${requested}" is not on the iRam LIVE client list in SQL Server (${allowed.names.length} names)`,
+        status: "error",
+      });
+      return Response.json(
+        {
+          error:
+            `"${requested}" is not on the iRam LIVE client list in SQL Server. ` +
+            "Pick a name from the list, or use Email OJ to have this client added at the source.",
+          notOnList: true,
+        },
+        { status: 400, headers: noCacheHeaders() },
+      );
+    }
+
+    /* Store SQL's own spelling, and record it as the SQL name at the same
+       time: the name was chosen FROM that list, so the mapping the SQL Direct
+       pilot needs is known here and never has to be guessed later. */
+    const client = await createClient({ ...data, name: canonical, sqlClientName: canonical });
     await addLog({ userId: session.userId, userName: session.name, action: "create_client", details: `Created client ${client.name}`, status: "success" });
     return Response.json(client, { status: 201, headers: noCacheHeaders() });
   } catch (err) {
