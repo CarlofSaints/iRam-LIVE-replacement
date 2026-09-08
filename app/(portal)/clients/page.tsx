@@ -4,8 +4,8 @@ import { useEffect, useState, FormEvent } from "react";
 import { useTableTools } from "@/lib/useTableTools";
 import { SortableTh, TableSearch } from "@/components/TableTools";
 import Link from "next/link";
-import { authFetch, usePermissions } from "@/lib/useAuth";
-import type { Client, Channel, CAM } from "@/lib/types";
+import { authFetch, useAuth, usePermissions } from "@/lib/useAuth";
+import type { Client, Channel, CAM, ControlFileType } from "@/lib/types";
 
 interface PurgeItem { label: string; blobCount: number; bytes: number }
 interface PurgePreview {
@@ -24,8 +24,21 @@ function fmtBytes(bytes: number): string {
   return bytes + " B";
 }
 
+/** Excel wants a date it can sort and filter, not a pretty one. */
+function xlDate(iso?: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? "" : d.toISOString().slice(0, 10);
+}
+
+const CONTROL_FILE_COLUMNS: [ControlFileType, string][] = [
+  ["pmf", "PMF"], ["links", "LINKS"], ["ranging", "Ranging"],
+  ["custom_sites", "Custom Sites"], ["promotions", "Promotions"],
+];
+
 export default function ClientsPage() {
   const { can } = usePermissions();
+  const { user } = useAuth();
   const canManage = can("manage_clients");
   const canDelete = can("delete_clients");
   const [clients, setClients] = useState<Client[]>([]);
@@ -147,6 +160,11 @@ export default function ClientsPage() {
       .map((ch) => ch.name);
   }
 
+  /** The sub-channels actually ticked on the client, not the mains they roll up to */
+  function clientSubChannelNames(client: Client): string[] {
+    return subChannels.filter((s) => client.channelIds.includes(s.id)).map((s) => s.name);
+  }
+
   const activeCount = clients.filter((c) => c.active).length;
   const archivedCount = clients.length - activeCount;
 
@@ -175,6 +193,75 @@ export default function ClientsPage() {
     },
   );
   const filtered = tools.rows;
+
+  // Export exactly what is on screen — same view, same search, same sort order —
+  // plus the columns that never fit on the page (CAM contact details, per-file
+  // control-file dates, SQL name, linked clients, notes).
+  // The second sheet states the scope, because a filtered export looks identical
+  // to a complete one once it is off the screen and in someone's inbox.
+  async function exportClients() {
+    if (!filtered.length) return;
+    const XLSX = await import("xlsx");
+
+    const rows = filtered.map((c) => {
+      const cam = cams.find((cm) => cm.id === c.camId);
+      const row: Record<string, string | number> = {
+        "Client": c.name,
+        "Status": c.active ? "Active" : "Archived",
+        "Archived On": xlDate(c.archivedAt),
+        "Archived By": c.archivedBy ?? "",
+        "Vendor Numbers": c.vendorNumbers.join(", "),
+        "Channels": clientMainChannelNames(c).join(", "),
+        "Sub-Channels": clientSubChannelNames(c).join(", "),
+        "CAM": cam ? `${cam.name} ${cam.surname}` : "",
+        "CAM Email": cam?.email ?? "",
+        "CAM Cell": cam?.cell ?? "",
+        "Control Files": `${Object.values(c.controlFiles ?? {}).filter(Boolean).length}/5`,
+      };
+      // One column per control file holding the date it was last loaded — blank
+      // reads as "never loaded", which is the question this export gets asked.
+      for (const [type, label] of CONTROL_FILE_COLUMNS) {
+        row[label] = xlDate(c.controlFiles?.[type]?.uploadedAt);
+      }
+      row["SQL Client Name"] = c.sqlClientName ?? "";
+      row["Consolidated Store Reports"] = c.sendConsolidatedStoreReports ? "Yes" : "No";
+      row["Linked Clients"] = c.linkedClientIds
+        .map((id) => clients.find((x) => x.id === id)?.name ?? id)
+        .join(", ");
+      row["Notes"] = c.notes ?? "";
+      row["Created"] = xlDate(c.createdAt);
+      return row;
+    });
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws["!cols"] = [
+      { wch: 32 }, { wch: 10 }, { wch: 12 }, { wch: 18 }, { wch: 20 }, { wch: 26 }, { wch: 26 },
+      { wch: 22 }, { wch: 28 }, { wch: 14 }, { wch: 12 },
+      ...CONTROL_FILE_COLUMNS.map(() => ({ wch: 13 })),
+      { wch: 24 }, { wch: 12 }, { wch: 28 }, { wch: 50 }, { wch: 12 },
+    ];
+    ws["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { c: 0, r: 0 }, e: { c: Object.keys(rows[0]).length - 1, r: rows.length } }) };
+    XLSX.utils.book_append_sheet(wb, ws, view === "archived" ? "Archived Clients" : "Active Clients");
+
+    const search = tools.query.trim();
+    const about = [
+      { Field: "Exported at", Value: new Date().toLocaleString("en-ZA") },
+      { Field: "Exported by", Value: user?.name ?? "" },
+      { Field: "View", Value: view === "archived" ? "Archived clients" : "Active clients" },
+      { Field: "Search filter", Value: search ? `"${search}"` : "none" },
+      { Field: "Rows in this export", Value: String(filtered.length) },
+      { Field: "Clients in this view", Value: String(view === "archived" ? archivedCount : activeCount) },
+      { Field: "Active clients in total", Value: String(activeCount) },
+      { Field: "Archived clients in total", Value: String(archivedCount) },
+    ];
+    const wsAbout = XLSX.utils.json_to_sheet(about);
+    wsAbout["!cols"] = [{ wch: 26 }, { wch: 40 }];
+    XLSX.utils.book_append_sheet(wb, wsAbout, "About this export");
+
+    const stamp = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(wb, `clients-${view}${search ? "-filtered" : ""}-${stamp}.xlsx`);
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -257,6 +344,13 @@ export default function ClientsPage() {
         </div>
         <TableSearch value={tools.query} onChange={tools.setQuery} count={filtered.length} total={tools.total}
           placeholder="Search clients, vendors, channels, CAM…" />
+        {/* Downloads what is on screen — the button says how many so a filtered
+            export is never mistaken for the whole list. */}
+        <button type="button" onClick={exportClients} disabled={loading || filtered.length === 0}
+          title="Download the clients shown here as an Excel file, with CAM contacts, control-file dates and notes"
+          className="rounded-lg border border-[var(--color-border)] bg-white px-4 py-2 text-sm font-semibold text-[var(--color-text)] hover:border-zinc-400 disabled:opacity-40">
+          ⬇ Export to Excel ({filtered.length})
+        </button>
       </div>
 
       <div className="rounded-xl border border-[var(--color-border)] bg-white">
