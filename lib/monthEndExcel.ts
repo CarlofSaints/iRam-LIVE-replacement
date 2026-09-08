@@ -267,6 +267,11 @@ export async function buildMonthEndWorkbook(
   otoAnalysis?: OTOAnalysis,
   dscSummary?: DscSummary,
   dscDetail: DscDetailRow[] = [],
+  /* The period the report is FOR, plus any month columns the caller cut off
+     the end because they are later than it. Optional so the older callers and
+     the test scripts keep working; when it is absent the Data sheet's own
+     date context falls back to reading the latest month in the data. */
+  period?: { year: number; month: number; excludedMonths?: string[] },
 ): Promise<Buffer> {
   // Collect the streamed output into a Buffer — the caller needs bytes for
   // both the download response and the SharePoint save.
@@ -338,6 +343,12 @@ export async function buildMonthEndWorkbook(
   applyStreamWriterOrderFix(menuSheet);
   buildMenuSheet(wb, menuSheet, {
     clientName, channelLabel, periodLabel, dataGapLines, coverageSpan,
+    /* The ledger holding months later than the report is normal and correct,
+       but a report that quietly drops them owes the reader that sentence -
+       otherwise "why is September missing" is the next question. */
+    excludedLabel: period?.excludedMonths?.length
+      ? `${period.excludedMonths.map(formatMonth).join(", ")} — later than this report`
+      : "",
     sheetNames: MENU_SHEET_ORDER.filter((s) => has[s.key]).map((s) => s.name),
   });
   await commitSheet(menuSheet, false);   // the Menu needs no 🏠 button
@@ -398,7 +409,7 @@ export async function buildMonthEndWorkbook(
   if (has.nd) await buildNdSheet(wb, ndAnalysis!, clientName, channelLabel, periodLabel);
   if (has.ndDetail) await buildNdDetailSheet(wb, ndAnalysis!);
   if (has.ndFalse) await buildNdFalseSheet(wb, ndAnalysis!);
-  if (has.data) await buildDataSheet(wb, dataRows, dateColumns);
+  if (has.data) await buildDataSheet(wb, dataRows, dateColumns, period);
 
   await wb.commit();
   return collected;
@@ -624,6 +635,7 @@ async function buildDataSheet(
   wb: ExcelJS.Workbook,
   rows: Record<string, unknown>[],
   dateColumns: string[],
+  period?: { year: number; month: number },
 ): Promise<void> {
   const sheet = wb.addWorksheet("Data", sheetOpts({ state: "frozen", ySplit: 1 }));
 
@@ -659,8 +671,10 @@ async function buildDataSheet(
     { header: "Act DSC", width: 9, fmt: "#,##0.00", get: (r) => toNum(r["Act DSC"]) },
   ];
 
-  // Computed YTD / prior-year / growth / margin columns (per row).
-  const ctx = buildDateContext(dateColumns);
+  /* Computed YTD / prior-year / growth / margin columns (per row). Pinned to
+     the report period so this sheet totals the same months the summary sheets
+     do - it is what anyone checking a number on Sales drills into. */
+  const ctx = buildDateContext(dateColumns, period);
   const extraDefs: { header: string; width: number; fmt: string; get: (x: ReturnType<typeof dataRowExtras>) => number | null }[] = [
     { header: "YTD Units", width: 12, fmt: "#,##0", get: (x) => x.ytdUnits },
     { header: "YTD Value", width: 14, fmt: RAND_FMT, get: (x) => x.ytdValue },
@@ -1851,6 +1865,7 @@ function buildMenuSheet(
     periodLabel: string;
     dataGapLines?: string[];
     coverageSpan?: string;
+    excludedLabel?: string;
     // Tab names in order. Passed in rather than read off wb.worksheets, because
     // this sheet is now written before any of the others exist.
     sheetNames: string[];
@@ -1882,6 +1897,7 @@ function buildMenuSheet(
   meanLine("Channel", meta.channelLabel);
   meanLine("Period", meta.periodLabel);
   if (meta.coverageSpan) meanLine("Data present", meta.coverageSpan);
+  if (meta.excludedLabel) meanLine("Months excluded", meta.excludedLabel);
   row += 2;
 
   // Data-coverage warning block (only when the monthly series has gaps).

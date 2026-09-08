@@ -9,6 +9,7 @@ import { getStatusDefinitions } from "@/lib/statusData";
 import { getStatusScenarios } from "@/lib/statusScenarioData";
 import { computeVitalSigns, getVitalSignsColumnOrder } from "@/lib/vitalSigns";
 import { analyzeCoverage, coverageMessageLines, formatMonth } from "@/lib/dataCoverage";
+import { capDateColumns } from "@/lib/monthEndReport";
 import { addLog } from "@/lib/activityLog";
 import { incrementReportCount } from "@/lib/reportCounts";
 import { saveReportToSharePointSafe } from "@/lib/sharepoint";
@@ -88,7 +89,23 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const dateColumns = Array.from(allDateCols);
+    /* Which period this report is FOR, resolved before anything is counted.
+       It used to be worked out at the end, purely to name the file — so a
+       ledger holding a later month (one day of September on a DISPO that was
+       otherwise August) put that month into an August report's series and its
+       averages. Same defect as the Month-End report, same cure. */
+    const period = resolveReportPeriod(
+      ledgerResults.map(({ meta }) => meta),
+      { year: yearParam, month: monthParam, week: weekParam },
+    );
+
+    const capped = capDateColumns(Array.from(allDateCols), period.year, period.month);
+    const dateColumns = capped.kept;
+    if (capped.excluded.length > 0) {
+      console.log(
+        `[vital-signs] ${period.label}: excluded ${capped.excluded.length} later month column(s): ${capped.excluded.join(", ")}`,
+      );
+    }
 
     /* One row per Article|Site, freshest load winning. Pulling the companion
        ledgers means a store re-homed by the split now appears twice: the live
@@ -219,13 +236,7 @@ export async function GET(req: NextRequest) {
     const client = await getClientById(clientId);
     const vendorNum = reportVendorPart(enriched.rows, client?.vendorNumbers);
 
-    // Period from query params, else the LATEST stamped ledger, else today.
-    // This used to take the FIRST stamped ledger (channel order, not time
-    // order) — see lib/reportPeriod.ts for what that did to the labels.
-    const period = resolveReportPeriod(
-      ledgerResults.map(({ meta }) => meta),
-      { year: yearParam, month: monthParam, week: weekParam },
-    );
+    // Period resolved further up, before the date columns were capped to it.
     const datePart = period.filePart;
     const fileName = `Vital Signs - ${clientName} - ${vendorNum} - ${datePart}.xlsx`;
     console.log(

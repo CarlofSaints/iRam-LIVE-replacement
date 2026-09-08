@@ -28,6 +28,39 @@ function parseDateKey(col: string): { month: number; year: number } | null {
   return { month: parseInt(m[1], 10), year: parseInt(m[2], 10) };
 }
 
+/* Drop the month columns that come AFTER the period being reported on.
+
+   A ledger keeps every month it has ever been given, and that is deliberate:
+   load a DISPO that closes off in August after one that carried a single day
+   of September and the September column stays. But a report FOR August must
+   not contain September, and the columns are what every sheet counts - YTD,
+   OOS, DSC, Status, month last sold, the Data sheet's own grid. Cutting them
+   once, here, is what keeps those sheets agreeing with the period on their
+   own header.
+
+   Columns that do not parse as MM-YYYY are kept: they are not months, so
+   they are not later months. */
+export function capDateColumns(
+  dateColumns: string[],
+  year: number,
+  month: number,
+): { kept: string[]; excluded: string[] } {
+  if (!(year > 0 && month > 0)) return { kept: dateColumns, excluded: [] };
+  const kept: string[] = [];
+  const excluded: string[] = [];
+  for (const col of dateColumns) {
+    const p = parseDateKey(col);
+    if (!p) { kept.push(col); continue; }
+    if (p.year > year || (p.year === year && p.month > month)) excluded.push(col);
+    else kept.push(col);
+  }
+  excluded.sort((a, b) => {
+    const pa = parseDateKey(a)!, pb = parseDateKey(b)!;
+    return pa.year - pb.year || pa.month - pb.month;
+  });
+  return { kept, excluded };
+}
+
 function effectivePriceExVat(row: Row, inclKey = "Incl SP", promKey = "Prom SP"): number {
   const promSP = Number(row[promKey] ?? 0);
   const inclSP = Number(row[inclKey] ?? 0);
@@ -48,26 +81,40 @@ export interface DateContext {
   sameMonthLyCol: string | null;       // same month in previous year
 }
 
-export function buildDateContext(dateColumns: string[]): DateContext {
+/* The period a report is FOR. Without it the context is derived from whatever
+   months the data happens to contain, which is only the same thing while the
+   newest DISPO is the one being reported on. A DISPO carrying a single day of
+   the next month is enough to make them differ, and then an August report
+   calls September "Current Month" and August "Last Month". */
+export interface PeriodRef { year: number; month: number }
+
+export function buildDateContext(dateColumns: string[], ref?: PeriodRef): DateContext {
   let maxYear = 0;
   let maxMonth = 0;
 
-  for (const col of dateColumns) {
-    const p = parseDateKey(col);
-    if (p && p.year > maxYear) maxYear = p.year;
+  if (ref && ref.year > 0 && ref.month > 0) {
+    maxYear = ref.year;
+    maxMonth = ref.month;
+  } else {
+    for (const col of dateColumns) {
+      const p = parseDateKey(col);
+      if (p && p.year > maxYear) maxYear = p.year;
+    }
+    for (const col of dateColumns) {
+      const p = parseDateKey(col);
+      if (p && p.year === maxYear && p.month > maxMonth) maxMonth = p.month;
+    }
   }
 
+  /* Months of the report year up to and including the report month. Without a
+     ref, maxMonth IS the latest month present, so this is every column of that
+     year and the behaviour is unchanged. */
   const currentYearCols = maxYear > 0
     ? dateColumns.filter((col) => {
         const p = parseDateKey(col);
-        return p != null && p.year === maxYear;
+        return p != null && p.year === maxYear && p.month <= maxMonth;
       })
     : dateColumns;
-
-  for (const col of currentYearCols) {
-    const p = parseDateKey(col);
-    if (p && p.month > maxMonth) maxMonth = p.month;
-  }
 
   const lastYear = maxYear - 1;
   const lyYtdCols = maxYear > 0 && maxMonth > 0

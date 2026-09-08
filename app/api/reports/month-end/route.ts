@@ -19,6 +19,7 @@ import {
   buildOpenToOrder,
   buildDscSummary,
   buildDscDetail,
+  capDateColumns,
 } from "@/lib/monthEndReport";
 import { buildMonthEndWorkbook } from "@/lib/monthEndExcel";
 import { calcMonthLastSold } from "@/lib/vitalSigns";
@@ -151,7 +152,31 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const dateColumns = Array.from(allDateCols);
+    /* Which period this report is FOR, resolved BEFORE anything is counted.
+       It used to be worked out at step 7, after every analysis had already
+       run off the full set of month columns — so the selection reached the
+       filename and the sheet headers but none of the numbers underneath
+       them. See lib/reportPeriod.ts for how each field resolves. */
+    const period = resolveReportPeriod(
+      ledgerResults.map(({ meta }) => meta),
+      { year: yearParam, month: monthParam, week: weekParam },
+    );
+    const rYear = period.year;
+    const rMonth = period.month;
+    const periodLabel = period.label;
+
+    /* Everything from the report month backwards. A DISPO that carried one
+       day of September leaves a 09-2026 column behind, and an August report
+       counted it: "Current Month" read September's single unit and August's
+       real month sat under "Last Month". */
+    const capped = capDateColumns(Array.from(allDateCols), rYear, rMonth);
+    const dateColumns = capped.kept;
+    const excludedMonths = capped.excluded;
+    if (excludedMonths.length > 0) {
+      console.log(
+        `[month-end] ${periodLabel}: excluded ${excludedMonths.length} later month column(s): ${excludedMonths.join(", ")}`,
+      );
+    }
 
     /* One row per Article|Site, freshest load winning — the companion ledgers
        hold the live copy of any store the split re-homed, and the ledger it was
@@ -195,8 +220,12 @@ export async function GET(req: NextRequest) {
         })
       : enrichedRows;
 
-    // 5. Build date context
-    const ctx = buildDateContext(dateColumns);
+    /* 5. Build date context, pinned to the report period. Without the ref it
+       reads "current month" off the data, which is the same bug one step
+       further in: capping the columns is not enough on its own if the report
+       month itself has no data yet — that must show zero under a correct
+       heading, not the newest month that does have some. */
+    const ctx = buildDateContext(dateColumns, { year: rYear, month: rMonth });
 
     // Status classification inputs (Status Reference logic)
     enter("reading the status reference");
@@ -228,15 +257,7 @@ export async function GET(req: NextRequest) {
        see reportVendorPart. `reportRows` and not `allRows`, so the name follows
        the sub-channel / category filters the user applied. */
     const vendorNum = reportVendorPart(reportRows, client?.vendorNumbers);
-    const period = resolveReportPeriod(
-      ledgerResults.map(({ meta }) => meta),
-      { year: yearParam, month: monthParam, week: weekParam },
-    );
-    const rYear = period.year;
-    const rMonth = period.month;
     const rWeek = period.week;
-
-    const periodLabel = period.label;
     const channelLabel = channelNames.join(", ") || channelIds.join(", ");
 
     // So "why does it say Wk1?" is answerable from the logs without a redeploy.
@@ -335,6 +356,7 @@ export async function GET(req: NextRequest) {
       otoAnalysis,
       dscSummary,
       dscDetail,
+      { year: rYear, month: rMonth, excludedMonths },
     );
 
     // 9. Log activity
