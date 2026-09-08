@@ -14,7 +14,7 @@
 
 import {
   pickNameColumn, collectColumns, normaliseClientName,
-  isKnownClientName, canonicalClientName,
+  isKnownClientName, canonicalClientName, looksLikeSameClient, coreTokens,
 } from "../lib/sqlClientNames";
 
 let pass = 0, fail = 0;
@@ -60,6 +60,48 @@ console.log("Canonical spelling");
 eq("stores SQL's spelling, not the typed one", canonicalClientName("  eurochoc ", NAMES), "EUROCHOC");
 eq("an unknown name has no canonical form", canonicalClientName("NOPE", NAMES), null);
 eq("blank is not a client", canonicalClientName("   ", NAMES), null);
+
+/* Same company, two spellings. Every pair below is REAL: left is what
+   GetIRAMLiveClientNames returned on 8 Sep 2026, right is what iRam LIVE
+   already holds. Of the 19 SQL names, exactly ONE (ULTRA CHEM) matched by
+   string - so without this check almost every existing client looks brand new
+   in the picker, and adding it would split that client's data in two. */
+console.log("Likely-duplicate detection");
+const SAME: [string, string][] = [
+  ["BISCO", "BISCO PLUS"],
+  ["MAJOR TECH", "MAJOR TECH (PTY) LTD"],
+  ["CLIPPA SALES", "CLIPPA SALES (Pty) Ltd"],
+  ["ROVIC LEERS", "ROVIC AND LEERS (PTY) LTD"],
+  ["SAFE TOP", "SAFE TOP RETAIL DISTRIBUTORS (PTY)"],
+  ["SEAGULL", "SEAGULL INDUSTRIES (PTY) LTD"],
+  ["QUALICHEM", "QUALICHEM GENKEM (PTY) LTD"],
+  ["LIBRA MARKETING", "LIBRA MARKETING & SALES CC"],
+  ["GASPRO TECHNOLOGIES", "GASPRO TECHNOLOGIES (PTY) LTD"],
+  ["HELLERMANN TYTON", "HELLERMANN TYTON (PTY) LTD"],
+  ["VERMONT SALES", "VERMONT SALES (PTY) LTD"],
+];
+for (const [sqlName, iramName] of SAME) {
+  ok(`"${sqlName}" ↔ "${iramName}"`, looksLikeSameClient(sqlName, iramName));
+}
+
+/* The rule has to stay narrow, or the warning becomes noise nobody reads and
+   two different companies get merged by someone trusting it. */
+const DIFFERENT: [string, string][] = [
+  ["VERMONT SALES", "SAFE TOP RETAIL DISTRIBUTORS (PTY)"],   // share nothing but a shape
+  ["SEAGULL", "TOPLINE TOOLS"],
+  ["OTIMA", "ULTRA CHEM"],
+  ["TALBORNE", "TRAMONTINA"],                                 // same first letters only
+  ["CLIPPA SALES", "VERMONT SALES"],                          // share "SALES", not the first word
+  ["MAJOR TECH", "TECH MAJOR"],                               // same words, different company
+  ["BISCO", "CARTOON CANDY"],
+];
+for (const [a, b] of DIFFERENT) {
+  ok(`"${a}" is NOT "${b}"`, !looksLikeSameClient(a, b));
+}
+
+eq("legal-form words are dropped", coreTokens("Major Tech (Pty) Ltd").join(" "), "MAJOR TECH");
+eq("an empty name has no tokens", coreTokens("  (Pty) Ltd  ").length, 0);
+ok("a name with no letters cannot match anything", !looksLikeSameClient("(Pty) Ltd", "BISCO"));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

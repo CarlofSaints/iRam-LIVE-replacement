@@ -98,6 +98,41 @@ export function normaliseClientName(name: string): string {
   return name.trim().replace(/\s+/g, " ").toUpperCase();
 }
 
+/* Legal-form words carry no identity: "MAJOR TECH" and "MAJOR TECH (PTY) LTD"
+   are one company. Dropped only for the LOOKS-LIKE check below, never for
+   deciding what is stored. */
+const LEGAL_TOKENS = new Set(["PTY", "PROPRIETARY", "LTD", "LIMITED", "CC", "INC", "TA", "THE"]);
+
+export function coreTokens(name: string): string[] {
+  return normaliseClientName(name)
+    .replace(/[^A-Z0-9& ]+/g, " ")
+    .split(/\s+/)
+    .filter((t) => t && !LEGAL_TOKENS.has(t));
+}
+
+/* Is this SQL name probably the same company iRam already has under a longer
+   one? SQL uses short trading names and iRam full legal ones - of the 19 names
+   the SP returns, exactly ONE (ULTRA CHEM) matches an iRam client by string,
+   while most of the other 18 are already in iRam as "BISCO PLUS", "MAJOR TECH
+   (PTY) LTD", "ROVIC AND LEERS (PTY) LTD". Without this, every one of them
+   looks like a client iRam has never heard of, and adding it splits an
+   existing client's data across two records.
+
+   Deliberately a WARNING, not a block: it is a guess, and a genuinely new
+   client whose name starts the same way must still be addable. The rule is
+   narrow on purpose - same first word, and every word of the shorter name
+   present in the longer - so "VERMONT SALES" cannot pair with "SAFE TOP
+   RETAIL" through the word they share. */
+export function looksLikeSameClient(a: string, b: string): boolean {
+  const ta = coreTokens(a);
+  const tb = coreTokens(b);
+  if (ta.length === 0 || tb.length === 0) return false;
+  if (ta[0] !== tb[0]) return false;
+  const [short, long] = ta.length <= tb.length ? [ta, tb] : [tb, ta];
+  const inLong = new Set(long);
+  return short.every((t) => inLong.has(t));
+}
+
 export function isKnownClientName(name: string, names: string[]): boolean {
   const want = normaliseClientName(name);
   return names.some((n) => normaliseClientName(n) === want);

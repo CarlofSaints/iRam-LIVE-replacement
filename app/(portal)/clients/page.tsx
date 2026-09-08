@@ -12,11 +12,17 @@ import type { Client, Channel, CAM, ControlFileType } from "@/lib/types";
    into this app any more — a typed name is how iRam and SQL drifted apart in
    the first place (only 1 of 30 matched by exact string), and a wrong name is
    indistinguishable from "SQL has no data for this client". */
+interface SqlClientRef { name: string; id: string; active: boolean }
 interface SqlNamesResponse {
   configured: boolean;
   names: string[];
   error: string | null;
-  taken: { name: string; id: string; active: boolean }[];
+  taken: SqlClientRef[];
+  /* Per SQL name: the iRam client that certainly owns it, and the one that
+     probably does under a longer legal name ("BISCO" here, "BISCO PLUS"
+     there). Only 1 of the 19 SQL names matches an iRam client by string, so
+     the second list is the normal case, not the edge case. */
+  match?: { sqlName: string; taken: SqlClientRef[]; likely: SqlClientRef[] }[];
 }
 
 interface PurgeItem { label: string; blobCount: number; bytes: number }
@@ -194,14 +200,21 @@ export default function ClientsPage() {
     if (opening) loadSqlNames();
   }
 
+  // Keyed on the SQL name, which is what the picker offers.
+  const matchByName = new Map(
+    (sqlNames?.match ?? []).map((m) => [m.sqlName.trim().toUpperCase(), m]),
+  );
   const takenNames = new Map(
-    (sqlNames?.taken ?? []).map((t) => [t.name.trim().toUpperCase(), t]),
+    (sqlNames?.match ?? [])
+      .filter((m) => m.taken.length > 0)
+      .map((m) => [m.sqlName.trim().toUpperCase(), m.taken[0]]),
   );
 
   function pickClientName(name: string) {
     setNameNotice("");
     if (!name) { setForm((f) => ({ ...f, name: "" })); return; }
-    const already = takenNames.get(name.trim().toUpperCase());
+    const m = matchByName.get(name.trim().toUpperCase());
+    const already = m?.taken[0];
     if (already) {
       // Adding it twice would split the client's data across two records, and
       // an archived client still owns its name.
@@ -209,6 +222,16 @@ export default function ClientsPage() {
         `${name} is already on iRam LIVE${already.active ? "" : " (archived — restore it instead of adding it again)"}.`,
       );
       return;
+    }
+    /* A likely duplicate under a longer name is a WARNING, not a block. It is
+       a guess, and the person adding the client knows whether it is the same
+       company; being wrong the other way would stop a legitimate add. */
+    if (m && m.likely.length > 0) {
+      setNameNotice(
+        `iRam LIVE already has ${m.likely.map((l) => `"${l.name}"`).join(" and ")}. ` +
+        `If that is the same company, do NOT add "${name}" as a second client — open the existing one and ` +
+        `rename it to "${name}" instead, which keeps its data and maps it to SQL.`,
+      );
     }
     setForm((f) => ({ ...f, name }));
   }
@@ -407,10 +430,12 @@ export default function ClientsPage() {
               ) : sqlNames && sqlNames.names.length > 0 ? (
                 <SearchSelect
                   value={form.name}
-                  options={sqlNames.names.map((n) => ({
-                    value: n,
-                    label: takenNames.has(n.trim().toUpperCase()) ? `${n} · already added` : n,
-                  }))}
+                  options={sqlNames.names.map((n) => {
+                    const m = matchByName.get(n.trim().toUpperCase());
+                    if (m?.taken.length) return { value: n, label: `${n} · already added` };
+                    if (m?.likely.length) return { value: n, label: `${n} · probably "${m.likely[0].name}"` };
+                    return { value: n, label: n };
+                  })}
                   onChange={pickClientName}
                   allLabel="Choose a client…"
                   searchLabel="client names"
