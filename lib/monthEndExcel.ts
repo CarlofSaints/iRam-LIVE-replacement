@@ -1384,8 +1384,12 @@ async function buildPhantomSheet(
      overall stats (4-6), gap, by-status header, one row per status, gap. */
   const headerRow = 10 + p.byStatus.length;
   const sheet = wb.addWorksheet("Phantom", sheetOpts({ state: "frozen", ySplit: headerRow }));
-  const detailHeaders =["Vendor", "Site", "Site Name", "Product Code", "Article", "PR ST", "Product Status", "SOH", "Date Last Sold", "Date Last Received"];
-  const detailWidths = [10, 14, 22, 14, 12, 10, 14, 8, 15, 17];
+  /* Description sits straight after Article, the same place and the same width
+     it has on OOS Detail, DSC Detail and Status Detail — a phantom line names
+     a product someone has to go and find on a shelf, so the code alone is not
+     enough to act on. */
+  const detailHeaders =["Vendor", "Site", "Site Name", "Product Code", "Article", "Description", "PR ST", "Product Status", "SOH", "Date Last Sold", "Date Last Received"];
+  const detailWidths = [10, 14, 22, 14, 12, 30, 10, 14, 8, 15, 17];
 
   let cur = 1;
   // Title
@@ -1458,13 +1462,14 @@ async function buildPhantomSheet(
     text(3, d.siteName);
     text(4, d.productCode);
     text(5, d.article);
-    text(6, d.prst);
-    text(7, d.productStatus);
-    const soh = sheet.getCell(r, 8); soh.value = d.soh; soh.numFmt = "#,##0"; soh.font = bodyFont(); soh.border = thinBorder(); soh.alignment = { horizontal: "right" };
-    const ls = sheet.getCell(r, 9);
+    text(6, d.description);
+    text(7, d.prst);
+    text(8, d.productStatus);
+    const soh = sheet.getCell(r, 9); soh.value = d.soh; soh.numFmt = "#,##0"; soh.font = bodyFont(); soh.border = thinBorder(); soh.alignment = { horizontal: "right" };
+    const ls = sheet.getCell(r, 10);
     if (d.lastSold) { ls.value = d.lastSold; ls.numFmt = "dd/mm/yyyy"; } else { ls.value = d.lastSoldRaw; }
     ls.font = bodyFont(); ls.border = thinBorder(); ls.alignment = { horizontal: "center" };
-    const lr = sheet.getCell(r, 10);
+    const lr = sheet.getCell(r, 11);
     if (d.lastReceived) { lr.value = d.lastReceived; lr.numFmt = "dd/mm/yyyy"; } else { lr.value = d.lastReceivedRaw; }
     lr.font = bodyFont(); lr.border = thinBorder(); lr.alignment = { horizontal: "center" };
     r++;

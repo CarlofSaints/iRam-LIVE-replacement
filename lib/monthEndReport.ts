@@ -1283,6 +1283,7 @@ export interface PhantomDetailRow {
   siteName: string;
   productCode: string;
   article: string;
+  description: string;
   vendor: string;
   prst: string;
   productStatus: string;
@@ -1338,6 +1339,10 @@ export function buildPhantomAnalysis(
       siteName: String(row["_storeName"] || row["Site Name"] || ""),
       productCode: String(row["_clientProductId"] || ""),
       article: String(row["Article"] ?? ""),
+      // Same source and same order as Store Reports: the DISPO's own wording
+      // first so the description matches the other sheets, the PMF name as a
+      // fallback so a product is still named when the DISPO column is blank.
+      description: String(row["Article Desc"] || row["_productDescription"] || ""),
       prst: prstDisplay(row),
       productStatus: pmf,
       soh,
