@@ -27,7 +27,22 @@ export interface SqlSource {
   proc: string;
   /** Main channel this source is scoped to, when it is channel-specific. */
   channel?: "MAKRO" | "MASSBUILD" | "GAME";
+  /**
+   * Does the stored procedure take a client name?
+   *
+   * Mark's three iRam Live procs do NOT — they return everything currently
+   * flagged as IRAM Live and the caller narrows on the Client / Channel
+   * columns in the result. That makes `sqlClientName` load-bearing: it is the
+   * only thing that ties a row back to an iRam client, where a parameter
+   * would have done it. Defaults to true for the sales procs, which do.
+   */
+  clientScoped?: boolean;
   notes?: string;
+}
+
+/** A source takes a client name unless it says otherwise. */
+export function takesClientName(s: SqlSource): boolean {
+  return s.clientScoped !== false;
 }
 
 /* The three main channels iRam LIVE actually loads DISPOs for. Each has its
@@ -40,28 +55,36 @@ export const SQL_SOURCES: SqlSource[] = [
     replaces: "Store control file (Control Centre → Store Files)",
     label: "Retail sites / store master",
     kind: "stores",
-    query: "client_stores",
-    proc: "GetClientRetailSites",
+    query: "iram_live_retail_sites",
+    proc: "GetIRAMLiveRetailSites",
+    clientScoped: false,
     notes:
-      "Store master is global in iRam (one merged file across clients) but this SP is per-client — " +
-      "worth checking whether the union across clients reproduces the merged master.",
+      "tblSites filtered to the distinct channels on the IRAM Live client list. Optional @CountryList " +
+      "(comma-separated) narrows by country; omitted here, which is Mark's guidance for all countries. " +
+      "Returning every channel rather than one client SUITS iRam, whose store master is global and merged.",
   },
   {
     id: "products",
     replaces: "PMF (client control file)",
     label: "Product master (PMF)",
     kind: "products",
-    query: "client_products",
-    proc: "GetDataForPowerBI_Products",
-    notes: "SP already excludes REMOVE / INCORRECT VENDOR rows.",
+    query: "iram_live_products",
+    proc: "GetIRAMLiveProducts",
+    clientScoped: false,
+    notes:
+      "tblProducts filtered to the Client/Product ID pairs found in the product links. Narrow to one " +
+      "iRam client on the Client column of the result — via sqlClientName, since there is no parameter.",
   },
   {
     id: "links",
     replaces: "LINKS (client control file)",
     label: "Product links (Article → Client Product ID)",
     kind: "links",
-    query: "client_product_links",
-    proc: "GetDataForPowerBI_ProductLinks",
+    query: "iram_live_product_links",
+    proc: "GetIRAMLiveProductLinks",
+    clientScoped: false,
+    notes:
+      "Client, Channel, Channel Article, Article, Product ID, Channel Product Status, Channel Product RSP.",
   },
   {
     id: "sales_makro",

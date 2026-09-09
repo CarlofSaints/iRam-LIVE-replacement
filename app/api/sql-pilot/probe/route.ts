@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { requirePermission, handleAuthError, noCacheHeaders, AuthError } from "@/lib/auth";
 import { sqlQuery, isProxyConfigured } from "@/lib/sqlProxy";
-import { getSqlSource, collectColumns, columnFill } from "@/lib/sqlSources";
+import { getSqlSource, collectColumns, columnFill, takesClientName } from "@/lib/sqlSources";
 
 /* Pull one source for one client and describe what came back — row count,
    columns, how populated each column is, and a handful of sample rows.
@@ -41,14 +41,19 @@ export async function GET(req: NextRequest) {
         { status: 400, headers: noCacheHeaders() },
       );
     }
-    if (!client) {
+    /* Mark's iRam Live procs take no client name — they return everything
+       flagged as IRAM Live. Demanding one would block them, and PASSING one
+       would be worse: the proxy would send an argument the SP does not
+       declare, and the failure would read as "the SP is broken". */
+    const needsClient = takesClientName(source);
+    if (needsClient && !client) {
       return Response.json(
         { error: "A SQL client name is required — see the client list on the status panel." },
         { status: 400, headers: noCacheHeaders() },
       );
     }
 
-    const params: Record<string, unknown> = { client };
+    const params: Record<string, unknown> = needsClient ? { client } : {};
     // Only the sales SPs take a month, and only when one was actually given —
     // omitting it keeps the SP on its default (latest data).
     if (source.kind === "sales" && /^\d{4}-\d{2}$/.test(yearMonth)) {
@@ -65,7 +70,7 @@ export async function GET(req: NextRequest) {
           id: source.id, label: source.label, replaces: source.replaces,
           query: source.query, proc: source.proc, channel: source.channel ?? null,
         },
-        client,
+        client: needsClient ? client : null,
         yearMonth: params.yearMonth ?? null,
         rowCount: rows.length,
         columnCount: columns.length,
