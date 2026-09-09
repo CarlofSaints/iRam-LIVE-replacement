@@ -187,9 +187,9 @@ async function rootTests() {
 
   process.env.DROPBOX_CONTROL_ROOT =
     "https://www.dropbox.com/work/OuterJoin/Projects/Excel%20Add-Ins/Clients/iRam%20Internal/Live%20files/2PBI_DB/Support%20Tables";
-  t("a team web URL becomes an API path",
+  t("a team web URL keeps the folder after /work",
     dropboxRoot(),
-    "/Projects/Excel Add-Ins/Clients/iRam Internal/Live files/2PBI_DB/Support Tables");
+    "/OuterJoin/Projects/Excel Add-Ins/Clients/iRam Internal/Live files/2PBI_DB/Support Tables");
 
   process.env.DROPBOX_CONTROL_ROOT = "https://www.dropbox.com/home/Clients/PMF%20files";
   t("a personal web URL works too", dropboxRoot(), "/Clients/PMF files");

@@ -52,10 +52,12 @@ export function dropboxRoot(): string {
   if (/^https?:\/\//i.test(raw)) {
     try {
       path = new URL(raw).pathname;
-      /* Strip the web UI's own prefixes. "/work/<Team>" carries a team-name
-         segment; "/home" does not — treating them the same eats a real
-         folder name off the front of a personal URL. */
-      path = path.replace(/^\/work\/[^/]+/i, "").replace(/^\/home/i, "");
+      /* Strip only the web UI's own prefix — "/work" or "/home" — and NOTHING
+         after it. The segment following /work looks like a team name but is a
+         real top-level folder inside the team space, so eating it produces a
+         path that resolves to nothing. Verified against the live account:
+         "/work/OuterJoin/Projects/…" is the folder "/OuterJoin/Projects/…". */
+      path = path.replace(/^\/(work|home)(?=\/|$)/i, "");
     } catch {
       return raw.replace(/\/+$/, "");
     }

@@ -18,7 +18,10 @@ export async function GET(req: NextRequest) {
   try {
     await requirePermission(req, "view_sql_pilot");
 
-    const configuredRoot = dropboxRoot();
+    /* ?path= lets a folder be checked without a redeploy — the spelling of a
+       nested team folder is the thing most likely to be wrong. */
+    const override = (req.nextUrl.searchParams.get("path") || "").trim();
+    const configuredRoot = override || dropboxRoot();
     const result = await probeDropbox();
     const stored = await getStoredAuth();
 
