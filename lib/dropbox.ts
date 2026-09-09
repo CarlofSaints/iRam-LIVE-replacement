@@ -1,3 +1,4 @@
+import { readJson } from "./blob";
 /* ──────────────────────────────────────────────────────────────
    Dropbox client — the control files (PMF, LINKS, Ranging) live in Dropbox
    and are maintained there. This app reads them and writes them BACK to the
@@ -19,23 +20,61 @@
    frozen empty and no amount of setting it afterwards would help. */
 const APP_KEY = () => process.env.DROPBOX_APP_KEY || "";
 const APP_SECRET = () => process.env.DROPBOX_APP_SECRET || "";
-const REFRESH_TOKEN = () => process.env.DROPBOX_REFRESH_TOKEN || "";
+
+/** Where the connect flow parks the refresh token when there is no env var. */
+export const DROPBOX_AUTH_KEY = "dropbox/auth.json";
+
+export interface StoredDropboxAuth {
+  refreshToken: string;
+  connectedAt: string;
+  connectedBy: string;
+  account: string;
+}
 
 /** Where the control files live. Configurable so no path is hard-coded. */
 export function dropboxRoot(): string {
   return (process.env.DROPBOX_CONTROL_ROOT || "").replace(/\/+$/, "");
 }
 
-export function isDropboxConfigured(): boolean {
-  return !!APP_KEY() && !!APP_SECRET() && !!REFRESH_TOKEN();
+/* The APP credentials — the half that identifies this integration to Dropbox.
+   These are always env vars; they are not something a user can click. */
+export function hasAppCredentials(): boolean {
+  return !!APP_KEY() && !!APP_SECRET();
 }
 
-/** Which env vars are missing, for a probe to report without leaking values. */
-export function dropboxConfigGaps(): string[] {
+export function appKey(): string { return APP_KEY(); }
+export function appSecret(): string { return APP_SECRET(); }
+
+/* The REFRESH TOKEN — the half that says which Dropbox account, and the half
+   that is genuinely awkward to obtain by hand. It can come from an env var,
+   but the Connect flow stores it here instead so nobody has to run an OAuth
+   exchange in a terminal and copy a credential between two windows. */
+export async function getRefreshToken(): Promise<string> {
+  const fromEnv = (process.env.DROPBOX_REFRESH_TOKEN || "").trim();
+  if (fromEnv) return fromEnv;
+  const stored = await readJson<StoredDropboxAuth | null>(DROPBOX_AUTH_KEY, null);
+  return stored?.refreshToken?.trim() || "";
+}
+
+export async function getStoredAuth(): Promise<StoredDropboxAuth | null> {
+  return readJson<StoredDropboxAuth | null>(DROPBOX_AUTH_KEY, null);
+}
+
+export async function isDropboxConnected(): Promise<boolean> {
+  return hasAppCredentials() && !!(await getRefreshToken());
+}
+
+/** Kept sync for callers that only need the app half. */
+export function isDropboxConfigured(): boolean {
+  return hasAppCredentials();
+}
+
+/** Which pieces are missing, by name, without printing any value. */
+export async function dropboxConfigGaps(): Promise<string[]> {
   const gaps: string[] = [];
   if (!APP_KEY()) gaps.push("DROPBOX_APP_KEY");
   if (!APP_SECRET()) gaps.push("DROPBOX_APP_SECRET");
-  if (!REFRESH_TOKEN()) gaps.push("DROPBOX_REFRESH_TOKEN");
+  if (!(await getRefreshToken())) gaps.push("a connected Dropbox account (click Connect)");
   if (!dropboxRoot()) gaps.push("DROPBOX_CONTROL_ROOT");
   return gaps;
 }
@@ -49,16 +88,17 @@ let cachedToken = "";
 let cachedUntil = 0;
 
 async function getAccessToken(): Promise<string> {
-  if (!isDropboxConfigured()) {
+  const refresh = await getRefreshToken();
+  if (!hasAppCredentials() || !refresh) {
     throw new Error(
-      `Dropbox is not configured — missing ${dropboxConfigGaps().join(", ")}`,
+      `Dropbox is not ready — missing ${(await dropboxConfigGaps()).join(", ")}`,
     );
   }
   if (cachedToken && Date.now() < cachedUntil) return cachedToken;
 
   const body = new URLSearchParams({
     grant_type: "refresh_token",
-    refresh_token: REFRESH_TOKEN(),
+    refresh_token: refresh,
   });
   const res = await fetch("https://api.dropbox.com/oauth2/token", {
     method: "POST",
@@ -278,8 +318,8 @@ export async function probeDropbox(): Promise<{
   error?: string;
   gaps: string[];
 }> {
-  const gaps = dropboxConfigGaps();
-  if (!isDropboxConfigured()) return { ok: false, gaps, error: `Missing ${gaps.join(", ")}` };
+  const gaps = await dropboxConfigGaps();
+  if (gaps.length) return { ok: false, gaps, error: `Missing ${gaps.join(", ")}` };
   try {
     const acct = await rpc<{ name?: { display_name?: string }; email?: string }>(
       "users/get_current_account",

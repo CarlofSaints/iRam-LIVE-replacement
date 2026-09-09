@@ -82,7 +82,7 @@ globalThis.fetch = (async (input: unknown, init: { headers?: Record<string, stri
 async function main() {
   console.log("\nconfig");
   check("configured when all vars set", isDropboxConfigured());
-  check("no gaps reported", dropboxConfigGaps().length === 0);
+  check("no gaps reported", (await dropboxConfigGaps()).length === 0);
 
   console.log("\npaths");
   check("joins with a leading slash", dropboxPath("Clients", "CONTROL FILES", "PMF.xlsx") === ROOT + "/PMF.xlsx");
@@ -155,7 +155,7 @@ async function main() {
   console.log("\nunconfigured");
   process.env.DROPBOX_APP_KEY = "";
   const fresh = await import("../lib/dropbox?x=" + Date.now()) as typeof import("../lib/dropbox");
-  check("names the missing var", fresh.dropboxConfigGaps().includes("DROPBOX_APP_KEY"));
+  check("names the missing var", (await fresh.dropboxConfigGaps()).includes("DROPBOX_APP_KEY"));
   check("reports not configured", !fresh.isDropboxConfigured());
   const p2 = await fresh.probeDropbox();
   check("probe fails loudly rather than silently", p2.ok === false && !!p2.error);
