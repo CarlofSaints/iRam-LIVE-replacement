@@ -9,6 +9,7 @@ import UploadZone from "@/components/UploadZone";
 import type { Client, Channel, CAM, ControlFileType, UploadMeta, ProductFieldMapping, LinksFieldMapping } from "@/lib/types";
 import type { ReportConfig } from "@/lib/reportConfig";
 import { filenameFromContentDisposition } from "@/lib/contentDisposition";
+import DropboxControlFiles from "@/components/DropboxControlFiles";
 
 const CF_LABELS: Record<ControlFileType, string> = {
   pmf: "PMF (Product Management File)",
@@ -36,7 +37,7 @@ export default function ClientDetailPage() {
   const [cams, setCams] = useState<CAM[]>([]);
   const [uploads, setUploads] = useState<UploadMeta[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"details" | "control" | "report-settings" | "uploads" | "logo">("details");
+  const [tab, setTab] = useState<"details" | "control" | "dropbox" | "report-settings" | "uploads" | "logo">("details");
   // Collapse/expand state for the Control tab cards (keyed by card id)
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const isCollapsed = (k: string) => !!collapsed[k];
@@ -525,15 +526,21 @@ export default function ClientDetailPage() {
       {/* Tabs */}
       <div className="mb-6 flex gap-1 border-b border-[var(--color-border)]">
         {(isAdmin
-          ? (["details", "control", "report-settings", "uploads", "logo"] as const)
-          : (["details", "control", "uploads", "logo"] as const)
+          ? (["details", "control", "dropbox", "report-settings", "uploads", "logo"] as const)
+          : (["details", "control", "dropbox", "uploads", "logo"] as const)
         ).map((t) => (
           <button key={t} onClick={() => setTab(t)}
             className={`px-4 py-2.5 text-sm font-medium transition-colors ${tab === t ? "border-b-2 border-[var(--color-primary)] text-[var(--color-primary)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
-            {t === "details" ? "Details" : t === "control" ? "Control Files" : t === "report-settings" ? "Report Settings" : t === "uploads" ? "Uploads" : "Logo"}
+            {t === "details" ? "Details" : t === "control" ? "Control Files" : t === "dropbox" ? "Dropbox" : t === "report-settings" ? "Report Settings" : t === "uploads" ? "Uploads" : "Logo"}
           </button>
         ))}
       </div>
+
+      {tab === "dropbox" && (
+        <div className="rounded-xl border border-[var(--color-border)] bg-white p-6">
+          <DropboxControlFiles clientId={id} />
+        </div>
+      )}
 
       {tab === "logo" && (
         <div className="rounded-xl border border-[var(--color-border)] bg-white p-6">

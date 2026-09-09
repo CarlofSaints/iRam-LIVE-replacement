@@ -406,6 +406,57 @@ export async function replaceFile(
   return entry;
 }
 
+/* ── Direct browser transfers ──────────────────────────────────────────────
+   A Vercel request body is capped at about 4.5MB and these files are not
+   small — VERIGREEN's Range Management workbook is 20.6MB. Anything routed
+   through a serverless function would fail on the real files while working
+   perfectly on a test one, which is the worst way for this to break.
+
+   Dropbox issues short-lived direct URLs instead, so the bytes go straight
+   between the browser and Dropbox and never touch this app. */
+
+/** A direct download URL for one file, valid ~4 hours. */
+export async function getTemporaryDownloadLink(
+  path: string,
+): Promise<{ url: string; entry: DropboxEntry }> {
+  const r = await rpc<{ link: string; metadata: RawEntry }>(
+    "files/get_temporary_link",
+    { path },
+  );
+  return { url: r.link, entry: toEntry(r.metadata) };
+}
+
+/**
+ * A direct upload URL that REPLACES one file, valid ~4 hours.
+ *
+ * The commit terms are fixed here, server side, when the link is minted — the
+ * browser only supplies bytes. So a caller cannot turn a replace into a new
+ * file, and cannot drop the rev check: `update` with the rev the user
+ * downloaded means Dropbox refuses the write if the file moved on since,
+ * rather than flattening whoever saved in between.
+ */
+export async function getTemporaryUploadLink(
+  path: string,
+  rev: string,
+): Promise<string> {
+  if (!rev) {
+    throw new Error(
+      "Refusing to mint an upload link without the rev the file was read at — " +
+      "that would overwrite whatever is there now.",
+    );
+  }
+  const r = await rpc<{ link: string }>("files/get_temporary_upload_link", {
+    commit_info: {
+      path,
+      mode: { ".tag": "update", update: rev },
+      autorename: false,
+      mute: false,
+    },
+    duration: 14400,
+  });
+  return r.link;
+}
+
 /** Cheap round trip proving the credentials work, for a probe endpoint. */
 export async function probeDropbox(): Promise<{
   ok: boolean;
