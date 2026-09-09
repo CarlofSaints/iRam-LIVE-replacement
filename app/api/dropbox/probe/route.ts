@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { requirePermission, handleAuthError, noCacheHeaders } from "@/lib/auth";
-import { probeDropbox, dropboxRoot, listFolder, getStoredAuth } from "@/lib/dropbox";
+import { probeDropbox, dropboxRoot, dropboxRootRaw, listFolder, getStoredAuth, usesTeamSpace } from "@/lib/dropbox";
 
 /* Is Dropbox actually wired on THIS deployment?
 
@@ -24,7 +24,9 @@ export async function GET(req: NextRequest) {
 
     const base = {
       ...result,
-      configuredRoot: configuredRoot || "(DROPBOX_CONTROL_ROOT is not set)",
+      configuredRoot: dropboxRootRaw() || "(DROPBOX_CONTROL_ROOT is not set)",
+      resolvedPath: configuredRoot || "(none)",
+      teamSpace: await usesTeamSpace().catch(() => null),
       connectedBy: stored?.connectedBy ?? null,
       connectedAt: stored?.connectedAt ?? null,
       tokenSource: process.env.DROPBOX_REFRESH_TOKEN ? "env var" : stored ? "Connect button" : "none",

@@ -31,9 +31,50 @@ export interface StoredDropboxAuth {
   account: string;
 }
 
-/** Where the control files live. Configurable so no path is hard-coded. */
+/**
+ * Where the control files live.
+ *
+ * The obvious thing to paste here is the address bar from the Dropbox web UI,
+ * so that is accepted and converted rather than rejected. A browser URL is
+ * not an API path: it is percent-encoded, and on a team account it carries a
+ * "/work/<Team>" prefix that exists only in the web UI. Left as-is it
+ * produces a folder that cannot be found, and the error says nothing useful.
+ *
+ * This is a format conversion of an unambiguous input, not a guess at what
+ * someone meant — the probe always reports the path it resolved to, so what
+ * it is actually using is visible rather than assumed.
+ */
 export function dropboxRoot(): string {
-  return (process.env.DROPBOX_CONTROL_ROOT || "").replace(/\/+$/, "");
+  const raw = (process.env.DROPBOX_CONTROL_ROOT || "").trim();
+  if (!raw) return "";
+
+  let path = raw;
+  if (/^https?:\/\//i.test(raw)) {
+    try {
+      path = new URL(raw).pathname;
+      /* Strip the web UI's own prefixes. "/work/<Team>" carries a team-name
+         segment; "/home" does not — treating them the same eats a real
+         folder name off the front of a personal URL. */
+      path = path.replace(/^\/work\/[^/]+/i, "").replace(/^\/home/i, "");
+    } catch {
+      return raw.replace(/\/+$/, "");
+    }
+  }
+  try {
+    // "%20" is a URL escape, never part of a Dropbox path.
+    path = decodeURIComponent(path);
+  } catch {
+    /* Leave it alone rather than fail: a stray % is better surfaced by the
+       probe than swallowed here. */
+  }
+  path = path.replace(/\/+$/, "");
+  if (!path) return "";
+  return path.startsWith("/") ? path : "/" + path;
+}
+
+/** The value as configured, for a probe to show beside what it resolved to. */
+export function dropboxRootRaw(): string {
+  return (process.env.DROPBOX_CONTROL_ROOT || "").trim();
 }
 
 /* The APP credentials — the half that identifies this integration to Dropbox.
@@ -145,12 +186,66 @@ export function dropboxPath(...parts: string[]): string {
   return "/" + joined;
 }
 
+/* ── Team spaces ───────────────────────────────────────────────────────────
+   On a Dropbox Business account the member's HOME namespace (their personal
+   folder) is not the same as the team's ROOT namespace, where shared team
+   folders actually live. Without saying otherwise, every API call resolves
+   paths against the home namespace — so a real team folder simply is not
+   found, and listing the root returns an EMPTY list rather than an error.
+   That empty list is the tell, and it is easy to misread as "the connection
+   is broken" when the connection is fine.
+
+   Sending Dropbox-API-Path-Root pointed at the team root makes paths mean
+   what they look like in the web UI. Fetched once and cached; a personal
+   account has root == home and gets no header at all. */
+let pathRootHeader: string | null = null;
+let pathRootChecked = false;
+
+async function getPathRoot(): Promise<string | null> {
+  if (pathRootChecked) return pathRootHeader;
+  const token = await getAccessToken();
+  const res = await fetch("https://api.dropboxapi.com/2/users/get_current_account", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: "null",
+    cache: "no-store",
+  });
+  if (res.ok) {
+    const acct = (await res.json()) as {
+      root_info?: { root_namespace_id?: string; home_namespace_id?: string };
+    };
+    const root = acct.root_info?.root_namespace_id;
+    const home = acct.root_info?.home_namespace_id;
+    pathRootHeader =
+      root && root !== home ? JSON.stringify({ ".tag": "root", root }) : null;
+  }
+  pathRootChecked = true;
+  return pathRootHeader;
+}
+
+export function resetDropboxPathRoot(): void {
+  pathRootHeader = null;
+  pathRootChecked = false;
+}
+
+/** True when this account's files live in a team space. For the probe. */
+export async function usesTeamSpace(): Promise<boolean> {
+  return (await getPathRoot()) !== null;
+}
+
+async function authHeaders(token: string): Promise<Record<string, string>> {
+  const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+  const root = await getPathRoot();
+  if (root) headers["Dropbox-API-Path-Root"] = root;
+  return headers;
+}
+
 async function rpc<T>(endpoint: string, arg: unknown): Promise<T> {
   const token = await getAccessToken();
   const res = await fetch(`https://api.dropboxapi.com/2/${endpoint}`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${token}`,
+      ...(endpoint === "users/get_current_account" ? { Authorization: `Bearer ${token}` } : await authHeaders(token)),
       "Content-Type": "application/json",
     },
     body: JSON.stringify(arg),
@@ -221,7 +316,7 @@ export async function downloadFile(
   const res = await fetch("https://content.dropboxapi.com/2/files/download", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${token}`,
+      ...(await authHeaders(token)),
       // The path rides in a header as JSON — Latin-1 only, so a non-ASCII
       // filename must be escaped rather than sent raw.
       "Dropbox-API-Arg": toApiArgHeader({ path }),
@@ -279,7 +374,7 @@ export async function replaceFile(
   const res = await fetch("https://content.dropboxapi.com/2/files/upload", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${token}`,
+      ...(await authHeaders(token)),
       "Content-Type": "application/octet-stream",
       "Dropbox-API-Arg": toApiArgHeader({
         path,

@@ -164,4 +164,41 @@ async function main() {
   if (fails.length) { fails.forEach((f) => console.log("  - " + f)); process.exit(1); }
 }
 
-main();
+// main() then rootTests() — rootTests mutates DROPBOX_CONTROL_ROOT, which main reads.
+
+/* The Dropbox web UI address bar is what anyone will actually paste, so it
+   has to resolve to a real API path rather than fail with a folder-not-found
+   that explains nothing. Run separately: dropboxRoot() reads env at call time. */
+async function rootTests() {
+  const { dropboxRoot } = await import("../lib/dropbox?roots=" + Date.now()) as typeof import("../lib/dropbox");
+  let p = 0; const f: string[] = [];
+  const t = (name: string, got: string, want: string) => {
+    if (got === want) { p++; console.log("  ok   " + name); }
+    else { f.push(name); console.log(`  FAIL ${name}\n         got  ${got}\n         want ${want}`); }
+  };
+
+  console.log("\nDROPBOX_CONTROL_ROOT accepts what people paste");
+
+  process.env.DROPBOX_CONTROL_ROOT = "/Clients/CONTROL FILES";
+  t("a plain path is untouched", dropboxRoot(), "/Clients/CONTROL FILES");
+
+  process.env.DROPBOX_CONTROL_ROOT = "Clients/CONTROL FILES/";
+  t("adds the leading slash, drops the trailing one", dropboxRoot(), "/Clients/CONTROL FILES");
+
+  process.env.DROPBOX_CONTROL_ROOT =
+    "https://www.dropbox.com/work/OuterJoin/Projects/Excel%20Add-Ins/Clients/iRam%20Internal/Live%20files/2PBI_DB/Support%20Tables";
+  t("a team web URL becomes an API path",
+    dropboxRoot(),
+    "/Projects/Excel Add-Ins/Clients/iRam Internal/Live files/2PBI_DB/Support Tables");
+
+  process.env.DROPBOX_CONTROL_ROOT = "https://www.dropbox.com/home/Clients/PMF%20files";
+  t("a personal web URL works too", dropboxRoot(), "/Clients/PMF files");
+
+  process.env.DROPBOX_CONTROL_ROOT = "";
+  t("empty stays empty", dropboxRoot(), "");
+
+  console.log(`\n${p} passed, ${f.length} failed`);
+  if (f.length) process.exit(1);
+}
+
+main().then(rootTests);
