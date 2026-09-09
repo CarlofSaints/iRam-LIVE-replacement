@@ -3,6 +3,7 @@ import { requirePermission, handleAuthError, noCacheHeaders } from "@/lib/auth";
 import { sendNewClientRequestEmail } from "@/lib/email";
 import { addLog } from "@/lib/activityLog";
 import { getUserById } from "@/lib/userData";
+import { readChecklist, checklistSummary } from "@/lib/clientRequestChecklist";
 
 /* "The client I need is not on the list."
 
@@ -33,6 +34,12 @@ export async function POST(req: NextRequest) {
     const channels = String(body.channels ?? "").trim();
     const notes = String(body.notes ?? "").trim();
 
+    /* PMF / Links / Ranging. Read here rather than trusted from the form, and
+       only a literal true counts — the request is allowed through with any of
+       them unticked, because refusing to send would just teach people to tick
+       all three. What the request carries is the honest answer. */
+    const checklist = readChecklist(body);
+
     /* The session carries the email, but read the user record too: an SSO
        session can be minted without one, and a reply-to that is not a real
        mailbox turns Mark's reply into a bounce he has to chase. */
@@ -48,7 +55,7 @@ export async function POST(req: NextRequest) {
     try {
       await sendNewClientRequestEmail({
         to: REQUEST_RECIPIENT,
-        clientName, vendorNumbers, channels, notes,
+        clientName, vendorNumbers, channels, notes, checklist,
         requestedByName: session.name,
         requestedByEmail: replyTo,
       });
@@ -73,6 +80,7 @@ export async function POST(req: NextRequest) {
         `Asked ${REQUEST_RECIPIENT} to add client "${clientName}"` +
         (vendorNumbers ? `, vendor(s) ${vendorNumbers}` : "") +
         (channels ? `, channel(s) ${channels}` : "") +
+        ` [${checklistSummary(checklist)}]` +
         (notes ? ` — ${notes}` : ""),
       status: "success",
     });

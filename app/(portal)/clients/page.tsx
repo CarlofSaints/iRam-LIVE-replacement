@@ -7,6 +7,15 @@ import SearchSelect from "@/components/SearchSelect";
 import Link from "next/link";
 import { authFetch, useAuth, usePermissions } from "@/lib/useAuth";
 import type { Client, Channel, CAM, ControlFileType } from "@/lib/types";
+import { CLIENT_REQUEST_CHECKLIST, emptyChecklist } from "@/lib/clientRequestChecklist";
+
+/* The whole "Email OJ" request in one shape, used for the initial state, for
+   the reset after a send, and posted as-is. One object rather than a field
+   list in three places, so a new question cannot be added to the form and
+   then quietly dropped from the reset or the body. */
+function emptyRequest() {
+  return { clientName: "", vendorNumbers: "", channels: "", notes: "", ...emptyChecklist() };
+}
 
 /* The client names SQL Server holds for iRam LIVE. Nobody types a client name
    into this app any more — a typed name is how iRam and SQL drifted apart in
@@ -78,7 +87,7 @@ export default function ClientsPage() {
 
   // "Email OJ" — the way out when the client genuinely is not on the list.
   const [showRequest, setShowRequest] = useState(false);
-  const [reqForm, setReqForm] = useState({ clientName: "", vendorNumbers: "", channels: "", notes: "" });
+  const [reqForm, setReqForm] = useState(emptyRequest);
   const [reqBusy, setReqBusy] = useState(false);
   const [reqError, setReqError] = useState("");
   const [busyId, setBusyId] = useState("");
@@ -249,7 +258,7 @@ export default function ClientsPage() {
       const d = await res.json().catch(() => ({}));
       if (res.ok) {
         setShowRequest(false);
-        setReqForm({ clientName: "", vendorNumbers: "", channels: "", notes: "" });
+        setReqForm(emptyRequest());
         flash(`Sent to ${d.to ?? "OuterJoin"} — they will reply to you directly`);
       } else {
         setReqError(d.error || "The request could not be sent.");
@@ -649,6 +658,27 @@ export default function ClientsPage() {
                   className="mt-1 w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm font-normal" />
               </label>
             </div>
+
+            {/* PMF / Links / Ranging. Every answer goes in the mail, ticked or
+                not, so an unticked box tells Mark what is still outstanding
+                rather than saying nothing at all. Deliberately not required —
+                a gate here would only teach people to tick all three. */}
+            <fieldset className="mt-4 rounded-lg border border-[var(--color-border)] p-3">
+              <legend className="px-1 text-sm font-medium text-[var(--color-text)]">Preparation</legend>
+              <p className="text-xs text-[var(--color-text-muted)]">
+                Tick what is done. Anything left unticked is sent as outstanding.
+              </p>
+              <div className="mt-2 space-y-2">
+                {CLIENT_REQUEST_CHECKLIST.map((item) => (
+                  <label key={item.key} className="flex items-center gap-2 text-sm text-[var(--color-text)]">
+                    <input type="checkbox" checked={reqForm[item.key]}
+                      onChange={(e) => setReqForm({ ...reqForm, [item.key]: e.target.checked })}
+                      className="h-4 w-4 rounded border-[var(--color-border)]" />
+                    {item.label}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
 
             <label className="mt-3 block text-sm font-medium text-[var(--color-text)]">
               Anything else worth knowing
