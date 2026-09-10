@@ -205,40 +205,75 @@ export default function StoreReportsTestPage() {
   const todayStr = new Date().toLocaleDateString("en-CA");
   const [engDay, setEngDay] = useState(todayStr);
   const [eng, setEng] = useState<EngResult | null>(null);
-  const [engBusy, setEngBusy] = useState(false);
-  const [engMsg, setEngMsg] = useState("");
+  /* Starts true: the mount effect fires a load straight away, and a false
+     here paints one frame of "couldn't read this day" before it does. */
+  const [engBusy, setEngBusy] = useState(true);
+  /* A failure used to reuse the same green "success" box as "Digest sent to 4
+     managers", so "Couldn't load engagement (401)" read as good news. The
+     message carries its own tone now. */
+  const [engMsg, setEngMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const [engSearch, setEngSearch] = useState("");
   const [engChannel, setEngChannel] = useState("all");
   const [engRep, setEngRep] = useState("all");
 
+  /* A <input type="date"> fires onChange on every keystroke in the YEAR box,
+     so typing "2026" emits 0002- then 0020- then 0202- before it emits 2026-.
+     Each one is a structurally valid ISO date, so a shape check alone lets
+     three junk requests through and the grid flickers through three empty
+     days. Requiring a sane year is what actually stops it. */
+  function isUsableDay(day: string): boolean {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return false;
+    const year = Number(day.slice(0, 4));
+    return year >= 2000 && year <= 2100;
+  }
+
   async function loadEng(day: string) {
-    setEngBusy(true); setEngMsg("");
+    if (!isUsableDay(day)) return;
+    setEngBusy(true); setEngMsg(null);
     const empty: EngResult = { day, summary: [], totalSent: 0, detail: [] };
     try {
       const res = await authFetch(`/api/store-reports/engagement?day=${encodeURIComponent(day)}`);
       const d = await res.json().catch(() => ({}));
       if (res.ok) setEng(d);
-      else { setEng(empty); setEngMsg(d.error || `Couldn't load engagement (${res.status})`); }
+      else { setEng(empty); setEngMsg({ text: d.error || `Couldn't load engagement (${res.status})`, ok: false }); }
     } catch {
       setEng(empty);
-      setEngMsg("Network error loading engagement");
+      setEngMsg({ text: "Network error loading engagement", ok: false });
     }
     setEngBusy(false);
   }
-  useEffect(() => { if (canManage) loadEng(engDay); /* eslint-disable-next-line */ }, [engDay, canManage]);
+
+  useEffect(() => {
+    if (!canManage) return;
+    /* Filters belong to the day they were chosen on. A rep or channel picked
+       on one day usually has no rows on another, so carrying them over empties
+       the grid and the <select> shows a value with no matching option — which
+       reads as "the page is broken", not "this filter matches nothing". */
+    setEngSearch(""); setEngChannel("all"); setEngRep("all");
+    loadEng(engDay);
+    /* eslint-disable-next-line */
+  }, [engDay, canManage]);
+
+  /* Whatever is in `eng` is only about the day it was fetched for. Until the
+     request for the CURRENT day lands, the old day's totals are still sitting
+     in state — rendering them under the new date is worse than rendering
+     nothing, because the numbers look authoritative and are wrong. */
+  const engShowsSelectedDay = !!eng && eng.day === engDay;
 
   async function sendDigest(send: boolean) {
-    setEngBusy(true); setEngMsg("");
+    setEngBusy(true); setEngMsg(null);
     try {
       const res = await authFetch("/api/store-reports/engagement", {
         method: "POST", body: JSON.stringify({ day: engDay, send }),
       });
       const d = await res.json().catch(() => ({}));
-      if (res.ok) setEngMsg(send ? `Digest sent to ${d.recipients?.length ?? 0} manager(s)` : `Preview: ${d.totalSent} sent, ${d.recipients?.length ?? 0} manager recipient(s)`);
-      else setEngMsg(d.error || "Failed");
-    } catch { setEngMsg("Network error"); }
+      if (res.ok) setEngMsg({ text: send ? `Digest sent to ${d.recipients?.length ?? 0} manager(s)` : `Preview: ${d.totalSent} sent, ${d.recipients?.length ?? 0} manager recipient(s)`, ok: true });
+      else setEngMsg({ text: d.error || "Failed", ok: false });
+    } catch { setEngMsg({ text: "Network error", ok: false }); }
     setEngBusy(false);
-    setTimeout(() => setEngMsg(""), 4000);
+    /* Only a success fades. An error has to stay until it is read — that is
+       the whole reason someone is looking at this box. */
+    if (send) setTimeout(() => setEngMsg((m) => (m && m.ok ? null : m)), 4000);
   }
 
   // ── Weekly rep action report ──
@@ -1329,10 +1364,37 @@ export default function StoreReportsTestPage() {
         <p className="mb-4 max-w-2xl text-sm text-[var(--color-text-muted)]">
           Who&apos;s actually using the reports. <b>Opened</b> = email opened or page viewed; <b>Used</b> = clicked more than one KPI card.
         </p>
-        {engMsg && <div className="mb-3 rounded-lg border border-green-200 bg-green-50 px-4 py-2 text-sm text-green-700">{engMsg}</div>}
+        {engMsg && (
+          <div className={`mb-3 rounded-lg border px-4 py-2 text-sm ${engMsg.ok
+            ? "border-green-200 bg-green-50 text-green-700"
+            : "border-red-200 bg-red-50 text-red-700"}`}>
+            {engMsg.text}
+          </div>
+        )}
 
-        {eng && (
+        {!isUsableDay(engDay) && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-6 text-center text-sm text-amber-800">
+            Pick a date to see engagement for that day.
+          </div>
+        )}
+
+        {/* The section used to render NOTHING while the first request was in
+            flight — no spinner, no text — with Refresh greyed out by engBusy.
+            A slow request and a broken page looked exactly the same, which is
+            what got this reported as a bug. */}
+        {isUsableDay(engDay) && !engShowsSelectedDay && (
+          <div className="rounded-xl border border-[var(--color-border)] bg-white px-4 py-8 text-center text-sm text-[var(--color-text-muted)]">
+            {engBusy ? `Reading engagement for ${engDay}…` : "Couldn't read engagement for this day. Try Refresh."}
+          </div>
+        )}
+
+        {engShowsSelectedDay && eng && (
           <>
+            {/* Refreshing an already-loaded day: the numbers below are the ones
+                on screen, so say they are being re-read rather than blanking. */}
+            {engBusy && (
+              <div className="mb-3 text-xs text-[var(--color-text-muted)]">Re-reading {engDay}…</div>
+            )}
             {/* Per-channel summary */}
             <div className="mb-4 overflow-x-auto rounded-xl border border-[var(--color-border)] bg-white">
               <table className="w-full text-sm">
