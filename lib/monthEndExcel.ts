@@ -40,6 +40,8 @@ const RAND_FMT = '"R "#,##0.00';
 
 const GROWTH_GREEN = "C6EFCE";
 const GROWTH_RED = "FFC7CE";
+const GROWTH_GREEN_FG = "006100";   // text on GROWTH_GREEN
+const GROWTH_RED_FG = "9C0006";     // text on GROWTH_RED
 const UNCLASS_BG = "E7E6E6";   // grey
 const MIXED_BG = "FFF2CC";     // amber
 
@@ -205,7 +207,7 @@ let nextCfPriority = 1;
 
 // Apply Excel's native 3-colour scale (red ↔ amber ↔ green) across `ref`,
 // relative to the values in that range (Excel recomputes min/mid/max live).
-//   dir "highGood": low = red,   high = green  (e.g. ND %, growth %)
+//   dir "highGood": low = red,   high = green  (e.g. ND %)
 //   dir "highBad":  low = green, high = red    (e.g. OOS %)
 // Blank/text cells in the range are ignored by the scale.
 function addColorScale(
@@ -229,6 +231,32 @@ function addColorScale(
       },
     ],
   });
+}
+
+// Growth is read as a verdict, not a ranking: ANY positive growth is green and
+// ANY negative growth is red, at full strength either way. A colour scale is
+// wrong for it — it ranks the range, so the weakest row of a good month still
+// came out red and the strongest row of a bad month still came out green.
+//   `ref` must be a single-column range; the rules are written relative to its
+// top-left cell, which is how Excel stores them.
+//   The ISNUMBER guard keeps blanks, and the "" the growth formulas emit when
+// the base is zero, unformatted. A plain cellIs rule cannot do that: Excel
+// sorts text above every number, so "" would satisfy > 0 and be painted green.
+function addGrowthSignRules(sheet: ExcelJS.Worksheet, ref: string): void {
+  const first = ref.split(":")[0]; // e.g. "H5" — relative, no $
+  const rules = [
+    { cmp: ">", fill: GROWTH_GREEN, font: GROWTH_GREEN_FG },
+    { cmp: "<", fill: GROWTH_RED, font: GROWTH_RED_FG },
+  ].map(({ cmp, fill, font }) => ({
+    type: "expression" as const,
+    formulae: [`AND(ISNUMBER(${first}),${first}${cmp}0)`],
+    style: {
+      fill: { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: fill }, bgColor: { argb: fill } },
+      font: { color: { argb: font } },
+    },
+    priority: nextCfPriority++,
+  }));
+  sheet.addConditionalFormatting({ ref, rules });
 }
 
 // ── Summary table column definitions ───────────────────────────
@@ -710,6 +738,18 @@ async function buildDataSheet(
   // polishStreamedHeader. autoFilter is set here too, for the same reason.
   sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: rows.length + 1, column: headers.length } };
   polishStreamedHeader(sheet);
+
+  /* Growth % columns: positive green, negative red. Registered before the data
+     rows because a streamed sheet emits its conditional formatting at commit
+     and nothing may touch the sheet after the last row is flushed. */
+  if (rows.length > 0) {
+    const extrasStart = fixedCols.length + sortedDates.length + tailCols.length;
+    extraDefs.forEach((def, i) => {
+      if (!/growth/i.test(def.header)) return;
+      const L = colLetter(extrasStart + i + 1);
+      addGrowthSignRules(sheet, `${L}2:${L}${rows.length + 1}`);
+    });
+  }
 
   let r = 2;
   for (const row of rows) {
@@ -1296,15 +1336,15 @@ function writeSummaryTable(
   // Total row
   row = writeSummaryDataRow(sheet, row, totalRow, isValue, true, ctx);
 
-  // Native colour scales on the growth % columns (relative to this table;
-  // higher growth = greener). Covers the data rows plus the total row.
+  // Growth % columns: positive green, negative red. Covers the data rows plus
+  // the total row.
   if (dataRows.length > 0) {
     const growthCols = SUMMARY_COLS
       .map((col, i) => ({ col, i }))
       .filter(({ col }) => typeof col.key === "string" && col.key.startsWith("growth"))
       .map(({ i }) => String.fromCharCode(65 + i));
     for (const L of growthCols) {
-      addColorScale(sheet, `${L}${firstDataRow}:${L}${totalRowNum}`, "highGood");
+      addGrowthSignRules(sheet, `${L}${firstDataRow}:${L}${totalRowNum}`);
     }
   }
 
@@ -1364,8 +1404,8 @@ function writeSummaryDataRow(
       cell.value = { formula, result };
       cell.numFmt = "0.0%";
       cell.alignment = { horizontal: "center" };
-      // Colour handled by a native colour scale applied per table in
-      // writeSummaryTable (red ↔ amber ↔ green).
+      // Colour handled by conditional formatting applied per table in
+      // writeSummaryTable (positive green, negative red).
     } else {
       cell.value = rawVal as number;
       cell.numFmt = valueFmt;
