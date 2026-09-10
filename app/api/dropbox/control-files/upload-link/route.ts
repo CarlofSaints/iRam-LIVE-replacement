@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { requirePermission, handleAuthError, noCacheHeaders } from "@/lib/auth";
 import { getClientById } from "@/lib/clientData";
+import { refuseIfManualLoad } from "@/lib/dropboxControlFiles";
 import { getTemporaryUploadLink } from "@/lib/dropbox";
 import { findClientFolder, findControlFile, sqlSourceForKind } from "@/lib/dropboxControlFiles";
 import { createSyncJob, fingerprint, type DropboxSyncJob } from "@/lib/dropboxSyncJob";
@@ -37,6 +38,8 @@ export async function POST(req: NextRequest) {
 
     const client = await getClientById(clientId);
     if (!client) return Response.json({ error: "No such client." }, { status: 404, headers: noCacheHeaders() });
+    const manual = refuseIfManualLoad(client);
+    if (manual) return manual;
 
     const folder = await findClientFolder([client.sqlClientName || "", client.name]);
     if (!folder) {

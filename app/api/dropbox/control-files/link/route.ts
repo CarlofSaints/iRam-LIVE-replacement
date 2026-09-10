@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { requirePermission, handleAuthError, noCacheHeaders } from "@/lib/auth";
 import { getClientById } from "@/lib/clientData";
+import { refuseIfManualLoad } from "@/lib/dropboxControlFiles";
 import { getTemporaryDownloadLink } from "@/lib/dropbox";
 import { findClientFolder, findControlFile } from "@/lib/dropboxControlFiles";
 import { addLog } from "@/lib/activityLog";
@@ -29,6 +30,8 @@ export async function GET(req: NextRequest) {
 
     const client = await getClientById(clientId);
     if (!client) return Response.json({ error: "No such client." }, { status: 404, headers: noCacheHeaders() });
+    const manual = refuseIfManualLoad(client);
+    if (manual) return manual;
 
     const folder = await findClientFolder([client.sqlClientName || "", client.name]);
     if (!folder) {

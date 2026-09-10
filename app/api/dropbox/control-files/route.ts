@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { requirePermission, handleAuthError, noCacheHeaders } from "@/lib/auth";
 import { getClientById } from "@/lib/clientData";
+import { refuseIfManualLoad } from "@/lib/dropboxControlFiles";
 import { isDropboxConnected, dropboxRoot } from "@/lib/dropbox";
 import { findClientFolder, listControlFiles, sqlSourceForKind } from "@/lib/dropboxControlFiles";
 
@@ -28,6 +29,8 @@ export async function GET(req: NextRequest) {
     if (!client) {
       return Response.json({ error: "No such client." }, { status: 404, headers: noCacheHeaders() });
     }
+    const manual = refuseIfManualLoad(client);
+    if (manual) return manual;
 
     /* SQL name first: the Dropbox folders are named the way SQL names things,
        not the way iRam's client records do. */

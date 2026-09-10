@@ -69,6 +69,7 @@ export default function ClientDetailPage() {
   const [editForm, setEditForm] = useState({
     name: "", vendorNumbers: "", camId: "", channelIds: [] as string[], notes: "",
     sendConsolidatedStoreReports: false, sqlClientName: "",
+    manualControlFileLoad: false,
   });
 
   /* Client names as SQL Server knows them, for the SQL Name suggestion list.
@@ -473,6 +474,7 @@ export default function ClientDetailPage() {
       notes: client.notes ?? "",
       sendConsolidatedStoreReports: client.sendConsolidatedStoreReports ?? false,
       sqlClientName: client.sqlClientName ?? "",
+      manualControlFileLoad: client.manualControlFileLoad ?? false,
     });
     setEditing(true);
   }
@@ -500,6 +502,7 @@ export default function ClientDetailPage() {
         // Trimmed: a trailing space would make the SQL lookup miss and look
         // exactly like "this client has no data".
         sqlClientName: editForm.sqlClientName.trim() || undefined,
+        manualControlFileLoad: editForm.manualControlFileLoad,
       }),
     });
     if (res.ok) {
@@ -536,7 +539,29 @@ export default function ClientDetailPage() {
         ))}
       </div>
 
-      {tab === "dropbox" && (
+      {tab === "dropbox" && client.manualControlFileLoad && (
+        /* The Dropbox round trip confirms a save by watching this client's rows
+           change in SQL. A manual client has no rows there, so it would sit on
+           "waiting for SQL" until it timed out — a working save reported as a
+           failure. Say why, and point at the tab that does work. */
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-6">
+          <h3 className="text-sm font-semibold text-amber-900">This client loads control files by hand</h3>
+          <p className="mt-2 text-sm text-amber-800">
+            <strong>Manual Control File Load</strong> is ticked on the Details tab, so {client.name} is not part
+            of the Dropbox round trip. SQL Server does not hold this client as iRam LIVE, which means there would
+            be nothing for a Dropbox save to confirm against — it would wait for a change that never arrives.
+          </p>
+          <p className="mt-2 text-sm text-amber-800">
+            Load the PMF, LINKS and Ranging files on the <strong>Control Files</strong> tab instead.
+          </p>
+          <button onClick={() => setTab("control")}
+            className="mt-4 rounded-lg bg-amber-700 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-800">
+            Go to Control Files
+          </button>
+        </div>
+      )}
+
+      {tab === "dropbox" && !client.manualControlFileLoad && (
         <div className="rounded-xl border border-[var(--color-border)] bg-white p-6">
           <DropboxControlFiles clientId={id} />
         </div>
@@ -607,6 +632,12 @@ export default function ClientDetailPage() {
               <div className="font-medium">{client.sendConsolidatedStoreReports
                 ? <span className="rounded-full bg-green-50 px-2 py-0.5 text-xs text-green-700">Included</span>
                 : <span className="text-[var(--color-text-muted)]">Not included</span>}</div>
+            </div>
+            <div>
+              <span className="text-[var(--color-text-muted)]">Control Files</span>
+              <div className="font-medium">{client.manualControlFileLoad
+                ? <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-700">Loaded by hand</span>
+                : <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs text-blue-700">Dropbox round trip</span>}</div>
             </div>
             <div>
               <span className="text-[var(--color-text-muted)]">SQL Name</span>
@@ -705,6 +736,19 @@ export default function ClientDetailPage() {
               <span>
                 <span className="block text-sm font-medium text-[var(--color-text)]">Send Consolidated Store Reports</span>
                 <span className="block text-xs text-[var(--color-text-muted)]">Include this client&apos;s data in the store reports emailed to reps on the ground.</span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2.5 rounded-lg border border-[var(--color-border)] p-3 cursor-pointer">
+              <input type="checkbox" checked={editForm.manualControlFileLoad}
+                onChange={(e) => setEditForm({ ...editForm, manualControlFileLoad: e.target.checked })}
+                className="mt-0.5 h-4 w-4" />
+              <span>
+                <span className="block text-sm font-medium text-[var(--color-text)]">Manual Control File Load</span>
+                <span className="block text-xs text-[var(--color-text-muted)]">
+                  Load this client&apos;s PMF, LINKS and Ranging by hand on the Control Files tab, instead of
+                  editing them through Dropbox. Needed for clients SQL Server does not hold as iRam LIVE —
+                  there is nothing there for the Dropbox save to confirm against. Temporary.
+                </span>
               </span>
             </label>
             <div className="flex gap-3">

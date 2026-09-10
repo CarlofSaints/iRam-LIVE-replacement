@@ -241,6 +241,16 @@ export interface Client {
   // When true, this client's data is pooled into the consolidated store
   // reports emailed to reps (see the Send Store Reports module).
   sendConsolidatedStoreReports?: boolean;
+  /* TEMPORARY escape hatch. Mark's iRam Live stored procedures only return
+     clients flagged as IRAM Live, so a client outside that set has no control
+     file data in SQL at all — and the Dropbox round trip, which confirms a
+     save by watching SQL change, can never finish for them.
+
+     Ticked, this client keeps the old hand-upload path (Control Files tab)
+     and is not offered the Dropbox round trip. Comes out once the SPs cover
+     every client. ABSENT MEANS FALSE — an existing client with no flag stays
+     on the SQL/Dropbox route. */
+  manualControlFileLoad?: boolean;
   // Archive = active:false. All data is retained and stays readable in
   // Reports/Charts, but the client drops out of every operational flow
   // (DISPO checklist, load-status email, store reports, crons, uploads,

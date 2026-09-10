@@ -17,6 +17,24 @@
    ────────────────────────────────────────────────────────────── */
 
 import { listFolder, dropboxPath, dropboxRoot, type DropboxEntry } from "./dropbox";
+import type { Client } from "./types";
+
+/* A client flagged Manual Control File Load is not part of the round trip.
+   Refused at the API, not just hidden on the tab: the UI gate is a
+   convenience and every one of these routes is reachable without it. Returns
+   the refusal, or null when the client is fine to proceed. */
+export function refuseIfManualLoad(client: Client): Response | null {
+  if (!client.manualControlFileLoad) return null;
+  return Response.json(
+    {
+      error:
+        `${client.name} is set to Manual Control File Load, so it is not part of the Dropbox round trip. ` +
+        "Load its control files on the Control Files tab instead.",
+      manualControlFileLoad: true,
+    },
+    { status: 409, headers: { "Cache-Control": "no-store" } },
+  );
+}
 
 export type ControlFileKind = "pmf" | "links" | "ranging" | "custom_sites";
 

@@ -75,6 +75,7 @@ export default function ClientsPage() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({
     name: "", vendorNumbers: "", camId: "", channelIds: [] as string[], notes: "",
+    manualControlFileLoad: false,
   });
   const [error, setError] = useState("");
   const [view, setView] = useState<"active" | "archived">("active");
@@ -350,6 +351,7 @@ export default function ClientsPage() {
       }
       row["SQL Client Name"] = c.sqlClientName ?? "";
       row["Consolidated Store Reports"] = c.sendConsolidatedStoreReports ? "Yes" : "No";
+      row["Manual Control File Load"] = c.manualControlFileLoad ? "Yes" : "No";
       row["Linked Clients"] = c.linkedClientIds
         .map((id) => clients.find((x) => x.id === id)?.name ?? id)
         .join(", ");
@@ -399,11 +401,12 @@ export default function ClientsPage() {
         camId: form.camId || undefined,
         channelIds: form.channelIds,
         notes: form.notes || undefined,
+        manualControlFileLoad: form.manualControlFileLoad,
       }),
     });
     if (!res.ok) { setError((await res.json()).error || "Failed"); return; }
     setShowForm(false);
-    setForm({ name: "", vendorNumbers: "", camId: "", channelIds: [], notes: "" });
+    setForm({ name: "", vendorNumbers: "", camId: "", channelIds: [], notes: "", manualControlFileLoad: false });
     load();
   }
 
@@ -507,6 +510,19 @@ export default function ClientsPage() {
               </div>
             </div>
             <textarea placeholder="Notes (optional)" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm" rows={2} />
+            <label className="flex items-start gap-2.5 rounded-lg border border-[var(--color-border)] p-3 cursor-pointer">
+              <input type="checkbox" checked={form.manualControlFileLoad}
+                onChange={(e) => setForm({ ...form, manualControlFileLoad: e.target.checked })}
+                className="mt-0.5 h-4 w-4" />
+              <span>
+                <span className="block text-sm font-medium text-[var(--color-text)]">Manual Control File Load</span>
+                <span className="block text-xs text-[var(--color-text-muted)]">
+                  Load this client&apos;s PMF, LINKS and Ranging by hand on the Control Files tab, instead of
+                  editing them through Dropbox. Needed for clients SQL Server does not hold as iRam LIVE —
+                  there is nothing there for the Dropbox save to confirm against. Temporary.
+                </span>
+              </span>
+            </label>
             <button type="submit" disabled={!form.name}
               title={form.name ? "" : "Choose a client name from the SQL Server list first"}
               className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--color-primary-dark)] disabled:cursor-not-allowed disabled:opacity-40">
