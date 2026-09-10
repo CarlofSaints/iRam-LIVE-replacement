@@ -25,7 +25,7 @@ function page(title: string, body: string, ok: boolean): Response {
        <div style="border:1px solid #E2E8F0;border-top:4px solid ${ok ? "#7CC042" : "#E04E2A"};border-radius:10px;padding:28px">
          <h1 style="margin:0 0 12px;font-size:20px;color:#2D3748">${title}</h1>
          <p style="margin:0 0 20px;font-size:14px;line-height:1.6;color:#4A5568">${body}</p>
-         <a href="/sql-pilot" style="display:inline-block;background:#7CC042;color:#fff;text-decoration:none;padding:10px 20px;border-radius:8px;font-size:14px;font-weight:600">Back to iRam LIVE</a>
+         <a href="/control-centre/dropbox" style="display:inline-block;background:#7CC042;color:#fff;text-decoration:none;padding:10px 20px;border-radius:8px;font-size:14px;font-weight:600">Back to iRam LIVE</a>
        </div>
      </div>`,
     { status: ok ? 200 : 400, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } },
@@ -124,7 +124,7 @@ export async function GET(req: NextRequest) {
     return new Response(null, {
       status: 302,
       headers: {
-        Location: "/sql-pilot?dropbox=connected",
+        Location: "/control-centre/dropbox?dropbox=connected",
         // Burn the state cookie so the same link cannot be replayed.
         "Set-Cookie": "dropbox_oauth_state=; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=0",
         "Cache-Control": "no-store",

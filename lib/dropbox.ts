@@ -406,6 +406,69 @@ export async function replaceFile(
   return entry;
 }
 
+/* ── Scratch area for the round-trip self test ─────────────────────────────
+
+   The write path — mint an update-mode link, push bytes, prove the rev moved
+   and no copy appeared — could not be exercised without overwriting a real
+   client's master file, so for a long time it simply was not exercised. These
+   two helpers give it somewhere harmless to run.
+
+   Everything the self test touches lives under this one folder, and the
+   delete below REFUSES any path outside it. The shared lib must not grow a
+   general-purpose "delete a file in Dropbox" while it sits next to folders
+   holding the only copy of a client's PMF. */
+export const DROPBOX_SELF_TEST_DIR = "_APP_SELF_TEST_";
+
+/** Absolute path of the self-test folder, under the configured control root. */
+export function selfTestDir(): string {
+  return dropboxPath(DROPBOX_SELF_TEST_DIR);
+}
+
+function assertInSelfTestDir(path: string): void {
+  const dir = selfTestDir().toLowerCase();
+  if (!dir || !path.toLowerCase().startsWith(dir + "/")) {
+    throw new Error(
+      `Refusing to touch "${path}" — the self test may only write inside ${selfTestDir()}.`,
+    );
+  }
+}
+
+/**
+ * Create (or overwrite) a file INSIDE the self-test folder only.
+ *
+ * Deliberately not a general "write a file" helper: it takes no rev, so it
+ * would happily flatten whatever is there. That is safe for a scratch file
+ * this route just made up and unsafe for anything else, hence the guard.
+ */
+export async function writeSelfTestFile(path: string, contents: Buffer): Promise<DropboxEntry> {
+  assertInSelfTestDir(path);
+  const token = await getAccessToken();
+  const res = await fetch("https://content.dropboxapi.com/2/files/upload", {
+    method: "POST",
+    headers: {
+      ...(await authHeaders(token)),
+      "Content-Type": "application/octet-stream",
+      "Dropbox-API-Arg": toApiArgHeader({
+        path,
+        mode: { ".tag": "overwrite" },
+        autorename: false,
+        mute: true,
+      }),
+    },
+    body: new Uint8Array(contents),
+    cache: "no-store",
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`Dropbox upload failed (${res.status}): ${text}`);
+  return toEntry(JSON.parse(text) as RawEntry);
+}
+
+/** Remove a self-test file. Refuses anything outside the self-test folder. */
+export async function deleteSelfTestFile(path: string): Promise<void> {
+  assertInSelfTestDir(path);
+  await rpc("files/delete_v2", { path });
+}
+
 /* ── Direct browser transfers ──────────────────────────────────────────────
    A Vercel request body is capped at about 4.5MB and these files are not
    small — VERIGREEN's Range Management workbook is 20.6MB. Anything routed
