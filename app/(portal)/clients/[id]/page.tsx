@@ -563,7 +563,13 @@ export default function ClientDetailPage() {
 
       {tab === "dropbox" && !client.manualControlFileLoad && (
         <div className="rounded-xl border border-[var(--color-border)] bg-white p-6">
-          <DropboxControlFiles clientId={id} />
+          <DropboxControlFiles
+            clientId={id}
+            clientName={client.name}
+            dropboxFolder={client.dropboxFolder}
+            dropboxFiles={client.dropboxFiles}
+            onSetupSaved={load}
+          />
         </div>
       )}
 

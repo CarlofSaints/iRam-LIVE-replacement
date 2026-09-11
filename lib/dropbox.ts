@@ -45,7 +45,19 @@ export interface StoredDropboxAuth {
  * it is actually using is visible rather than assumed.
  */
 export function dropboxRoot(): string {
-  const raw = (process.env.DROPBOX_CONTROL_ROOT || "").trim();
+  return normalizeDropboxPath(process.env.DROPBOX_CONTROL_ROOT || "");
+}
+
+/**
+ * Turn whatever someone pasted into a real Dropbox API path.
+ *
+ * Extracted from dropboxRoot() so the PER-CLIENT folder path gets exactly the
+ * same treatment: people find a folder in the Dropbox web UI and copy the
+ * address bar, and that URL is not a path. Same input, same handling, one
+ * place to fix it.
+ */
+export function normalizeDropboxPath(input: string): string {
+  const raw = (input || "").trim();
   if (!raw) return "";
 
   let path = raw;

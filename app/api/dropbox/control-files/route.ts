@@ -3,7 +3,7 @@ import { requirePermission, handleAuthError, noCacheHeaders } from "@/lib/auth";
 import { getClientById } from "@/lib/clientData";
 import { refuseIfManualLoad } from "@/lib/dropboxControlFiles";
 import { isDropboxConnected, dropboxRoot } from "@/lib/dropbox";
-import { findClientFolder, listControlFiles, sqlSourceForKind } from "@/lib/dropboxControlFiles";
+import { resolveClientFolder, listControlFiles, sqlSourceForKind } from "@/lib/dropboxControlFiles";
 
 /* The control files one client has in Dropbox.
 
@@ -32,26 +32,31 @@ export async function GET(req: NextRequest) {
     const manual = refuseIfManualLoad(client);
     if (manual) return manual;
 
-    /* SQL name first: the Dropbox folders are named the way SQL names things,
-       not the way iRam's client records do. */
-    const folder = await findClientFolder([client.sqlClientName || "", client.name]);
-    if (!folder) {
+    /* An explicit folder set on the client wins; otherwise fall back to
+       matching the SQL name and then the iRam name. */
+    const folder = await resolveClientFolder(client);
+    if (!folder || folder.error) {
       return Response.json(
         {
           clientName: client.name,
           sqlClientName: client.sqlClientName || null,
           folder: null,
           files: [],
+          /* Not configured yet is a DIFFERENT thing from configured-and-broken,
+             and the tab offers a different next step for each. */
+          needsSetup: !folder,
           error:
-            `No Dropbox folder found for "${client.name}"` +
-            (client.sqlClientName ? ` or "${client.sqlClientName}"` : "") +
-            `. Folders are matched on the exact name under ${dropboxRoot()}.`,
+            folder?.error ??
+            `No Dropbox folder is set for "${client.name}", and no folder under ${dropboxRoot()} ` +
+              `is named "${client.name}"` +
+              (client.sqlClientName ? ` or "${client.sqlClientName}"` : "") +
+              `. Set the folder below — a client's Dropbox folder is often named neither of those.`,
         },
         { headers: noCacheHeaders() },
       );
     }
 
-    const files = (await listControlFiles(folder.path)).map((f) => ({
+    const files = (await listControlFiles(folder.path, client.dropboxFiles)).map((f) => ({
       ...f,
       /* Whether an edit to this file can be confirmed against SQL at all.
          Ranging has no stored procedure, so saying so up front beats a

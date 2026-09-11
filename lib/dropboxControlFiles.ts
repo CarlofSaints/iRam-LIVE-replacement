@@ -95,17 +95,75 @@ export async function findClientFolder(
   return null;
 }
 
+/**
+ * Resolve a client's Dropbox folder.
+ *
+ * An explicit `dropboxFolder` on the client WINS and is never second-guessed
+ * — that is the entire point of setting it. Only when it is absent does this
+ * fall back to matching the SQL name and then the iRam name, which works for
+ * the clients whose folder happens to be named the same and fails cleanly for
+ * the rest.
+ *
+ * The explicit path is still LISTED before being returned: a folder that was
+ * renamed or deleted in Dropbox has to read as "that folder is gone", not as
+ * a confusing failure three calls later inside an upload.
+ */
+export async function resolveClientFolder(
+  client: Client,
+): Promise<{ path: string; matched: string; explicit: boolean; error?: string } | null> {
+  const explicit = (client.dropboxFolder || "").trim();
+  if (explicit) {
+    try {
+      await listFolder(explicit);
+      return { path: explicit, matched: explicit, explicit: true };
+    } catch (e) {
+      return {
+        path: explicit,
+        matched: explicit,
+        explicit: true,
+        error:
+          `The Dropbox folder set for ${client.name} could not be opened: ${explicit}. ` +
+          `It may have been renamed or moved. ${e instanceof Error ? e.message : ""}`.trim(),
+      };
+    }
+  }
+  const hit = await findClientFolder([client.sqlClientName || "", client.name]);
+  return hit ? { ...hit, explicit: false } : null;
+}
+
 /** The control files in one client folder, classified. */
-export async function listControlFiles(folderPath: string): Promise<ControlFileEntry[]> {
+export async function listControlFiles(
+  folderPath: string,
+  /* When the client has named its files explicitly, the NAME decides the kind
+     — no filename guessing at all. Without this, classification leans on the
+     filename containing "product managment", which only ever worked because
+     that misspelling happens to be consistent in Dropbox. */
+  explicitFiles?: Record<string, string>,
+): Promise<ControlFileEntry[]> {
   const entries = await listFolder(folderPath);
   const out: ControlFileEntry[] = [];
+
+  // name (lower-cased) → the kind the client pinned it to
+  const pinned = new Map<string, ControlFileKind>();
+  for (const [kind, name] of Object.entries(explicitFiles || {})) {
+    if (name && CONTROL_FILE_KINDS.some((k) => k.kind === kind)) {
+      pinned.set(name.trim().toLowerCase(), kind as ControlFileKind);
+    }
+  }
 
   for (const e of entries) {
     if (e.isFolder || isNoise(e.name)) continue;
     if (!/\.xlsx?$/i.test(e.name)) continue;
 
     const lower = e.name.toLowerCase();
-    const spec = CONTROL_FILE_KINDS.find((k) => lower.includes(k.match));
+    /* A pinned name wins outright. Falling back to the contains-match only
+       when nothing is pinned keeps existing clients working untouched. */
+    const pinnedKind = pinned.get(lower);
+    const spec = pinnedKind
+      ? CONTROL_FILE_KINDS.find((k) => k.kind === pinnedKind)
+      : pinned.size > 0
+        ? undefined // this client states its files; anything else is not one
+        : CONTROL_FILE_KINDS.find((k) => lower.includes(k.match));
     out.push({
       kind: spec?.kind ?? null,
       label: spec?.label ?? e.name.replace(/\.xlsx?$/i, ""),
@@ -133,8 +191,9 @@ export async function listControlFiles(folderPath: string): Promise<ControlFileE
 export async function findControlFile(
   folderPath: string,
   filePath: string,
+  explicitFiles?: Record<string, string>,
 ): Promise<ControlFileEntry | null> {
-  const files = await listControlFiles(folderPath);
+  const files = await listControlFiles(folderPath, explicitFiles);
   return files.find((f) => f.path.toLowerCase() === filePath.toLowerCase()) ?? null;
 }
 

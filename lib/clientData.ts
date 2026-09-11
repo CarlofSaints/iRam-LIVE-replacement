@@ -1,5 +1,6 @@
 import type { Client, ControlFileType, ControlFileMeta } from "./types";
 import { readJson, writeJson } from "./blob";
+import { normalizeDropboxPath } from "./dropbox";
 import { v4 as uuid } from "uuid";
 
 const KEY = "clients.json";
@@ -27,6 +28,8 @@ export const CLIENT_EDITABLE_FIELDS = [
   "sendConsolidatedStoreReports",
   "sqlClientName",
   "manualControlFileLoad",
+  "dropboxFolder",
+  "dropboxFiles",
 ] as const;
 
 /* The tickboxes. Listed once so createClient can write every one of them as a
@@ -55,6 +58,23 @@ function pickClientFields(data: ClientInput): ClientInput {
     } else if ((CLIENT_BOOLEAN_FIELDS as readonly string[]).includes(key)) {
       // Sent-but-not-true is false, never undefined.
       out[key] = v === true;
+    } else if (key === "dropboxFolder") {
+      /* Normalised on the way IN, so the stored value is a real Dropbox path
+         however it was pasted. Doing it at read time instead would mean every
+         caller has to remember. */
+      const t = normalizeDropboxPath(typeof v === "string" ? v : "");
+      out[key] = t || undefined;
+    } else if (key === "dropboxFiles") {
+      /* Trim every name — a trailing space makes the file "not found" and
+         looks exactly like the file being missing. [[a-string-used-as-a-join-key]]
+         Blank entries are dropped rather than stored as "". */
+      const src = v && typeof v === "object" ? (v as Record<string, unknown>) : {};
+      const out2: Record<string, string> = {};
+      for (const [k, name] of Object.entries(src)) {
+        const t = typeof name === "string" ? name.trim() : "";
+        if (t) out2[k] = t;
+      }
+      out[key] = Object.keys(out2).length ? out2 : undefined;
     } else out[key] = v;
   }
   return out as ClientInput;

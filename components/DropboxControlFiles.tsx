@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { authFetch } from "@/lib/useAuth";
+import DropboxSetup from "./DropboxSetup";
 
 /* Download a control file from Dropbox, edit it, put it back.
 
@@ -37,6 +38,9 @@ interface Listing {
   matchedFolderName?: string;
   files: ControlFile[];
   error?: string;
+  /* No folder configured yet, as opposed to configured-and-broken. The two
+     need different next steps, so the API distinguishes them. */
+  needsSetup?: boolean;
 }
 
 interface SyncState {
@@ -62,7 +66,20 @@ function fmtWhen(iso: string): string {
   return isNaN(d.getTime()) ? "" : d.toLocaleString("en-ZA", { dateStyle: "medium", timeStyle: "short" });
 }
 
-export default function DropboxControlFiles({ clientId }: { clientId: string }) {
+export default function DropboxControlFiles({
+  clientId,
+  clientName,
+  dropboxFolder,
+  dropboxFiles,
+  onSetupSaved,
+}: {
+  clientId: string;
+  clientName: string;
+  dropboxFolder?: string;
+  dropboxFiles?: Record<string, string>;
+  onSetupSaved?: () => void;
+}) {
+  const [setupOpen, setSetupOpen] = useState(false);
   const [listing, setListing] = useState<Listing | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
@@ -174,6 +191,28 @@ export default function DropboxControlFiles({ clientId }: { clientId: string }) 
     return <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>;
   }
 
+  /* Nothing is set up yet, or what was set up no longer opens. Either way the
+     useful thing is the picker, not a message — this used to be a dead end
+     that said "no folder found" and offered nothing to do about it. */
+  if (listing && !listing.folder) {
+    return (
+      <div className="space-y-4">
+        <div className={`rounded-lg border px-4 py-3 text-sm ${listing.needsSetup
+          ? "border-amber-200 bg-amber-50 text-amber-800"
+          : "border-red-200 bg-red-50 text-red-700"}`}>
+          {listing.error}
+        </div>
+        <DropboxSetup
+          clientId={clientId}
+          clientName={listing.clientName}
+          initialFolder={dropboxFolder}
+          initialFiles={dropboxFiles}
+          onSaved={() => { onSetupSaved?.(); load(); }}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <div>
@@ -184,7 +223,25 @@ export default function DropboxControlFiles({ clientId }: { clientId: string }) 
           waits and tells you when that has happened.
         </p>
         {listing?.folder && (
-          <p className="mt-1 font-mono text-xs text-[var(--color-text-muted)]">{listing.folder}</p>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <p className="font-mono text-xs text-[var(--color-text-muted)]">{listing.folder}</p>
+            <button type="button" onClick={() => setSetupOpen((v) => !v)}
+              className="text-xs font-medium text-[var(--color-primary)] hover:underline">
+              {setupOpen ? "Hide setup" : "Change folder / files"}
+            </button>
+          </div>
+        )}
+
+        {setupOpen && listing?.folder && (
+          <div className="mt-3 rounded-xl border border-[var(--color-border)] bg-zinc-50 p-4">
+            <DropboxSetup
+              clientId={clientId}
+              clientName={listing.clientName}
+              initialFolder={dropboxFolder || listing.folder}
+              initialFiles={dropboxFiles}
+              onSaved={() => { onSetupSaved?.(); setSetupOpen(false); load(); }}
+            />
+          </div>
         )}
       </div>
 

@@ -3,7 +3,7 @@ import { requirePermission, handleAuthError, noCacheHeaders } from "@/lib/auth";
 import { getClientById } from "@/lib/clientData";
 import { refuseIfManualLoad } from "@/lib/dropboxControlFiles";
 import { getTemporaryUploadLink } from "@/lib/dropbox";
-import { findClientFolder, findControlFile, sqlSourceForKind } from "@/lib/dropboxControlFiles";
+import { resolveClientFolder, findControlFile, sqlSourceForKind } from "@/lib/dropboxControlFiles";
 import { createSyncJob, fingerprint, type DropboxSyncJob } from "@/lib/dropboxSyncJob";
 import { randomUUID } from "crypto";
 
@@ -41,12 +41,12 @@ export async function POST(req: NextRequest) {
     const manual = refuseIfManualLoad(client);
     if (manual) return manual;
 
-    const folder = await findClientFolder([client.sqlClientName || "", client.name]);
+    const folder = await resolveClientFolder(client);
     if (!folder) {
       return Response.json({ error: "No Dropbox folder for this client." }, { status: 404, headers: noCacheHeaders() });
     }
 
-    const file = await findControlFile(folder.path, path);
+    const file = await findControlFile(folder.path, path, client.dropboxFiles);
     if (!file) {
       return Response.json(
         { error: "That file is not in this client's Dropbox folder." },

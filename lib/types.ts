@@ -251,6 +251,22 @@ export interface Client {
      every client. ABSENT MEANS FALSE — an existing client with no flag stays
      on the SQL/Dropbox route. */
   manualControlFileLoad?: boolean;
+  /* EXPLICIT Dropbox mapping, set once per client on the Dropbox tab.
+
+     Folder matching by name does not work and cannot be made to work: a
+     client is called three different things (iRam "CLIPPA SALES (Pty) Ltd",
+     SQL "CLIPPA SALES", Dropbox something else again), and loosening the
+     match to cover that is how one client's edit ends up written into
+     another client's master file. So the folder is stated, not guessed.
+
+     Stored as a real Dropbox path. Whatever is pasted — including a copied
+     web-UI address — goes through normalizeDropboxPath() first. */
+  dropboxFolder?: string;
+  /* Exact file name per control file, keyed by ControlFileKind. Set from a
+     list of what is actually in the folder, so it cannot be mistyped, and it
+     removes the filename-contains guess that only worked because someone
+     misspelled "Managment" consistently. */
+  dropboxFiles?: Record<string, string>;
   // Archive = active:false. All data is retained and stays readable in
   // Reports/Charts, but the client drops out of every operational flow
   // (DISPO checklist, load-status email, store reports, crons, uploads,
