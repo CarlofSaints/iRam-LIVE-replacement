@@ -56,6 +56,10 @@ export async function POST(req: NextRequest) {
     );
 
   let scratchPath = "";
+  /* Only true once the seed actually landed. Without it a failed seed still
+     ran the delete, which then reported "could not delete — remove it by
+     hand" for a file that was never created, on top of the real error. */
+  let created = false;
   let session: Awaited<ReturnType<typeof requirePermission>>;
 
   try {
@@ -74,7 +78,9 @@ export async function POST(req: NextRequest) {
     /* A name nobody could mistake for a real control file, and unique per run
        so two people testing at once cannot collide. */
     const fileName = `roundtrip-${randomUUID()}.txt`;
-    scratchPath = dropboxPath(DROPBOX_SELF_TEST_DIR, fileName);
+    // Under the CONTROL ROOT — selfTestDir() carries it. A bare
+    // dropboxPath(DROPBOX_SELF_TEST_DIR, …) points at the team root instead.
+    scratchPath = dropboxPath(selfTestDir(), fileName);
 
     const first = Buffer.from(
       `iRam LIVE Dropbox round-trip self test\ncreated ${new Date().toISOString()}\nversion 1 — safe to delete\n`,
@@ -88,6 +94,7 @@ export async function POST(req: NextRequest) {
 
     // ── 1. Seed a scratch file ────────────────────────────────────────────
     const seeded = await writeSelfTestFile(scratchPath, first);
+    created = true;
     add("Create a scratch file", !!seeded.rev, `${seeded.path} · rev ${seeded.rev} · ${seeded.size} bytes`);
     const revOne = seeded.rev;
 
@@ -176,7 +183,7 @@ export async function POST(req: NextRequest) {
      serialises its argument on the spot, so a step pushed from `finally` would
      never reach the caller. */
   async function cleanupAndFinish(): Promise<Response> {
-    if (scratchPath) {
+    if (scratchPath && created) {
       try {
         await deleteSelfTestFile(scratchPath);
         add("Remove the scratch file", true, `Deleted ${scratchPath}`);

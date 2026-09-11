@@ -419,9 +419,20 @@ export async function replaceFile(
    holding the only copy of a client's PMF. */
 export const DROPBOX_SELF_TEST_DIR = "_APP_SELF_TEST_";
 
-/** Absolute path of the self-test folder, under the configured control root. */
+/**
+ * Absolute path of the self-test folder, under the configured control root.
+ *
+ * dropboxPath() only JOINS the parts it is given — it does not prepend the
+ * root. Leaving the root out produced "/_APP_SELF_TEST_/…", which on a team
+ * space is the team ROOT, where this account has no write rights: the self
+ * test failed with path/no_write_permission and looked exactly like "the
+ * integration cannot write to Dropbox". Every other caller passes the root
+ * explicitly (see findClientFolder), and so must this one.
+ */
 export function selfTestDir(): string {
-  return dropboxPath(DROPBOX_SELF_TEST_DIR);
+  const root = dropboxRoot();
+  if (!root) return "";
+  return dropboxPath(root, DROPBOX_SELF_TEST_DIR);
 }
 
 function assertInSelfTestDir(path: string): void {
