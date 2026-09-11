@@ -36,10 +36,22 @@ export async function GET(req: NextRequest) {
     };
 
     if (result.ok) {
-      const sample = (await listFolder(configuredRoot).catch(() => []))
-        .slice(0, 40)
+      /* The WHOLE listing, not a sample. This was capped at 40 against a root
+         holding 55, and the panel labelled it "What is in that folder (40)" —
+         so a folder that was simply past the cut looked like a folder that
+         did not exist. A truncated list cannot prove absence, and this one is
+         read precisely to answer "is the folder there, and what is it called".
+         Capped high only to stop a pathological folder from blowing the
+         response; `truncated` says so out loud if it ever bites. */
+      const all = (await listFolder(configuredRoot).catch(() => []));
+      const LIMIT = 500;
+      const sample = all
+        .slice(0, LIMIT)
         .map((e) => ({ name: e.isFolder ? `${e.name}/` : e.name, size: e.size, modified: e.modified }));
-      return Response.json({ ...base, sample }, { headers: noCacheHeaders() });
+      return Response.json(
+        { ...base, sample, sampleTotal: all.length, truncated: all.length > LIMIT },
+        { headers: noCacheHeaders() },
+      );
     }
 
     /* The connection itself may be fine and only the path wrong, so show what

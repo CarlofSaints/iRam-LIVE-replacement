@@ -38,6 +38,8 @@ interface Probe {
      interface over a fetch is a claim, not a check: TypeScript agrees with
      whatever shape you assert. [[api-200-must-keep-its-shape]] */
   sample?: { name: string; size: number; modified: string }[];
+  sampleTotal?: number;
+  truncated?: boolean;
   /* Only present when the folder could NOT be listed — the connection is fine
      and the configured path is wrong. This is the most useful thing the probe
      produces and the page used to throw it away. */
@@ -179,7 +181,8 @@ function DropboxPageInner() {
             {probe.sample && probe.sample.length > 0 && (
               <details className="mt-4">
                 <summary className="cursor-pointer text-sm font-medium text-[var(--color-text)]">
-                  What is in that folder ({probe.sample.length})
+                  What is in that folder ({probe.sampleTotal ?? probe.sample.length})
+                  {probe.truncated && <span className="ml-1 font-normal text-amber-700">— showing the first {probe.sample.length}</span>}
                 </summary>
                 <ul className="mt-2 max-h-56 overflow-y-auto rounded-lg border border-[var(--color-border)] p-3 font-mono text-xs text-[var(--color-text-muted)]">
                   {probe.sample.map((e) => (
