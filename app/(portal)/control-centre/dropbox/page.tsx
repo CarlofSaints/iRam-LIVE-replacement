@@ -32,11 +32,28 @@ interface Probe {
   connectedBy: string | null;
   connectedAt: string | null;
   tokenSource: string;
-  sample?: string[];
+  /* Objects, not strings. This was declared as string[] by hand and never
+     checked against the route, so `{s}` rendered an object as a React child —
+     which throws on every render and took the whole page down. A hand-written
+     interface over a fetch is a claim, not a check: TypeScript agrees with
+     whatever shape you assert. [[api-200-must-keep-its-shape]] */
+  sample?: { name: string; size: number; modified: string }[];
+  /* Only present when the folder could NOT be listed — the connection is fine
+     and the configured path is wrong. This is the most useful thing the probe
+     produces and the page used to throw it away. */
+  hint?: string;
+  topLevel?: string[] | null;
+  topLevelError?: string | null;
 }
 
 interface Step { name: string; ok: boolean; detail: string }
 interface SelfTest { ok: boolean; folder: string | null; steps: Step[]; elapsedMs: number }
+
+function fmtSize(b: number): string {
+  if (b >= 1e6) return (b / 1e6).toFixed(1) + " MB";
+  if (b >= 1e3) return Math.round(b / 1e3) + " KB";
+  return b + " B";
+}
 
 function when(iso: string | null): string {
   if (!iso) return "—";
@@ -165,9 +182,28 @@ function DropboxPageInner() {
                   What is in that folder ({probe.sample.length})
                 </summary>
                 <ul className="mt-2 max-h-56 overflow-y-auto rounded-lg border border-[var(--color-border)] p-3 font-mono text-xs text-[var(--color-text-muted)]">
-                  {probe.sample.map((s) => <li key={s}>{s}</li>)}
+                  {probe.sample.map((e) => (
+                    <li key={e.name} className="flex justify-between gap-4">
+                      <span className="break-all">{e.name}</span>
+                      <span className="shrink-0">{e.size ? fmtSize(e.size) : ""}</span>
+                    </li>
+                  ))}
                 </ul>
               </details>
+            )}
+
+            {/* The connection is fine and the path is wrong — say which, and
+                show what IS there so the exact spelling can be copied. */}
+            {probe.hint && (
+              <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                <p>{probe.hint}</p>
+                {probe.topLevelError && <p className="mt-1 font-mono text-xs">{probe.topLevelError}</p>}
+                {probe.topLevel && probe.topLevel.length > 0 && (
+                  <ul className="mt-2 max-h-56 overflow-y-auto rounded-lg border border-amber-200 bg-white p-3 font-mono text-xs text-[var(--color-text-muted)]">
+                    {probe.topLevel.map((n) => <li key={n} className="break-all">{n}</li>)}
+                  </ul>
+                )}
+              </div>
             )}
           </>
         )}
