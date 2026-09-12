@@ -6,6 +6,7 @@ import { authFetch } from "@/lib/useAuth";
 import SearchSelect from "@/components/SearchSelect";
 import MultiSelect from "@/components/MultiSelect";
 import { analyzeCoverage, formatMonth, type CoverageResult } from "@/lib/dataCoverage";
+import { vendorLabel, type VendorOption } from "@/lib/vendorScope";
 import type { Client, Channel, SalesLedgerMeta } from "@/lib/types";
 import { filenameFromContentDisposition } from "@/lib/contentDisposition";
 
@@ -70,6 +71,16 @@ export default function ReportsPage() {
   const [dimCategories, setDimCategories] = useState<string[]>([]);
   const [meSubChannels, setMeSubChannels] = useState<string[]>([]);
   const [meCategories, setMeCategories] = useState<string[]>([]);
+  /* Vendors present in the selected channels' rows, plus how many rows carry
+     no vendor at all. A client with ONE vendor never sees this control — see
+     the VendorScope block in each card. Month-End and Vital Signs keep
+     SEPARATE selections, the same way they keep separate periods: the two are
+     run for different audiences and one is often scoped when the other is
+     not. */
+  const [dimVendors, setDimVendors] = useState<VendorOption[]>([]);
+  const [rowsWithoutVendor, setRowsWithoutVendor] = useState(0);
+  const [meVendors, setMeVendors] = useState<string[]>([]);
+  const [vsVendors, setVsVendors] = useState<string[]>([]);
 
   // Phantom-stock thresholds (months); "" = Any
   const [phLastSold, setPhLastSold] = useState<number | "">(3);
@@ -253,13 +264,18 @@ export default function ReportsPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientId, mainChannelId, selectedSubIds.join(",")]);
 
-  // Load Month-End filter options (sub-channels + categories) for the selection
+  // Load report filter options (sub-channels, categories, vendors) for the
+  // selection. Vendors feed BOTH cards; the others are Month-End only.
   useEffect(() => {
     setMeSubChannels([]);
     setMeCategories([]);
+    setMeVendors([]);
+    setVsVendors([]);
     if (!clientId || effectiveChannelIds.length === 0) {
       setDimSubChannels([]);
       setDimCategories([]);
+      setDimVendors([]);
+      setRowsWithoutVendor(0);
       return;
     }
     const params = new URLSearchParams({ clientId, channelIds: effectiveChannelIds.join(",") });
@@ -271,16 +287,25 @@ export default function ReportsPage() {
           const subs: string[] = d.subChannels ?? [];
           setDimSubChannels(subs);
           setDimCategories(d.categories ?? []);
+          /* Vendors are NOT default-selected. Empty means every vendor, which
+             is what a report has always produced — scoping is something the
+             user asks for, never something that happens to them. */
+          setDimVendors(d.vendors ?? []);
+          setRowsWithoutVendor(d.rowsWithoutVendor ?? 0);
           // Default-select the standard sub-channels that exist (else leave all)
           const def = subs.filter((s) => DEFAULT_SUBCHANNELS.includes(String(s).trim().toUpperCase()));
           setMeSubChannels(def);
         } else {
           setDimSubChannels([]);
           setDimCategories([]);
+          setDimVendors([]);
+          setRowsWithoutVendor(0);
         }
       } catch {
         setDimSubChannels([]);
         setDimCategories([]);
+        setDimVendors([]);
+        setRowsWithoutVendor(0);
       }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -347,6 +372,7 @@ export default function ReportsPage() {
       if (reportYear) params.set("year", String(reportYear));
       if (reportMonth) params.set("month", String(reportMonth));
       if (reportWeek) params.set("week", String(reportWeek));
+      if (vsVendors.length) params.set("vendors", vsVendors.join(","));
 
       const res = await authFetch(`/api/reports/vital-signs?${params}`);
       if (!res.ok) {
@@ -393,6 +419,7 @@ export default function ReportsPage() {
       if (meWeek) params.set("week", String(meWeek));
       if (meSubChannels.length) params.set("subChannels", meSubChannels.join(","));
       if (meCategories.length) params.set("categories", meCategories.join(","));
+      if (meVendors.length) params.set("vendors", meVendors.join(","));
       if (phLastSold) params.set("phLastSold", String(phLastSold));
       if (phLastReceived) params.set("phLastReceived", String(phLastReceived));
       if (ndMonths) params.set("ndMonths", String(ndMonths));
@@ -695,6 +722,16 @@ export default function ReportsPage() {
           </p>
         )}
 
+        {clientId && mainChannelId && (
+          <VendorScope
+            vendors={dimVendors}
+            rowsWithoutVendor={rowsWithoutVendor}
+            selected={vsVendors}
+            onChange={setVsVendors}
+            reportName="Vital Signs"
+          />
+        )}
+
         {/* Data requirements */}
         <div className="flex flex-wrap gap-2">
           <RequirementBadge
@@ -883,6 +920,16 @@ export default function ReportsPage() {
           </p>
         )}
 
+        {clientId && mainChannelId && (
+          <VendorScope
+            vendors={dimVendors}
+            rowsWithoutVendor={rowsWithoutVendor}
+            selected={meVendors}
+            onChange={setMeVendors}
+            reportName="Month-End"
+          />
+        )}
+
         {/* Dimension filters — Sub-Channel + Category (empty = all) */}
         {clientId && mainChannelId && (dimSubChannels.length > 0 || dimCategories.length > 0) && (
           <div className="mb-4 space-y-3 rounded-lg border border-[var(--color-border)] bg-zinc-50 p-3">
@@ -1055,6 +1102,89 @@ function DataGapWarning({ coverage, clientName }: { coverage: CoverageResult; cl
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/* Vendor scope picker, shared by the Vital Signs and Month-End cards.
+
+   USABCO has a different Account Manager per vendor number and the two are
+   presented separately, so a report has to be runnable for one vendor at a
+   time (Sibonelo, 12 Sep 2026).
+
+   It renders NOTHING when the selection holds fewer than two vendors — for
+   the great majority of clients, which have one, an always-visible control
+   that can only ever be set to "all" is noise on a busy page. The vendor
+   numbers come with their names, because nobody knows a 10-digit vendor
+   number by heart.
+
+   `rowsWithoutVendor` is shown when it is non-zero and a scope is applied:
+   those lines belong to no vendor we could resolve, so they leave the report
+   entirely, and the difference is better explained here than discovered in a
+   meeting. */
+function VendorScope({
+  vendors,
+  rowsWithoutVendor,
+  selected,
+  onChange,
+  reportName,
+}: {
+  vendors: VendorOption[];
+  rowsWithoutVendor: number;
+  selected: string[];
+  onChange: (next: string[]) => void;
+  reportName: string;
+}) {
+  if (vendors.length < 2) return null;
+
+  const summary =
+    selected.length === 0
+      ? `All ${vendors.length} vendors`
+      : selected.length === 1
+        ? vendorLabel(vendors.find((v) => v.vendor === selected[0]) ?? { vendor: selected[0], name: "", rowCount: 0, declared: false })
+        : `${selected.length} of ${vendors.length} vendors`;
+
+  return (
+    <div className="mb-4 space-y-2 rounded-lg border border-[var(--color-border)] bg-zinc-50 p-3">
+      <p className="text-xs font-semibold text-[var(--color-text-muted)]">
+        Vendor — {reportName} (leave empty for all)
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <MultiSelect
+          label="Vendor"
+          widthClass="w-80"
+          options={vendors.map((v) => ({ value: v.vendor, label: vendorLabel(v) }))}
+          selected={selected}
+          onChange={onChange}
+          summary={summary}
+        />
+        {selected.length > 0 && (
+          <button
+            type="button"
+            onClick={() => onChange([])}
+            className="text-xs font-medium text-[var(--color-text-muted)] underline"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+      {selected.length > 0 && (
+        <p className="text-xs text-[var(--color-text-muted)]">
+          The report and its filename will cover{" "}
+          <b className="text-[var(--color-text)]">
+            {selected.length === vendors.length ? "every vendor" : `${selected.length} of ${vendors.length} vendors`}
+          </b>
+          .
+          {rowsWithoutVendor > 0 && (
+            <>
+              {" "}
+              {rowsWithoutVendor.toLocaleString()} line
+              {rowsWithoutVendor === 1 ? "" : "s"} carry no vendor and are left out of any vendor
+              scope.
+            </>
+          )}
+        </p>
+      )}
     </div>
   );
 }

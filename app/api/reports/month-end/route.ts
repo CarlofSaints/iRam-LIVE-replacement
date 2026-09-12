@@ -30,6 +30,7 @@ import { getProductLookup } from "@/lib/productMasterData";
 import { getControlFileData } from "@/lib/controlFileData";
 import { saveReportToSharePointSafe } from "@/lib/sharepoint";
 import { resolveReportPeriod, reportVendorPart } from "@/lib/reportPeriod";
+import { parseVendorParam, rowVendor } from "@/lib/vendorScope";
 import { getChannels } from "@/lib/channelData";
 import { expandToChannelGroups, dedupeByFreshestLoad } from "@/lib/channelGroup";
 import { contentDisposition } from "@/lib/contentDisposition";
@@ -87,6 +88,10 @@ export async function GET(req: NextRequest) {
       .split(",").map((s) => s.trim()).filter(Boolean);
     const catFilter = (url.searchParams.get("categories") || "")
       .split(",").map((s) => s.trim()).filter(Boolean);
+    /* Vendor scope — USABCO has an Account Manager per vendor number and the
+       report is presented per vendor. Empty = every vendor, so a single-vendor
+       client is unaffected. See lib/vendorScope.ts. */
+    const vendorFilter = parseVendorParam(url.searchParams.get("vendors"));
 
     // Phantom thresholds in months (blank / 0 → no constraint on that dimension)
     const parseMonths = (v: string | null): number | null => {
@@ -207,15 +212,19 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    // 4b. Apply optional sub-channel / category filters (scopes every sheet)
+    // 4b. Apply optional sub-channel / category / vendor filters (every sheet)
     const subSet = new Set(subChFilter);
     const catSet = new Set(catFilter);
-    const reportRows = (subSet.size || catSet.size)
+    const vendorSet = new Set(vendorFilter);
+    const reportRows = (subSet.size || catSet.size || vendorSet.size)
       ? enrichedRows.filter((row) => {
           const sub = String(row["_storeSubChannel"] || row["_storeChannel"] || "");
           const cat = String(row["_category"] || "");
           if (subSet.size && !subSet.has(sub)) return false;
           if (catSet.size && !catSet.has(cat)) return false;
+          // A row with no resolvable vendor is excluded by ANY vendor scope
+          // rather than being folded into the one that was picked.
+          if (vendorSet.size && !vendorSet.has(rowVendor(row))) return false;
           return true;
         })
       : enrichedRows;

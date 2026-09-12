@@ -14,6 +14,7 @@ import { addLog } from "@/lib/activityLog";
 import { incrementReportCount } from "@/lib/reportCounts";
 import { saveReportToSharePointSafe } from "@/lib/sharepoint";
 import { resolveReportPeriod, reportVendorPart } from "@/lib/reportPeriod";
+import { parseVendorParam, filterRowsByVendor } from "@/lib/vendorScope";
 import { getChannels } from "@/lib/channelData";
 import { expandToChannelGroups, dedupeByFreshestLoad } from "@/lib/channelGroup";
 import { contentDisposition } from "@/lib/contentDisposition";
@@ -124,6 +125,19 @@ export async function GET(req: NextRequest) {
     // 2. Enrich rows with PMF + store dimensions
     const enriched = await enrichLedger(deduped.rows, clientId);
 
+    /* 2b. Vendor scope. USABCO carries two vendor numbers with a different
+       Account Manager on each, and the Vitals report is presented per vendor,
+       so the whole-client file is the wrong thing to hand either of them
+       (Sibonelo, 12 Sep 2026). Every row already knows its owner via `_vendor`
+       — see lib/vendorScope.ts. An empty selection means every vendor, so the
+       single-vendor clients (most of them) are untouched by this.
+
+       Everything downstream reads `reportRows`, INCLUDING the filename: the
+       vendor part is read off the rows in the file, so a scoped report names
+       the vendor it actually contains without a second source of truth. */
+    const vendorFilter = parseVendorParam(url.searchParams.get("vendors"));
+    const reportRows = filterRowsByVendor(enriched.rows, vendorFilter);
+
     // 3. Load report config, status definitions, and scenarios in parallel
     const [config, allStatusDefs, statusScenarios] = await Promise.all([
       getReportConfig(clientId),
@@ -139,7 +153,7 @@ export async function GET(req: NextRequest) {
 
     // 4. Compute vital signs
     const vitalRows = computeVitalSigns(
-      enriched.rows,
+      reportRows,
       config.dscBrackets,
       dateColumns,
       relevantStatusDefs,
@@ -234,7 +248,7 @@ export async function GET(req: NextRequest) {
     // not vendorNumbers[0], which is just whichever sorts first on the client
     // record. See reportVendorPart in lib/reportPeriod.ts.
     const client = await getClientById(clientId);
-    const vendorNum = reportVendorPart(enriched.rows, client?.vendorNumbers);
+    const vendorNum = reportVendorPart(reportRows, client?.vendorNumbers);
 
     // Period resolved further up, before the date columns were capped to it.
     const datePart = period.filePart;
