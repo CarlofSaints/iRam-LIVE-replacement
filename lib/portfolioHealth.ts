@@ -123,8 +123,21 @@ export interface PortfolioInput {
   /** clientId → display name, for the client rollup. */
   clientNames: Map<string, string>;
   dateColumns: string[];
-  /** End of the report month — anchors DROS, phantom age and staleness. */
+  /**
+   * End of the report month — anchors DROS and phantom age.
+   *
+   * ⚠️ NOT staleness. See `asOf`: this date is in the FUTURE for most of the
+   * month it describes, and measuring "when did we last hear from this vendor"
+   * against it excluded every vendor in the portfolio on the first live run.
+   */
   referenceDate: Date;
+  /**
+   * Wall-clock instant the report is being produced. Staleness alone is
+   * measured against this, because "has this vendor gone quiet" is a question
+   * about when a FILE ARRIVED, not about the period the data describes.
+   * Defaults to now.
+   */
+  asOf?: Date;
   /** PR ST codes meaning discontinued for this channel (uppercased). */
   discontinuedCodes: Set<string>;
   lowCoverDays?: number;
@@ -151,7 +164,14 @@ function rowClient(row: Row): string {
 export function findStaleVendors(
   rows: Row[],
   clientNames: Map<string, string>,
-  referenceDate: Date,
+  /**
+   * ⚠️ WALL-CLOCK NOW, not the report's reference date. `_lastLoadedAt` is the
+   * moment a file arrived, so the only meaningful thing to subtract it from is
+   * the present. Passing the end of the report month here — which is in the
+   * future for most of that month — marks every vendor stale and empties the
+   * whole report. That is exactly what happened on the first live run.
+   */
+  asOf: Date,
   staleDays: number,
 ): { excluded: ExcludedVendor[]; keyOf: (row: Row) => string; staleKeys: Set<string> } {
   const keyOf = (row: Row) => `${rowClient(row)}|${String(row["_vendor"] ?? "")}`;
@@ -167,7 +187,7 @@ export function findStaleVendors(
     if (prev === undefined || stamp > prev) latest.set(k, stamp);
   }
 
-  const cutoff = referenceDate.getTime() - staleDays * MS_PER_DAY;
+  const cutoff = asOf.getTime() - staleDays * MS_PER_DAY;
   const excluded: ExcludedVendor[] = [];
   const staleKeys = new Set<string>();
 
@@ -250,6 +270,7 @@ export function createPortfolioAccumulator(
     clientNames,
     dateColumns,
     referenceDate,
+    asOf = new Date(),
     discontinuedCodes,
     lowCoverDays = LOW_COVER_DAYS,
     phantomMonths = PHANTOM_MONTHS,
@@ -285,7 +306,7 @@ export function createPortfolioAccumulator(
   function addRows(rows: Row[]): void {
   // 1. Drop stale vendors BEFORE anything is counted, so no figure anywhere in
   //    the report — headline, breakdown or comparison — can contain them.
-  const stale = findStaleVendors(rows, clientNames, referenceDate, staleVendorDays);
+  const stale = findStaleVendors(rows, clientNames, asOf, staleVendorDays);
   excluded.push(...stale.excluded);
   const live = stale.staleKeys.size === 0
     ? rows

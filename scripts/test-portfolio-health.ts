@@ -42,9 +42,11 @@ function row(over: Partial<Row> = {}): Row {
 const names = new Map([["c1", "CLIPPA SALES"], ["c2", "LUMOSS"]]);
 const DISC = new Set(["D", "X"]);
 
+/* `asOf` is pinned so staleness is deterministic. It is NOT the same thing as
+   `referenceDate` — see the regression block at the bottom. */
 function build(rows: Row[], opts: Partial<Parameters<typeof buildPortfolioHealth>[0]> = {}) {
   return buildPortfolioHealth({
-    rows, clientNames: names, dateColumns: DATE_COLS, referenceDate: REF,
+    rows, clientNames: names, dateColumns: DATE_COLS, referenceDate: REF, asOf: REF,
     discontinuedCodes: DISC, ...opts,
   });
 }
@@ -213,6 +215,37 @@ const acc = createPortfolioAccumulator({
 acc.addRows(batchA);
 acc.addRows(batchB);
 check("client-at-a-time equals all-at-once", acc.finish(), oneShot);
+
+/* ── REGRESSION: staleness is measured from NOW, not from the report period ──
+   First live run on MAKRO excluded ALL 30 vendors and reported 0 active lines.
+   The period resolved to Sep 2026 Wk1, so referenceDate was 30 Sep — a date in
+   the FUTURE — and every file loaded more than 14 days before it, which was all
+   of them, counted as quiet. `_lastLoadedAt` is when a FILE ARRIVED, so the
+   only date it can be subtracted from is the present. */
+const midMonth = new Date(Date.UTC(2026, 8, 14));      // "today"
+const loadedAWeekAgo = new Date(Date.UTC(2026, 8, 7)).toISOString();
+const futureAnchored = buildPortfolioHealth({
+  rows: [row({ _lastLoadedAt: loadedAWeekAgo, SOH: 0 })],
+  clientNames: names,
+  dateColumns: DATE_COLS,
+  referenceDate: REF,      // 30 Sep — end of the report month, still ahead of us
+  asOf: midMonth,          // 14 Sep — when the report is actually being run
+  discontinuedCodes: DISC,
+});
+check("a file loaded a week ago is NOT stale mid-month", futureAnchored.excluded.length, 0);
+check("...and its lines still reach the report", futureAnchored.totals.oos, 1);
+check("...and the portfolio is not empty", futureAnchored.activeLines, 1);
+
+// The same rows against the OLD (broken) anchoring would have excluded everything.
+const brokenAnchoring = buildPortfolioHealth({
+  rows: [row({ _lastLoadedAt: loadedAWeekAgo, SOH: 0 })],
+  clientNames: names,
+  dateColumns: DATE_COLS,
+  referenceDate: REF,
+  asOf: REF,               // the bug: month-end used as "now"
+  discontinuedCodes: DISC,
+});
+check("proof the old anchoring emptied the report", brokenAnchoring.activeLines, 0);
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILED`);
 process.exit(failures === 0 ? 0 : 1);
