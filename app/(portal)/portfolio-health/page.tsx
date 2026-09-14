@@ -77,15 +77,21 @@ export default function PortfolioHealthPage() {
   const [data, setData] = useState<ApiResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  /* An expired session answers 401, and a 401 that is only `return`ed reads on
+     screen as "this channel has no data" — an empty picker and empty tiles,
+     indistinguishable from a genuinely empty portfolio. Say which it is. */
+  const [expired, setExpired] = useState(false);
 
   useEffect(() => {
     (async () => {
       const res = await authFetch("/api/channels");
-      if (!res.ok) return;
+      if (res.status === 401) { setExpired(true); return; }
+      if (!res.ok) { setError("Could not load the channel list."); return; }
       const all: Channel[] = await res.json();
       const mains = all.filter((c) => !c.parentId && c.active !== false);
       setChannels(mains);
       if (mains.length && !channelId) setChannelId(mains[0].id);
+      else if (mains.length === 0) setError("No active main channels are set up.");
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -99,7 +105,10 @@ export default function PortfolioHealthPage() {
       if (live) params.set("live", "1");
       if (save) params.set("save", "1");
       const res = await authFetch(`/api/reports/portfolio-health?${params}`);
-      if (!res.ok) {
+      if (res.status === 401) {
+        setExpired(true);
+        setData(null);
+      } else if (!res.ok) {
         const e = await res.json().catch(() => ({ error: "Could not load" }));
         setError(e.error ?? "Could not load");
         setData(null);
@@ -184,7 +193,16 @@ export default function PortfolioHealthPage() {
         </div>
       </div>
 
-      {error && (
+      {expired && (
+        <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <b>Your session has expired.</b>{" "}
+          <Link href="/login" className="underline">Sign in again</Link> to load this report. Nothing
+          below is missing data — the server refused the request, it did not return an empty
+          portfolio.
+        </div>
+      )}
+
+      {error && !expired && (
         <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>
       )}
 
