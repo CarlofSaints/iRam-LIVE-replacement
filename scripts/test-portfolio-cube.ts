@@ -1,6 +1,8 @@
 /* The filterable cube — the drill-down maths, and the trap it exists to dodge. */
 import {
   aggregateCube,
+  cubeLines,
+  flagNames,
   emptyFilter,
   filterIsEmpty,
   toggleFilter,
@@ -118,6 +120,55 @@ check("...and no lines", none.lines, 0);
 
 // A blank product description must not collapse two articles into one row
 check("products keyed by CODE, not description", all.byProduct.length, 3);
+
+// ── The underlying lines behind a drill-down ──
+const woodmead = cubeLines(cube, emptyFilter(), { dim: "sites", value: "M10" }, 25);
+check("expanding a site shows its lines", woodmead.total, 2);
+check("...with the products in it", woodmead.lines.map((l) => l.article).sort(), ["A1", "A2"]);
+check("...and which client each belongs to", woodmead.lines.map((l) => l.clientName).sort(), ["CLIPPA SALES", "FUNKI LINES"]);
+
+check(
+  "worst first — a line with two measures outranks one with one",
+  woodmead.lines[0].flags,
+  FLAG_OOS | FLAG_PHANTOM,
+);
+check("measures render as names", flagNames(FLAG_OOS | FLAG_PHANTOM), ["Out of stock", "Phantom"]);
+
+/* ⚠️ The arrow means "show me THIS row". Expanding Western Cape while Gauteng
+   is also selected must show Western Cape, not nothing — the pinned dimension
+   REPLACES its own filter rather than intersecting with it. */
+const pinnedAgainstFilter = cubeLines(
+  cube,
+  { ...emptyFilter(), provinces: ["GAUTENG"] },
+  { dim: "provinces", value: "WESTERN CAPE" },
+  25,
+);
+check("expanding a row not in the current filter still shows it", pinnedAgainstFilter.total, 2);
+check("...and shows that province's sites", pinnedAgainstFilter.lines.map((l) => l.siteCode).sort(), ["D01", "M19"]);
+
+// Other dimensions' filters still apply while expanded
+const pinnedWithOther = cubeLines(
+  cube,
+  { ...emptyFilter(), clients: ["c1"] },
+  { dim: "provinces", value: "WESTERN CAPE" },
+  25,
+);
+check("a filter on ANOTHER dimension still narrows the detail", pinnedWithOther.total, 1);
+check("...to that client's line", pinnedWithOther.lines[0].article, "A3");
+
+// Paging the detail
+const firstOne = cubeLines(cube, emptyFilter(), null, 1);
+check("the limit caps what comes back", firstOne.lines.length, 1);
+check("...but the total is the real total", firstOne.total, 5);
+const unlimited = cubeLines(cube, emptyFilter(), null, 0);
+check("limit 0 means everything", unlimited.lines.length, 5);
+
+// Load more on the breakdown tables: topN 0 must not truncate
+const everyProduct = aggregateCube(cube, emptyFilter(), 0);
+check("topN 0 returns every product row", everyProduct.byProduct.length, 3);
+const cappedProducts = aggregateCube(cube, emptyFilter(), 2);
+check("a topN still caps", cappedProducts.byProduct.length, 2);
+check("and keeps the worst ones", cappedProducts.byProduct[0].counts.oos >= cappedProducts.byProduct[1].counts.oos, true);
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILED`);
 process.exit(failures === 0 ? 0 : 1);

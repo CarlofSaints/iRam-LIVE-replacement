@@ -277,6 +277,107 @@ export function aggregateCube(cube: PortfolioCube, filter: CubeFilter, topN = 10
   };
 }
 
+/* ── The underlying lines ─────────────────────────────────────────────────────
+   The bottom of every drill-down. A breakdown row answers "how many"; this
+   answers "which ones", and it is the same cube, so the detail can never
+   disagree with the count above it.
+
+   `pin` is the row being expanded. It REPLACES that dimension's filter rather
+   than intersecting with it: expanding Western Cape must show Western Cape
+   even when Gauteng is also selected, because the arrow means "show me this
+   row", not "show me this row if it survives the filter it is part of". */
+export interface CubeLine {
+  siteCode: string;
+  storeName: string;
+  province: string;
+  profile: string;
+  clientId: string;
+  clientName: string;
+  article: string;
+  description: string;
+  flags: number;
+}
+
+export interface CubeLinesResult {
+  lines: CubeLine[];
+  /** How many matched in total, so "showing 25 of 916" is honest. */
+  total: number;
+}
+
+/** How many measures a line carries — worst-first ordering for the detail. */
+function severity(flags: number): number {
+  let n = 0;
+  for (const bit of [FLAG_OOS, FLAG_LOW, FLAG_PHANTOM, FLAG_NEG, FLAG_DISC]) {
+    if (flags & bit) n++;
+  }
+  return n;
+}
+
+export function cubeLines(
+  cube: PortfolioCube,
+  filter: CubeFilter,
+  pin: { dim: CubeDimension; value: string } | null,
+  limit: number,
+): CubeLinesResult {
+  const eff: CubeFilter = pin ? { ...filter, [pin.dim]: [pin.value] } : filter;
+  const provSel = new Set(eff.provinces);
+  const profSel = new Set(eff.profiles);
+  const clientSel = new Set(eff.clients);
+  const siteSel = new Set(eff.sites);
+  const artSel = new Set(eff.articles);
+
+  const hits: CubeLine[] = [];
+  let total = 0;
+
+  for (const [si, ci, ai, flags] of cube.rows) {
+    const site = cube.sites[si];
+    const client = cube.clients[ci];
+    const article = cube.articles[ai];
+    if (!site || !client || !article) continue;
+    if (provSel.size && !provSel.has(site.province)) continue;
+    if (profSel.size && !profSel.has(site.profile)) continue;
+    if (clientSel.size && !clientSel.has(client.id)) continue;
+    if (siteSel.size && !siteSel.has(site.code)) continue;
+    if (artSel.size && !artSel.has(article.code)) continue;
+
+    total++;
+    hits.push({
+      siteCode: site.code,
+      storeName: site.name,
+      province: site.province,
+      profile: site.profile,
+      clientId: client.id,
+      clientName: client.name,
+      article: article.code,
+      description: article.description,
+      flags,
+    });
+  }
+
+  /* Worst first: lines carrying several measures at once are the ones worth a
+     rep's time. Then site and article, so repeated looks land in the same
+     order rather than reshuffling. */
+  hits.sort((a, b) => {
+    const s = severity(b.flags) - severity(a.flags);
+    if (s !== 0) return s;
+    if (a.siteCode !== b.siteCode) return a.siteCode.localeCompare(b.siteCode);
+    return a.article.localeCompare(b.article);
+  });
+
+  return { lines: limit > 0 ? hits.slice(0, limit) : hits, total };
+}
+
+/** The measures a line carries, as readable labels. */
+export function flagNames(flags: number): string[] {
+  const out: string[] = [];
+  if (flags & FLAG_OOS) out.push("Out of stock");
+  if (flags & FLAG_LOW) out.push("Low cover");
+  if (flags & FLAG_PHANTOM) out.push("Phantom");
+  if (flags & FLAG_NEG) out.push("Negative SOH");
+  if (flags & FLAG_DISC) out.push("Discontinued");
+  return out;
+}
+
 /** Human label for a filter chip. */
 export function filterLabel(dim: CubeDimension, value: string, cube: PortfolioCube | null): string {
   if (dim === "clients" && cube) {

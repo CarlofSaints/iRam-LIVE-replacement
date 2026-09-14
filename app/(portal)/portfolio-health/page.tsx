@@ -24,7 +24,7 @@
  * got worse.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { authFetch, usePermissions } from "@/lib/useAuth";
 import type { Channel } from "@/lib/types";
@@ -33,9 +33,11 @@ import type { ComparisonPoint, PortfolioSnapshot } from "@/lib/portfolioSnapshot
 import { KPI_NOTES } from "@/lib/stockFlagNotes";
 import {
   aggregateCube,
+  cubeLines,
   emptyFilter,
   filterIsEmpty,
   filterLabel,
+  flagNames,
   toggleFilter,
   DIMENSION_LABELS,
   type CubeBreakdownRow,
@@ -44,6 +46,11 @@ import {
   type CubeView,
   type PortfolioCube,
 } from "@/lib/portfolioCube";
+
+/** Rows shown per table before "Show 10 more". */
+const PAGE_SIZE = 10;
+/** Underlying lines shown when a row is expanded, before "Show 25 more". */
+const DETAIL_PAGE = 25;
 
 interface ApiResponse {
   snapshot: PortfolioSnapshot;
@@ -195,8 +202,10 @@ export default function PortfolioHealthPage() {
   /* Every figure comes from the cube once it is loaded, filtered or not, so a
      filtered and an unfiltered reading are never produced by two different
      code paths. Until it arrives, the stored aggregates render instead. */
+  /* topN 0 = every row. The tables page themselves with "Show 10 more", so the
+     engine must not have already thrown the eleventh site away. */
   const view: CubeView | null = useMemo(
-    () => (cube ? aggregateCube(cube, filter) : null),
+    () => (cube ? aggregateCube(cube, filter, 0) : null),
     [cube, filter],
   );
 
@@ -450,20 +459,20 @@ export default function PortfolioHealthPage() {
           )}
 
           <Table title="Most affected provinces" rows={tables.province} dim="provinces"
-                 filter={filter} onClick={click} clickable={!!cube} />
+                 filter={filter} onClick={click} cube={cube} />
           <Table title="Most affected site profiles" rows={tables.profile} dim="profiles"
-                 filter={filter} onClick={click} clickable={!!cube} />
+                 filter={filter} onClick={click} cube={cube} />
           <Table title="Most affected clients" rows={tables.client} dim="clients"
-                 filter={filter} onClick={click} clickable={!!cube}
+                 filter={filter} onClick={click} cube={cube}
                  prior={!filtered ? data.comparisons.find((c) => c.label === "4 weeks ago" && c.byClient) ?? null : null} />
           <Table title="Most affected sites" rows={tables.site} dim="sites"
-                 filter={filter} onClick={click} clickable={!!cube}
+                 filter={filter} onClick={click} cube={cube}
                  extraCols={[
                    { head: "Store", get: (r) => r.extra?.storeName ?? "" },
                    { head: "Province", get: (r) => r.extra?.province ?? "" },
                  ]} />
           <Table title="Most affected products" rows={tables.product} dim="articles"
-                 filter={filter} onClick={click} clickable={!!cube}
+                 filter={filter} onClick={click} cube={cube}
                  extraCols={[{ head: "Description", get: (r) => r.extra?.description ?? "" }]} />
         </>
       )}
@@ -477,7 +486,7 @@ function Table({
   dim,
   filter,
   onClick,
-  clickable,
+  cube,
   extraCols = [],
   prior = null,
 }: {
@@ -486,16 +495,46 @@ function Table({
   dim: CubeDimension;
   filter: CubeFilter;
   onClick: (dim: CubeDimension, key: string) => void;
-  clickable: boolean;
+  cube: PortfolioCube | null;
   extraCols?: { head: string; get: (r: CubeBreakdownRow) => string }[];
   prior?: ComparisonPoint | null;
 }) {
+  /* Paging and expansion are per table. `visible` is how many rows are shown;
+     `openKey` is the one row whose underlying lines are unrolled beneath it —
+     one at a time on purpose, since two expanded thousand-line tables make the
+     page unreadable and nobody compares two detail lists by scrolling. */
+  const [visible, setVisible] = useState(PAGE_SIZE);
+  const [openKey, setOpenKey] = useState<string | null>(null);
+  const [detailShown, setDetailShown] = useState(DETAIL_PAGE);
+
+  // A new filter or channel changes what these rows mean; start from the top.
+  useEffect(() => {
+    setVisible(PAGE_SIZE);
+    setOpenKey(null);
+    setDetailShown(DETAIL_PAGE);
+  }, [filter, rows.length]);
+
+  const clickable = !!cube;
+  const shown = rows.slice(0, visible);
+  const more = rows.length - shown.length;
+
+  const detail = useMemo(() => {
+    if (!cube || !openKey) return null;
+    return cubeLines(cube, filter, { dim, value: openKey }, detailShown);
+  }, [cube, openKey, filter, dim, detailShown]);
+
   if (rows.length === 0) return null;
   const selected = new Set(filter[dim]);
+  const colSpan = 7 + extraCols.length + (clickable ? 1 : 0);
 
   return (
     <div className="mb-8">
-      <h2 className="mb-2 text-sm font-semibold text-[var(--color-text)]">{title}</h2>
+      <h2 className="mb-2 text-sm font-semibold text-[var(--color-text)]">
+        {title}
+        <span className="ml-2 font-normal text-[var(--color-text-muted)]">
+          {fmt(rows.length)} in total
+        </span>
+      </h2>
       {prior?.date && (
         <p className="mb-2 text-xs text-[var(--color-text-muted)]">
           Out-of-stock colour compares with {shortDate(prior.date)}. Green is fewer, red is more.
@@ -505,6 +544,7 @@ function Table({
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-[var(--color-border)] bg-zinc-50 text-left text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
+              {clickable && <th className="w-8 px-2 py-2" />}
               <th className="px-4 py-2">Name</th>
               {extraCols.map((c) => <th key={c.head} className="px-4 py-2">{c.head}</th>)}
               <th className="px-4 py-2 text-right">Sites</th>
@@ -516,7 +556,7 @@ function Table({
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => {
+            {shown.map((r) => {
               /* Only the client table can be compared row by row: clients are
                  stored in full on every capture, while sites and products are
                  stored top-N, so a row missing from an older capture means "not
@@ -527,36 +567,126 @@ function Table({
                 r.counts.oos < was ? "text-emerald-600" :
                 r.counts.oos > was ? "text-red-600" : "";
               const isOn = selected.has(r.key);
+              const isOpen = openKey === r.key;
               return (
-                <tr
-                  key={r.key}
-                  onClick={clickable ? () => onClick(dim, r.key) : undefined}
-                  title={clickable ? (isOn ? "Click to remove this filter" : `Filter the report to ${r.label}`) : undefined}
-                  className={
-                    "border-b border-[var(--color-border)] last:border-0 " +
-                    (clickable ? "cursor-pointer hover:bg-zinc-50 " : "") +
-                    (isOn ? "bg-blue-50/60 " : "")
-                  }
-                >
-                  <td className="px-4 py-2 font-medium text-[var(--color-text)]">
-                    {isOn && <span className="mr-1 text-[var(--color-primary)]">✓</span>}
-                    {r.label}
-                  </td>
-                  {extraCols.map((c) => (
-                    <td key={c.head} className="px-4 py-2 text-[var(--color-text-muted)]">{c.get(r)}</td>
-                  ))}
-                  <td className="px-4 py-2 text-right text-[var(--color-text-muted)]">{fmt(r.sites)}</td>
-                  <td className={`px-4 py-2 text-right font-semibold ${tone}`}>{fmt(r.counts.oos)}</td>
-                  <td className="px-4 py-2 text-right">{fmt(r.counts.lowCover)}</td>
-                  <td className="px-4 py-2 text-right">{fmt(r.counts.phantom)}</td>
-                  <td className="px-4 py-2 text-right">{fmt(r.counts.negSoh)}</td>
-                  <td className="px-4 py-2 text-right">{fmt(r.counts.discontinued)}</td>
-                </tr>
+                <Fragment key={r.key}>
+                  <tr
+                    className={
+                      "border-b border-[var(--color-border)] " +
+                      (isOn ? "bg-blue-50/60 " : "") +
+                      (isOpen ? "bg-zinc-50 " : "")
+                    }
+                  >
+                    {/* The arrow drills IN; clicking the row filters. Two
+                        different intentions, so two different targets — one
+                        control doing both would make every filter click also
+                        unroll a detail table nobody asked for. */}
+                    {clickable && (
+                      <td className="px-2 py-2 align-top">
+                        <button
+                          onClick={() => {
+                            setDetailShown(DETAIL_PAGE);
+                            setOpenKey(isOpen ? null : r.key);
+                          }}
+                          title={isOpen ? "Hide the underlying lines" : `Show the lines behind ${r.label}`}
+                          aria-expanded={isOpen}
+                          className="rounded px-1 text-xs text-[var(--color-text-muted)] hover:bg-zinc-200 hover:text-[var(--color-text)]"
+                        >
+                          {isOpen ? "▾" : "▸"}
+                        </button>
+                      </td>
+                    )}
+                    <td
+                      onClick={clickable ? () => onClick(dim, r.key) : undefined}
+                      title={clickable ? (isOn ? "Click to remove this filter" : `Filter the report to ${r.label}`) : undefined}
+                      className={
+                        "px-4 py-2 font-medium text-[var(--color-text)] " +
+                        (clickable ? "cursor-pointer hover:underline" : "")
+                      }
+                    >
+                      {isOn && <span className="mr-1 text-[var(--color-primary)]">✓</span>}
+                      {r.label}
+                    </td>
+                    {extraCols.map((c) => (
+                      <td key={c.head} className="px-4 py-2 text-[var(--color-text-muted)]">{c.get(r)}</td>
+                    ))}
+                    <td className="px-4 py-2 text-right text-[var(--color-text-muted)]">{fmt(r.sites)}</td>
+                    <td className={`px-4 py-2 text-right font-semibold ${tone}`}>{fmt(r.counts.oos)}</td>
+                    <td className="px-4 py-2 text-right">{fmt(r.counts.lowCover)}</td>
+                    <td className="px-4 py-2 text-right">{fmt(r.counts.phantom)}</td>
+                    <td className="px-4 py-2 text-right">{fmt(r.counts.negSoh)}</td>
+                    <td className="px-4 py-2 text-right">{fmt(r.counts.discontinued)}</td>
+                  </tr>
+
+                  {isOpen && detail && (
+                    <tr className="border-b border-[var(--color-border)] bg-zinc-50/60">
+                      <td colSpan={colSpan} className="px-4 py-3">
+                        <p className="mb-2 text-xs font-semibold text-[var(--color-text-muted)]">
+                          {r.label} — showing {fmt(detail.lines.length)} of {fmt(detail.total)} flagged lines
+                        </p>
+                        <div className="overflow-x-auto rounded border border-[var(--color-border)] bg-white">
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="border-b border-[var(--color-border)] text-left text-[var(--color-text-muted)]">
+                                <th className="px-3 py-1.5">Site</th>
+                                <th className="px-3 py-1.5">Store</th>
+                                <th className="px-3 py-1.5">Client</th>
+                                <th className="px-3 py-1.5">Article</th>
+                                <th className="px-3 py-1.5">Description</th>
+                                <th className="px-3 py-1.5">Flagged as</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {detail.lines.map((l, i) => (
+                                <tr key={`${l.siteCode}|${l.clientId}|${l.article}|${i}`}
+                                    className="border-b border-[var(--color-border)] last:border-0">
+                                  <td className="px-3 py-1.5 font-mono">{l.siteCode}</td>
+                                  <td className="px-3 py-1.5 text-[var(--color-text-muted)]">{l.storeName}</td>
+                                  <td className="px-3 py-1.5 text-[var(--color-text-muted)]">{l.clientName}</td>
+                                  <td className="px-3 py-1.5 font-mono">{l.article}</td>
+                                  <td className="px-3 py-1.5 text-[var(--color-text-muted)]">
+                                    {l.description || <span className="italic">no description</span>}
+                                  </td>
+                                  <td className="px-3 py-1.5">
+                                    <span className="flex flex-wrap gap-1">
+                                      {flagNames(l.flags).map((f) => (
+                                        <span key={f} className="rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-medium text-red-700">
+                                          {f}
+                                        </span>
+                                      ))}
+                                    </span>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        {detail.total > detail.lines.length && (
+                          <button
+                            onClick={() => setDetailShown((n) => n + DETAIL_PAGE)}
+                            className="mt-2 rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-xs font-medium"
+                          >
+                            Show {Math.min(DETAIL_PAGE, detail.total - detail.lines.length)} more lines
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               );
             })}
           </tbody>
         </table>
       </div>
+
+      {more > 0 && (
+        <button
+          onClick={() => setVisible((n) => n + PAGE_SIZE)}
+          className="mt-2 rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-xs font-medium"
+        >
+          Show {Math.min(PAGE_SIZE, more)} more ({fmt(more)} not shown)
+        </button>
+      )}
     </div>
   );
 }
