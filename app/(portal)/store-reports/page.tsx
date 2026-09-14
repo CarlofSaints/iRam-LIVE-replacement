@@ -3,6 +3,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { authFetch, useAuth, usePermissions } from "@/lib/useAuth";
 import SearchSelect from "@/components/SearchSelect";
+import StoreReportAuditPanel from "@/components/StoreReportAuditPanel";
 
 // Loose code compare (mirrors the server) + light name-similarity ranking
 // (Bravo-style: normalise, then shared-token + substring score).
@@ -1329,6 +1330,14 @@ export default function StoreReportsTestPage() {
           </div>
         </div>
       )}
+
+      {/* ── Send audit: why each check-in did or didn't produce a report ──
+          Sits directly under Auto-send on purpose: when this panel says "no
+          check-in was processed at all", the answer is almost always the
+          enabled toggle immediately above it. */}
+      <div className="mt-10">
+        <StoreReportAuditPanel />
+      </div>
 
       {/* ── Engagement / detail log ── */}
       <div className="mt-10">

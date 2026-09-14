@@ -43,8 +43,33 @@ export async function getAuditForDay(day: string): Promise<StoreReportAuditRecor
   return readJson<StoreReportAuditRecord[]>(auditKey(day), []);
 }
 
-// Append one run's worth of outcomes. Single read-modify-write; store-report
-// volume is low (≈ one rep per token) so races are negligible.
+/* Identity of a REPEATING outcome — one rep at one store with one result.
+
+   The poller runs every three minutes all day, and Perigee keeps returning the
+   same visits, so a rep who was sent their report at 08:00 is re-reported as
+   "already sent today" on every run until midnight. On 11 Sep 2026 that turned
+   66 real visits into 5 201 audit rows, 5 161 of them identical duplicates, in
+   a 1.4MB file — a ledger nobody can read is not a ledger.
+
+   So a repeat of an outcome already recorded today is dropped. The FIRST one
+   is kept, which is the one that says what happened; later identical ones only
+   say "and the poller ran again", which `lastRun` already records. */
+function outcomeKey(r: { siteCode: string; repEmail: string; status: string }): string {
+  return `${r.siteCode}|${r.repEmail.toLowerCase()}|${r.status}`;
+}
+
+/**
+ * Append one run's worth of outcomes, skipping any that repeat an outcome
+ * already recorded for this day.
+ *
+ * ⚠️ A CHANGE of outcome is never dropped: a rep who was "no data" at 09:00 and
+ * "sent" at 14:00 keeps both rows, because that transition is exactly what
+ * someone investigating needs to see. Only the identical repeat goes.
+ *
+ * Single read-modify-write. Two polls cannot normally overlap (the cron is
+ * every 3 minutes and a run takes seconds), and the worst case of a race is a
+ * duplicate diagnostic row, which is what this function is filtering anyway.
+ */
 export async function recordAuditOutcomes(
   day: string,
   outcomes: RunVisitOutcome[],
@@ -52,19 +77,29 @@ export async function recordAuditOutcomes(
   if (outcomes.length === 0) return;
   const at = new Date().toISOString();
   const existing = await getAuditForDay(day);
-  const rows: StoreReportAuditRecord[] = outcomes.map((o) => ({
-    id: uuid(),
-    day,
-    at,
-    siteCode: o.siteCode,
-    store: o.store,
-    channel: o.channel ?? "",
-    repEmail: o.repEmail,
-    repName: o.repName ?? "",
-    status: o.status,
-    actions: o.actions,
-    detail: o.detail,
-  }));
+
+  const seen = new Set(existing.map(outcomeKey));
+  const rows: StoreReportAuditRecord[] = [];
+  for (const o of outcomes) {
+    const key = outcomeKey({ siteCode: o.siteCode, repEmail: o.repEmail, status: o.status });
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push({
+      id: uuid(),
+      day,
+      at,
+      siteCode: o.siteCode,
+      store: o.store,
+      channel: o.channel ?? "",
+      repEmail: o.repEmail,
+      repName: o.repName ?? "",
+      status: o.status,
+      actions: o.actions,
+      detail: o.detail,
+    });
+  }
+
+  if (rows.length === 0) return;
   // Newest run first, matching the send ledger's ordering convention.
   await writeJson(auditKey(day), [...rows, ...existing]);
 }
