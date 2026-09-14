@@ -74,7 +74,7 @@ export async function upsertStatus(data: {
 export async function updateStatusDefinition(
   id: string,
   updates: Partial<
-    Pick<StatusDefinition, "classification" | "description" | "notes" | "code">
+    Pick<StatusDefinition, "classification" | "description" | "notes" | "code" | "meansDiscontinued">
   >
 ): Promise<StatusDefinition> {
   const all = await getStatusDefinitions();
@@ -92,6 +92,13 @@ export async function updateStatusDefinition(
   }
   if (updates.notes !== undefined) {
     all[idx].notes = updates.notes;
+  }
+  /* Three states, not two: absent means nobody has answered "does this code
+     mean discontinued" for this code yet, and the Portfolio Stock Health
+     report distinguishes that from a deliberate false. So only write when the
+     caller actually sent a value. */
+  if (updates.meansDiscontinued !== undefined) {
+    all[idx].meansDiscontinued = updates.meansDiscontinued;
   }
   all[idx].updatedAt = new Date().toISOString();
 

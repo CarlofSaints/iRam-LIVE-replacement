@@ -227,9 +227,26 @@ function toRows(map: Map<string, Bucket>, topN?: number): BreakdownRow[] {
   return topN && topN > 0 ? rows.slice(0, topN) : rows;
 }
 
-export function buildPortfolioHealth(input: PortfolioInput): PortfolioHealth {
+/**
+ * Rolls rows up a CLIENT AT A TIME.
+ *
+ * The loader cannot hold every client's enriched ledger for a whole channel in
+ * memory at once — that is thirty clients' worth of DISPO rows, and Month-End
+ * already needs a memory bench for ONE of them. So rows arrive in batches and
+ * are counted as they come, and nothing but the (small) buckets survives a
+ * batch. Staleness is a property of a (client, vendor) stream, so it resolves
+ * correctly inside a single client's batch and does not need a global pass.
+ */
+export interface PortfolioAccumulator {
+  /** Fold in one client's enriched rows. */
+  addRows(rows: Row[]): void;
+  finish(): PortfolioHealth;
+}
+
+export function createPortfolioAccumulator(
+  input: Omit<PortfolioInput, "rows">,
+): PortfolioAccumulator {
   const {
-    rows,
     clientNames,
     dateColumns,
     referenceDate,
@@ -239,13 +256,6 @@ export function buildPortfolioHealth(input: PortfolioInput): PortfolioHealth {
     staleVendorDays = STALE_VENDOR_DAYS,
     topN = 10,
   } = input;
-
-  // 1. Drop stale vendors BEFORE anything is counted, so no figure anywhere in
-  //    the report — headline, breakdown or comparison — can contain them.
-  const { excluded, keyOf, staleKeys } = findStaleVendors(
-    rows, clientNames, referenceDate, staleVendorDays,
-  );
-  const live = staleKeys.size === 0 ? rows : rows.filter((r) => !staleKeys.has(keyOf(r)));
 
   const flagOpts: StockFlagInputs = {
     dateColumns,
@@ -268,7 +278,19 @@ export function buildPortfolioHealth(input: PortfolioInput): PortfolioHealth {
   const bySite = new Map<string, Bucket>();
   const byProduct = new Map<string, Bucket>();
 
+  const excluded: ExcludedVendor[] = [];
   let activeLines = 0;
+  let baseLines = 0;
+
+  function addRows(rows: Row[]): void {
+  // 1. Drop stale vendors BEFORE anything is counted, so no figure anywhere in
+  //    the report — headline, breakdown or comparison — can contain them.
+  const stale = findStaleVendors(rows, clientNames, referenceDate, staleVendorDays);
+  excluded.push(...stale.excluded);
+  const live = stale.staleKeys.size === 0
+    ? rows
+    : rows.filter((r) => !stale.staleKeys.has(stale.keyOf(r)));
+  baseLines += live.length;
 
   for (const row of live) {
     const m = computeStockFlags(row, flagOpts);
@@ -308,22 +330,41 @@ export function buildPortfolioHealth(input: PortfolioInput): PortfolioHealth {
       addCounts(b.counts, m.flags);
     }
   }
+  }
 
-  return {
-    sites: sites.size,
-    clients: clients.size,
-    productsFlagged: productsFlagged.size,
-    activeLines,
-    baseLines: live.length,
-    totals,
-    // Provinces and profiles are short lists — never truncated, because a
-    // missing province reads as "we do not operate there".
-    byProvince: toRows(provinces),
-    bySiteProfile: toRows(profiles),
-    byClient: toRows(byClient, topN),
-    bySite: toRows(bySite, topN),
-    byProduct: toRows(byProduct, topN),
-    excluded,
-    discontinuedConfigured: discontinuedCodes.size > 0,
-  };
+  function finish(): PortfolioHealth {
+    excluded.sort((a, b) => b.linesRemoved - a.linesRemoved);
+    return {
+      sites: sites.size,
+      clients: clients.size,
+      productsFlagged: productsFlagged.size,
+      activeLines,
+      baseLines,
+      totals,
+      // Provinces and profiles are short lists — never truncated, because a
+      // missing province reads as "we do not operate there".
+      byProvince: toRows(provinces),
+      bySiteProfile: toRows(profiles),
+      // Clients are NEVER truncated. A snapshot is compared row-by-row against
+      // an older one, and a top-10 list changes membership week to week — a
+      // client that drops out would read as "no prior data" rather than as the
+      // improvement that pushed it off the list. Sites and products are
+      // thousands of rows, so those stay capped and their comparisons are
+      // best-effort, exactly as Mark's report shows them.
+      byClient: toRows(byClient),
+      bySite: toRows(bySite, topN),
+      byProduct: toRows(byProduct, topN),
+      excluded,
+      discontinuedConfigured: discontinuedCodes.size > 0,
+    };
+  }
+
+  return { addRows, finish };
+}
+
+/** One-shot convenience: every row at once. Used by the tests. */
+export function buildPortfolioHealth(input: PortfolioInput): PortfolioHealth {
+  const acc = createPortfolioAccumulator(input);
+  acc.addRows(input.rows);
+  return acc.finish();
 }

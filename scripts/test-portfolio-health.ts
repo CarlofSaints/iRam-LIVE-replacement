@@ -1,5 +1,5 @@
 /* Portfolio Stock Health engine — the rules and the traps. */
-import { buildPortfolioHealth, findStaleVendors, STALE_VENDOR_DAYS } from "../lib/portfolioHealth";
+import { buildPortfolioHealth, createPortfolioAccumulator, findStaleVendors, STALE_VENDOR_DAYS } from "../lib/portfolioHealth";
 import { computeStockFlags, LOW_COVER_DAYS } from "../lib/stockFlags";
 
 let failures = 0;
@@ -192,6 +192,27 @@ check("so it is not counted as out of stock", outOfBase.totals.oos, 0);
 const both = build([row({ SOH: 3, Status: "D", "Last Sold": "", "Last Recv": "" })]);
 check("phantom and discontinued on the same line", [both.totals.phantom, both.totals.discontinued], [1, 1]);
 check("one active line, two measures", both.activeLines, 1);
+
+/* Feeding the accumulator a client at a time must give EXACTLY the answer one
+   big call gives. The loader batches per client to keep memory bounded, so if
+   these two ever diverge the report silently depends on how the rows arrived. */
+const batchA = [
+  row({ SOH: 0, Site: "GC07" }),
+  row({ SOH: 0, Site: "GC07", Article: "A2" }),
+  row({ _clientId: "c2", _vendor: "1000012163", _lastLoadedAt: STALE, SOH: 0, Site: "WC27" }),
+];
+const batchB = [
+  row({ _clientId: "c2", SOH: 3, Site: "GC07", Article: "B1", Status: "D" }),
+  row({ _clientId: "c2", SOH: 1, Site: "WC27", Article: "B2", _province: "Western cape" }),
+  row({ SOH: -2, Site: "NF51", _province: "Limpopo", Article: "B3" }),
+];
+const oneShot = build([...batchA, ...batchB]);
+const acc = createPortfolioAccumulator({
+  clientNames: names, dateColumns: DATE_COLS, referenceDate: REF, discontinuedCodes: DISC,
+});
+acc.addRows(batchA);
+acc.addRows(batchB);
+check("client-at-a-time equals all-at-once", acc.finish(), oneShot);
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILED`);
 process.exit(failures === 0 ? 0 : 1);

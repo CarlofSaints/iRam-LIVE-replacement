@@ -192,11 +192,11 @@ export function hasAnyFlag(f: StockFlags): boolean {
   return f.oos || f.lowCover || f.phantom || f.discontinued;
 }
 
-/* Printed on the report so nobody sums the tiles. Negative SOH is a subset of
-   out of stock, and one line can be several things at once (phantom stock on a
-   discontinued SKU is both), so the five numbers deliberately do not add up to
-   a total and there is no arithmetic in which they should. */
-export const KPI_NOTES =
-  "Negative SOH is counted inside Out of Stock, not beside it. A line can carry " +
-  "more than one measure at once, so these figures overlap by design and must " +
-  "not be added together.";
+/* Re-exported so server-side callers have one import for the rules and the
+   wording. The sentences live in lib/stockFlagNotes.ts, which imports nothing,
+   because the report PAGE is a client component and this module is not.
+
+   Negative SOH is a subset of out of stock, and one line can be several things
+   at once (phantom stock on a discontinued SKU is both), so the five numbers
+   deliberately do not add up and there is no arithmetic in which they should. */
+export { KPI_NOTES } from "./stockFlagNotes";

@@ -367,6 +367,20 @@ export interface StatusDefinition {
   description: string;
   notes?: string;
   autoDetected: boolean;       // true = surfaced from DISPO upload scan
+  /**
+   * Does this code mean the SKU is DISCONTINUED at the retailer?
+   *
+   * Separate from `classification` on purpose: NEGATIVE covers anything worth
+   * chasing (blocked, suspended, incomplete master data), while discontinued
+   * is the narrower "the retailer has stopped ranging it, and any stock left
+   * on the floor has to be sold through or pulled". The Portfolio Stock Health
+   * report counts Discontinued-with-SOH off this flag alone.
+   *
+   * Absent is NOT the same as false — it means nobody has answered the
+   * question for this code yet. When no code on a channel is marked, the
+   * report says the measure is unconfigured rather than printing a zero.
+   */
+  meansDiscontinued?: boolean;
   createdAt: string;
   updatedAt: string;
 }

@@ -146,6 +146,8 @@ export default function StatusReferencePage() {
     {
       code: (s) => s.code,
       classification: (s) => s.classification,
+      // Marked codes sort together, so a sweep can check them at a glance.
+      meansDiscontinued: (s) => (s.meansDiscontinued ? "0 Discontinued" : "1 Not"),
       description: (s) => s.description,
       notes: (s) => s.notes ?? "",
       source: (s) => (s.autoDetected ? "Auto-detected" : "Manual"),
@@ -194,6 +196,22 @@ export default function StatusReferencePage() {
   async function handleDelete(id: string) {
     if (!confirm("Delete this status definition?")) return;
     await authFetch(`/api/status-definitions/${id}`, { method: "DELETE" });
+    reload();
+  }
+
+  /* Mark a code as meaning DISCONTINUED at the retailer.
+     Deliberately one click rather than a field inside Edit: this is a yes/no
+     somebody has to answer for every code on every banner, and burying it in
+     an edit form makes a twenty-code sweep into twenty save cycles. It is
+     separate from Classification because NEGATIVE covers anything worth
+     chasing, while this is the narrower "stopped ranging it" that the
+     Portfolio Stock Health report counts Discontinued-with-SOH from. */
+  async function toggleDiscontinued(s: StatusDefinition) {
+    await authFetch(`/api/status-definitions/${s.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ meansDiscontinued: !s.meansDiscontinued }),
+    });
     reload();
   }
 
@@ -386,8 +404,8 @@ export default function StatusReferencePage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-[var(--color-border)] text-left text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
-                {[["Status Code", "code"], ["Classification", "classification"], ["Description", "description"],
-                  ["Notes", "notes"], ["Source", "source"]].map(([label, key]) => (
+                {[["Status Code", "code"], ["Classification", "classification"], ["Means discontinued", "meansDiscontinued"],
+                  ["Description", "description"], ["Notes", "notes"], ["Source", "source"]].map(([label, key]) => (
                   <SortableTh key={key} label={label} sortKey={key} className="px-6"
                     current={statusTools.sortKey} dir={statusTools.sortDir} onSort={statusTools.toggleSort} />
                 ))}
@@ -410,6 +428,14 @@ export default function StatusReferencePage() {
                             <option key={c} value={c}>{c}</option>
                           ))}
                         </select>
+                      </td>
+                      {/* The discontinued mark is a one-click toggle on the
+                          display row, so this column simply shows where the
+                          code currently stands while the rest is being edited.
+                          It still needs a cell, or every column after it shifts
+                          left on whichever row is open. */}
+                      <td className="px-6 py-3 text-xs text-[var(--color-text-muted)]">
+                        {s.meansDiscontinued ? "Discontinued" : "—"}
                       </td>
                       <td className="px-6 py-3">
                         <input
@@ -445,6 +471,31 @@ export default function StatusReferencePage() {
                     <>
                       <td className="px-6 py-3 font-mono font-medium text-[var(--color-text)]">{s.code}</td>
                       <td className="px-6 py-3"><ClassBadge c={s.classification} /></td>
+                      <td className="px-6 py-3">
+                        {isAdmin ? (
+                          <button
+                            onClick={() => toggleDiscontinued(s)}
+                            title={
+                              s.meansDiscontinued
+                                ? "Counted as Discontinued with SOH. Click to unmark."
+                                : "Click to mark this code as meaning discontinued."
+                            }
+                            className={
+                              s.meansDiscontinued
+                                ? "rounded-full border border-red-200 bg-red-50 px-2.5 py-0.5 text-xs font-medium text-red-700"
+                                : "rounded-full border border-[var(--color-border)] px-2.5 py-0.5 text-xs font-medium text-[var(--color-text-muted)] hover:border-red-200 hover:text-red-700"
+                            }
+                          >
+                            {s.meansDiscontinued ? "Discontinued" : "Not discontinued"}
+                          </button>
+                        ) : s.meansDiscontinued ? (
+                          <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-0.5 text-xs font-medium text-red-700">
+                            Discontinued
+                          </span>
+                        ) : (
+                          <span className="text-[var(--color-text-muted)]">&mdash;</span>
+                        )}
+                      </td>
                       <td className="px-6 py-3 text-[var(--color-text-muted)]">{s.description}</td>
                       <td className="px-6 py-3 text-[var(--color-text-muted)]">{s.notes || "\u2014"}</td>
                       <td className="px-6 py-3">
