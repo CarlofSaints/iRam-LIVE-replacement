@@ -27,12 +27,24 @@
 
 import type { StatusDefinition, StatusScenario } from "./types";
 import { classifyRowStatus, parseDispoDate, marginFraction, VAT_RATE } from "./monthEndReport";
+import {
+  computeStockFlags,
+  daysElapsedInYear,
+  LOW_COVER_DAYS as SHARED_LOW_COVER_DAYS,
+  PHANTOM_MONTHS as SHARED_PHANTOM_MONTHS,
+} from "./stockFlags";
+
+/* This report prints the PR ST code on every line rather than counting a
+   "discontinued" measure, so it passes no code set to the shared rule. */
+const EMPTY_CODES: Set<string> = new Set();
 
 type Row = Record<string, unknown>;
 
 // ── Tunables (sensible defaults; can be lifted to report config later) ──
-export const LOW_COVER_DAYS = 14;     // SOH>0 with this many days cover or fewer
-export const PHANTOM_MONTHS = 3;      // stale-sale AND stale-receipt threshold
+// Re-exported from the shared rule so the store report and the portfolio
+// roll-up cannot be tuned apart by editing one file.
+export const LOW_COVER_DAYS = SHARED_LOW_COVER_DAYS;
+export const PHANTOM_MONTHS = SHARED_PHANTOM_MONTHS;
 
 export type StoreCategory =
   | "oos"
@@ -237,8 +249,7 @@ export function buildStoreReport(
 
   const refYear = opts.referenceDate.getUTCFullYear();
   const refMonth = opts.referenceDate.getUTCMonth() + 1;
-  const startOfYear = Date.UTC(refYear, 0, 1);
-  const daysElapsed = Math.max(1, Math.floor((opts.referenceDate.getTime() - startOfYear) / MS_PER_DAY) + 1);
+  const daysElapsed = daysElapsedInYear(opts.referenceDate);
 
   const lines: StoreLine[] = [];
   const counts: StoreReportCounts = {
@@ -276,30 +287,30 @@ export function buildStoreReport(
       if (!subChannel) subChannel = String(row["_storeSubChannel"] || row["_storeChannel"] || "");
       if (!province) province = String(row["_province"] || "");
 
-      // DROS + days cover
-      const ytd = ytdUnits(row, client.dateColumns, refYear, refMonth);
-      const dros = ytd > 0 ? ytd / daysElapsed : 0;
+      /* DROS, days cover, and the three stock-health flags come from the
+         SHARED rule in lib/stockFlags.ts — the same one the portfolio roll-up
+         reads. Two copies of "what counts as out of stock" would eventually
+         disagree about the same store on the same day. `discontinuedCodes` is
+         empty here because this report shows the PR ST code itself on every
+         line; the portfolio report is the one that needs it counted. */
+      const metrics = computeStockFlags(row, {
+        dateColumns: client.dateColumns,
+        refYear,
+        refMonth,
+        daysElapsed,
+        cutoff,
+        lowCoverDays,
+        discontinuedCodes: EMPTY_CODES,
+      });
+      const dros = metrics.dros;
+      const daysCover = metrics.daysCover;
+      // The DISPO's own Act DSC, kept for display on the line.
       const actDsc = num(row["Act DSC"], NaN);
-      const daysCover = dros > 0
-        ? soh / dros
-        : (isNaN(actDsc) ? null : actDsc);
 
       const flags = emptyFlags();
-
-      // Out of Stock
-      flags.oos = soh <= 0;
-
-      // Low Stock Cover — has stock, thin cover, and still selling
-      flags.lowCover = soh > 0 && dros > 0 && daysCover !== null && daysCover <= lowCoverDays;
-
-      // Phantom — stock present but stale sale AND stale receipt (blank = stale)
-      if (soh > 0) {
-        const lastSoldDate = parseDispoDate(row["Last Sold"]);
-        const lastRecDate = parseDispoDate(row["Last Recv"]);
-        const soldOld = lastSoldDate === null || lastSoldDate.getTime() <= cutoff.getTime();
-        const recOld = lastRecDate === null || lastRecDate.getTime() <= cutoff.getTime();
-        flags.phantom = soldOld && recOld;
-      }
+      flags.oos = metrics.flags.oos;
+      flags.lowCover = metrics.flags.lowCover;
+      flags.phantom = metrics.flags.phantom;
 
       // Status — flag any SKU carrying a (non-blank) PR ST status. The per-line
       // classification (positive/negative) is computed too and shown in the detail
