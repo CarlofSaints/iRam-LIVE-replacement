@@ -104,6 +104,27 @@ export interface ExcludedVendor {
   linesRemoved: number;
 }
 
+/**
+ * When each client's data last arrived, whatever state it is in.
+ *
+ * The DISPOs land haphazardly — some clients on Monday, some on Thursday, some
+ * not at all that week — so a report emailed on a fixed day is always a mix of
+ * fresh and days-old data. Rather than pretend otherwise, the report carries
+ * this and lets the reader see exactly which clients they are looking at
+ * current numbers for. It is computed from EVERY row, including the ones a
+ * stale vendor contributed, because "we last heard from them on 2 September"
+ * is precisely the fact worth printing about a client whose lines were then
+ * dropped.
+ */
+export interface ClientFreshness {
+  clientId: string;
+  clientName: string;
+  /** ISO of the most recent load across this client's vendors. "" if never. */
+  lastData: string;
+  /** Does this client have a vendor that went quiet and was excluded? */
+  hasStaleVendor: boolean;
+}
+
 export interface PortfolioHealth {
   /** Sites carrying at least one in-base line. */
   sites: number;
@@ -121,6 +142,8 @@ export interface PortfolioHealth {
   bySite: BreakdownRow[];
   byProduct: BreakdownRow[];
   excluded: ExcludedVendor[];
+  /** When each client's data last arrived. Newest first. */
+  freshness: ClientFreshness[];
   /**
    * Has anyone marked which status codes mean discontinued for this channel?
    * When false the discontinued count is meaningless and the report says so
@@ -318,6 +341,7 @@ export function createPortfolioAccumulator(
   const byProduct = new Map<string, Bucket>();
 
   const excluded: ExcludedVendor[] = [];
+  const lastLoadByClient = new Map<string, string>();
   let activeLines = 0;
   let baseLines = 0;
 
@@ -361,6 +385,17 @@ export function createPortfolioAccumulator(
   function addRows(rows: Row[]): void {
   // 1. Drop stale vendors BEFORE anything is counted, so no figure anywhere in
   //    the report — headline, breakdown or comparison — can contain them.
+  /* Freshness is read from EVERY row, before the stale filter. A client whose
+     vendor went quiet still has a "last heard from" date, and that date is the
+     most useful thing the report can say about them. */
+  for (const row of rows) {
+    const cid = rowClient(row);
+    if (!cid) continue;
+    const stamp = String(row["_lastLoadedAt"] ?? "");
+    const prev = lastLoadByClient.get(cid);
+    if (prev === undefined || stamp > prev) lastLoadByClient.set(cid, stamp);
+  }
+
   const stale = findStaleVendors(rows, clientNames, asOf, staleVendorDays);
   excluded.push(...stale.excluded);
   const live = stale.staleKeys.size === 0
@@ -426,6 +461,24 @@ export function createPortfolioAccumulator(
 
   function finish(): PortfolioHealth {
     excluded.sort((a, b) => b.linesRemoved - a.linesRemoved);
+
+    const staleClientIds = new Set(excluded.map((e) => e.clientId));
+    const freshness: ClientFreshness[] = [...lastLoadByClient.entries()]
+      .map(([clientId, lastData]) => ({
+        clientId,
+        clientName: clientNames.get(clientId) ?? clientId,
+        lastData,
+        hasStaleVendor: staleClientIds.has(clientId),
+      }))
+      // Newest first, and anything undateable last rather than pretending it
+      // is the oldest — "" sorts before every real date otherwise.
+      .sort((a, b) => {
+        if (!a.lastData && !b.lastData) return a.clientName.localeCompare(b.clientName);
+        if (!a.lastData) return 1;
+        if (!b.lastData) return -1;
+        return b.lastData.localeCompare(a.lastData);
+      });
+
     return {
       sites: sites.size,
       clients: clients.size,
@@ -447,6 +500,7 @@ export function createPortfolioAccumulator(
       bySite: toRows(bySite, topN),
       byProduct: toRows(byProduct, topN),
       excluded,
+      freshness,
       discontinuedConfigured: discontinuedCodes.size > 0,
     };
   }
