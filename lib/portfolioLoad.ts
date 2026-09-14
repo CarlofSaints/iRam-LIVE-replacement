@@ -26,9 +26,12 @@ import {
   createPortfolioAccumulator,
   type PortfolioHealth,
 } from "./portfolioHealth";
+import type { PortfolioCube } from "./portfolioCube";
 import type { SalesLedgerMeta } from "./types";
 
 export interface LoadPortfolioOpts {
+  /** Capture date the cube is stamped with (YYYY-MM-DD). Defaults to today. */
+  date?: string;
   /** Main channel to report on. */
   channelId: string;
   year?: string | number | null;
@@ -44,6 +47,8 @@ export interface LoadedPortfolio {
   /** End of the report month — what every age and rate is measured against. */
   referenceDate: string;
   health: PortfolioHealth;
+  /** The flagged-line cube the report page filters on. */
+  cube: PortfolioCube;
   /** Clients that had no ledger at all for this channel. */
   clientsWithNoData: string[];
 }
@@ -159,6 +164,7 @@ export async function loadPortfolioHealth(opts: LoadPortfolioOpts): Promise<Load
     periodLabel: period.label,
     referenceDate: referenceDate.toISOString(),
     health: acc.finish(),
+    cube: acc.cube(opts.channelId, opts.date ?? new Date().toISOString().slice(0, 10)),
     clientsWithNoData,
   };
 }

@@ -30,6 +30,7 @@
 
 import { readJson, writeJson, listBlobs } from "./blob";
 import type { KpiCounts, PortfolioHealth } from "./portfolioHealth";
+import type { PortfolioCube } from "./portfolioCube";
 
 const ROOT = "portfolio-health";
 
@@ -63,6 +64,31 @@ export async function readSnapshot(
   date: string,
 ): Promise<PortfolioSnapshot | null> {
   return readJson<PortfolioSnapshot | null>(keyFor(channelId, date), null);
+}
+
+/* ── The cube lives in its OWN blob ───────────────────────────────────────────
+   It is around a megabyte; the aggregate snapshot is a few kilobytes. Storing
+   them together would make `resolveComparisons` — which reads three older
+   snapshots on every page load — drag three megabytes of cube it never looks
+   at. Separate keys mean the comparison reads stay small and only the capture
+   actually on screen pays for its cube.
+
+   The key is `{date}.cube.json`, which `listSnapshotDates` does not match: its
+   pattern wants the date immediately before `.json`, so cubes never appear as
+   phantom capture dates. */
+function cubeKeyFor(channelId: string, date: string): string {
+  return `${ROOT}/${channelId}/${date}.cube.json`;
+}
+
+export async function saveCube(cube: PortfolioCube): Promise<void> {
+  await writeJson(cubeKeyFor(cube.channelId, cube.date), cube);
+}
+
+export async function readCube(
+  channelId: string,
+  date: string,
+): Promise<PortfolioCube | null> {
+  return readJson<PortfolioCube | null>(cubeKeyFor(channelId, date), null);
 }
 
 /**

@@ -8,6 +8,16 @@
  * different days and call it a week. "Recalculate now" is there for the moment
  * after a DISPO lands, and labels itself.
  *
+ * ── Filtering ──────────────────────────────────────────────────
+ * Click anything — a province, a site profile, a client, a store, a product —
+ * and every other figure on the page narrows to it. Click again to clear.
+ * Filters stack across dimensions, so Western Cape + Clippa is two clicks.
+ *
+ * This happens entirely in the browser, against the cube the API ships
+ * (lib/portfolioCube.ts). Filtering server-side would mean re-reading every
+ * client's ledger on every click — twenty seconds on Massbuild — and nobody
+ * explores a report at twenty seconds a click.
+ *
  * Colour rule: every measure here is bad when it goes up, so a fall is green
  * and a rise is red — a fixed judgement, not a relative scale. A ranking scale
  * would colour the least-bad province green even in a week where every number
@@ -18,14 +28,29 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { authFetch, usePermissions } from "@/lib/useAuth";
 import type { Channel } from "@/lib/types";
-import type { BreakdownRow, KpiCounts, PortfolioHealth } from "@/lib/portfolioHealth";
+import type { KpiCounts, PortfolioHealth } from "@/lib/portfolioHealth";
 import type { ComparisonPoint, PortfolioSnapshot } from "@/lib/portfolioSnapshot";
 import { KPI_NOTES } from "@/lib/stockFlagNotes";
+import {
+  aggregateCube,
+  emptyFilter,
+  filterIsEmpty,
+  filterLabel,
+  toggleFilter,
+  DIMENSION_LABELS,
+  type CubeBreakdownRow,
+  type CubeDimension,
+  type CubeFilter,
+  type CubeView,
+  type PortfolioCube,
+} from "@/lib/portfolioCube";
 
 interface ApiResponse {
   snapshot: PortfolioSnapshot;
   comparisons: ComparisonPoint[];
   computedLive: boolean;
+  cube: PortfolioCube | null;
+  cubeAvailable: boolean;
   captureCount: number;
   firstCapture: string | null;
 }
@@ -75,6 +100,10 @@ export default function PortfolioHealthPage() {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [channelId, setChannelId] = useState("");
   const [data, setData] = useState<ApiResponse | null>(null);
+  const [cube, setCube] = useState<PortfolioCube | null>(null);
+  const [cubeLoading, setCubeLoading] = useState(false);
+  const [cubeError, setCubeError] = useState("");
+  const [filter, setFilter] = useState<CubeFilter>(emptyFilter());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   /* An expired session answers 401, and a 401 that is only `return`ed reads on
@@ -100,6 +129,10 @@ export default function PortfolioHealthPage() {
     if (!id) return;
     setLoading(true);
     setError("");
+    setCubeError("");
+    // A filter from the channel you were just looking at means nothing here.
+    setFilter(emptyFilter());
+    setCube(null);
     try {
       const params = new URLSearchParams({ channelId: id });
       if (live) params.set("live", "1");
@@ -113,7 +146,10 @@ export default function PortfolioHealthPage() {
         setError(e.error ?? "Could not load");
         setData(null);
       } else {
-        setData(await res.json());
+        const body: ApiResponse = await res.json();
+        setData(body);
+        // A live run already carries its cube; a stored one is fetched below.
+        if (body.cube) setCube(body.cube);
       }
     } catch {
       setError("Could not reach the server.");
@@ -126,12 +162,58 @@ export default function PortfolioHealthPage() {
     if (channelId) load(channelId, false);
   }, [channelId, load]);
 
+  /* Fetch the cube AFTER the tiles have painted. It is around a megabyte, and
+     the headline numbers should not wait on it — the page is readable without
+     it, just not clickable. */
+  useEffect(() => {
+    if (!data || cube || !data.cubeAvailable || !channelId) return;
+    let cancelled = false;
+    (async () => {
+      setCubeLoading(true);
+      try {
+        const res = await authFetch(
+          `/api/reports/portfolio-health?channelId=${encodeURIComponent(channelId)}&part=cube`,
+        );
+        if (cancelled) return;
+        if (res.ok) {
+          const body = await res.json();
+          setCube(body.cube ?? null);
+        } else {
+          const e = await res.json().catch(() => ({ error: "" }));
+          setCubeError(e.error || "Filtering is unavailable for this capture.");
+        }
+      } catch {
+        if (!cancelled) setCubeError("Could not load the filter data.");
+      }
+      if (!cancelled) setCubeLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [data, cube, channelId]);
+
   const health: PortfolioHealth | null = data?.snapshot.health ?? null;
 
-  const captureAge = useMemo(
-    () => (data ? daysSince(data.snapshot.capturedAt) : 0),
-    [data],
+  /* Every figure comes from the cube once it is loaded, filtered or not, so a
+     filtered and an unfiltered reading are never produced by two different
+     code paths. Until it arrives, the stored aggregates render instead. */
+  const view: CubeView | null = useMemo(
+    () => (cube ? aggregateCube(cube, filter) : null),
+    [cube, filter],
   );
+
+  const filtered = !filterIsEmpty(filter);
+  const captureAge = useMemo(() => (data ? daysSince(data.snapshot.capturedAt) : 0), [data]);
+
+  const click = useCallback((dim: CubeDimension, key: string) => {
+    setFilter((f) => toggleFilter(f, dim, key));
+  }, []);
+
+  const chips = useMemo(() => {
+    const out: { dim: CubeDimension; value: string }[] = [];
+    (Object.keys(filter) as CubeDimension[]).forEach((dim) => {
+      for (const v of filter[dim]) out.push({ dim, value: v });
+    });
+    return out;
+  }, [filter]);
 
   /* Bookmarked-URL guard. `permsLoaded` is checked first so the page does not
      flash "no permission" at someone who does have it while the session is
@@ -147,6 +229,27 @@ export default function PortfolioHealthPage() {
     );
   }
 
+  // Tables render from the cube when it is there, else from the stored capture.
+  const tables = view
+    ? {
+        province: view.byProvince,
+        profile: view.bySiteProfile,
+        client: view.byClient,
+        site: view.bySite,
+        product: view.byProduct,
+      }
+    : health
+      ? {
+          province: health.byProvince as unknown as CubeBreakdownRow[],
+          profile: health.bySiteProfile as unknown as CubeBreakdownRow[],
+          client: health.byClient.slice(0, 10) as unknown as CubeBreakdownRow[],
+          site: health.bySite as unknown as CubeBreakdownRow[],
+          product: health.byProduct as unknown as CubeBreakdownRow[],
+        }
+      : null;
+
+  const totals: KpiCounts | null = view ? view.totals : health?.totals ?? null;
+
   return (
     <div className="p-8">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
@@ -154,6 +257,7 @@ export default function PortfolioHealthPage() {
           <h1 className="text-2xl font-bold text-[var(--color-text)]">Portfolio Stock Health</h1>
           <p className="text-sm text-[var(--color-text-muted)]">
             Every client in one channel, rolled up. Lower is better on every measure.
+            {cube && " Click any row to filter the rest of the report to it."}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -212,17 +316,23 @@ export default function PortfolioHealthPage() {
         </div>
       )}
 
-      {data && health && (
+      {data && health && totals && tables && (
         <>
           {/* Where the numbers came from, and how old they are. */}
-          <div className="mb-6 rounded-lg border border-[var(--color-border)] bg-zinc-50 p-4 text-sm">
+          <div className="mb-4 rounded-lg border border-[var(--color-border)] bg-zinc-50 p-4 text-sm">
             <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
               <span className="font-semibold text-[var(--color-text)]">{data.snapshot.channelName}</span>
               <span className="text-[var(--color-text-muted)]">Period {data.snapshot.periodLabel}</span>
               <span className="text-[var(--color-text-muted)]">
-                {fmt(health.sites)} sites · {fmt(health.clients)} clients ·{" "}
-                {fmt(health.productsFlagged)} products flagged · {fmt(health.activeLines)} active lines
+                {view
+                  ? `${fmt(view.sites)} sites with issues · ${fmt(view.clients)} clients · ${fmt(view.products)} products · ${fmt(view.lines)} flagged lines`
+                  : `${fmt(health.sites)} sites · ${fmt(health.clients)} clients · ${fmt(health.productsFlagged)} products flagged · ${fmt(health.activeLines)} active lines`}
               </span>
+              {!filtered && cube && (
+                <span className="text-[var(--color-text-muted)]">
+                  {fmt(cube.activeLines)} active lines in base
+                </span>
+              )}
             </div>
             <p className="mt-2 text-xs text-[var(--color-text-muted)]">
               {data.computedLive ? (
@@ -241,29 +351,33 @@ export default function PortfolioHealthPage() {
                   )}
                 </>
               )}
+              {cubeLoading && " · loading filter data…"}
+              {cubeError && <b className="text-amber-700"> · {cubeError}</b>}
             </p>
           </div>
 
-          {/* Stale vendors — excluded, and said so. */}
-          {health.excluded.length > 0 && (
-            <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm">
-              <p className="font-semibold text-amber-900">
-                Not in these figures: {health.excluded.length} vendor
-                {health.excluded.length === 1 ? "" : "s"} with no data for 14 days or more
-              </p>
-              <ul className="mt-2 space-y-0.5 text-amber-800">
-                {health.excluded.map((e) => (
-                  <li key={`${e.clientId}|${e.vendor}`}>
-                    <b>{e.clientName}</b> — vendor {e.vendor || "(none)"}, last data{" "}
-                    {shortDate(e.lastData)} ({fmt(e.linesRemoved)} lines)
-                  </li>
-                ))}
-              </ul>
-              <p className="mt-2 text-xs text-amber-800">
-                Their lines are removed from every figure and every comparison period above and
-                below, not just noted here. Last-known stock from a supplier who has gone quiet
-                reads as real and would otherwise keep counting as out of stock forever.
-              </p>
+          {/* Active filters */}
+          {filtered && (
+            <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-[var(--color-primary)] bg-blue-50/40 p-3">
+              <span className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+                Filtered to
+              </span>
+              {chips.map((c) => (
+                <button
+                  key={`${c.dim}|${c.value}`}
+                  onClick={() => click(c.dim, c.value)}
+                  title="Remove this filter"
+                  className="rounded-full border border-[var(--color-primary)] bg-white px-2.5 py-0.5 text-xs font-medium text-[var(--color-primary)]"
+                >
+                  {DIMENSION_LABELS[c.dim]}: {filterLabel(c.dim, c.value, cube)} ×
+                </button>
+              ))}
+              <button
+                onClick={() => setFilter(emptyFilter())}
+                className="text-xs font-medium text-[var(--color-text-muted)] underline"
+              >
+                Clear all
+              </button>
             </div>
           )}
 
@@ -288,21 +402,32 @@ export default function PortfolioHealthPage() {
                   ) : (
                     <>
                       <p className="mt-1 text-3xl font-bold text-[var(--color-text)]">
-                        {fmt(health.totals[kpi.key])}
+                        {fmt(totals[kpi.key])}
                       </p>
-                      <dl className="mt-3 space-y-1 text-xs">
-                        {data.comparisons.map((c) => (
-                          <div key={c.label} className="flex items-baseline justify-between gap-2">
-                            <dt className="text-[var(--color-text-muted)]">
-                              {c.label}
-                              {c.date && <span className="ml-1 opacity-70">{shortDate(c.date)}</span>}
-                            </dt>
-                            <dd className="font-medium">
-                              <Delta now={health.totals[kpi.key]} then={c.counts?.[kpi.key] ?? null} />
-                            </dd>
-                          </div>
-                        ))}
-                      </dl>
+                      {filtered ? (
+                        /* The comparison columns come from OLDER captures, which
+                           are stored as totals only — there is no stored cube for
+                           them to filter. Showing the portfolio-wide previous week
+                           beside a filtered headline would invite a subtraction
+                           that means nothing, so the columns stand down. */
+                        <p className="mt-3 text-xs text-[var(--color-text-muted)]">
+                          Week-on-week comparison is portfolio-wide only. Clear the filter to see it.
+                        </p>
+                      ) : (
+                        <dl className="mt-3 space-y-1 text-xs">
+                          {data.comparisons.map((c) => (
+                            <div key={c.label} className="flex items-baseline justify-between gap-2">
+                              <dt className="text-[var(--color-text-muted)]">
+                                {c.label}
+                                {c.date && <span className="ml-1 opacity-70">{shortDate(c.date)}</span>}
+                              </dt>
+                              <dd className="font-medium">
+                                <Delta now={totals[kpi.key]} then={c.counts?.[kpi.key] ?? null} />
+                              </dd>
+                            </div>
+                          ))}
+                        </dl>
+                      )}
                       <p className="mt-2 text-[11px] leading-snug text-[var(--color-text-muted)]">{kpi.hint}</p>
                     </>
                   )}
@@ -313,7 +438,7 @@ export default function PortfolioHealthPage() {
 
           <p className="mb-6 text-xs text-[var(--color-text-muted)]">{KPI_NOTES}</p>
 
-          {data.captureCount <= 1 && (
+          {data.captureCount <= 1 && !filtered && (
             <div className="mb-6 rounded-lg border border-[var(--color-border)] bg-zinc-50 p-4 text-xs text-[var(--color-text-muted)]">
               <b className="text-[var(--color-text)]">Comparison columns are empty because there is
               nothing to compare to yet.</b>{" "}
@@ -324,24 +449,22 @@ export default function PortfolioHealthPage() {
             </div>
           )}
 
-          <Table title="Most affected provinces" rows={health.byProvince} data={data} />
-          <Table title="Most affected site profiles" rows={health.bySiteProfile} data={data} />
-          <Table title="Most affected clients" rows={health.byClient.slice(0, 10)} data={data} compareByKey />
-          <Table
-            title="Most affected sites"
-            rows={health.bySite}
-            data={data}
-            extraCols={[
-              { head: "Store", get: (r) => r.extra?.storeName ?? "" },
-              { head: "Province", get: (r) => r.extra?.province ?? "" },
-            ]}
-          />
-          <Table
-            title="Most affected products"
-            rows={health.byProduct}
-            data={data}
-            extraCols={[{ head: "Description", get: (r) => r.extra?.description ?? "" }]}
-          />
+          <Table title="Most affected provinces" rows={tables.province} dim="provinces"
+                 filter={filter} onClick={click} clickable={!!cube} />
+          <Table title="Most affected site profiles" rows={tables.profile} dim="profiles"
+                 filter={filter} onClick={click} clickable={!!cube} />
+          <Table title="Most affected clients" rows={tables.client} dim="clients"
+                 filter={filter} onClick={click} clickable={!!cube}
+                 prior={!filtered ? data.comparisons.find((c) => c.label === "4 weeks ago" && c.byClient) ?? null : null} />
+          <Table title="Most affected sites" rows={tables.site} dim="sites"
+                 filter={filter} onClick={click} clickable={!!cube}
+                 extraCols={[
+                   { head: "Store", get: (r) => r.extra?.storeName ?? "" },
+                   { head: "Province", get: (r) => r.extra?.province ?? "" },
+                 ]} />
+          <Table title="Most affected products" rows={tables.product} dim="articles"
+                 filter={filter} onClick={click} clickable={!!cube}
+                 extraCols={[{ head: "Description", get: (r) => r.extra?.description ?? "" }]} />
         </>
       )}
     </div>
@@ -351,25 +474,24 @@ export default function PortfolioHealthPage() {
 function Table({
   title,
   rows,
-  data,
+  dim,
+  filter,
+  onClick,
+  clickable,
   extraCols = [],
-  compareByKey = false,
+  prior = null,
 }: {
   title: string;
-  rows: BreakdownRow[];
-  data: ApiResponse;
-  extraCols?: { head: string; get: (r: BreakdownRow) => string }[];
-  compareByKey?: boolean;
+  rows: CubeBreakdownRow[];
+  dim: CubeDimension;
+  filter: CubeFilter;
+  onClick: (dim: CubeDimension, key: string) => void;
+  clickable: boolean;
+  extraCols?: { head: string; get: (r: CubeBreakdownRow) => string }[];
+  prior?: ComparisonPoint | null;
 }) {
-  /* Only the client table can be compared row by row: clients are stored in
-     full on every capture, while sites and products are stored top-N, so a row
-     missing from an older capture means "not in that week's top ten", not
-     "zero". Colouring it would be a guess dressed as a fact. */
-  const prior = compareByKey
-    ? data.comparisons.find((c) => c.label === "4 weeks ago" && c.byClient) ?? null
-    : null;
-
   if (rows.length === 0) return null;
+  const selected = new Set(filter[dim]);
 
   return (
     <div className="mb-8">
@@ -395,14 +517,31 @@ function Table({
           </thead>
           <tbody>
             {rows.map((r) => {
+              /* Only the client table can be compared row by row: clients are
+                 stored in full on every capture, while sites and products are
+                 stored top-N, so a row missing from an older capture means "not
+                 in that week's top ten", not "zero". */
               const was = prior?.byClient?.[r.key]?.oos;
               const tone =
                 was === undefined ? "" :
                 r.counts.oos < was ? "text-emerald-600" :
                 r.counts.oos > was ? "text-red-600" : "";
+              const isOn = selected.has(r.key);
               return (
-                <tr key={r.key} className="border-b border-[var(--color-border)] last:border-0">
-                  <td className="px-4 py-2 font-medium text-[var(--color-text)]">{r.label}</td>
+                <tr
+                  key={r.key}
+                  onClick={clickable ? () => onClick(dim, r.key) : undefined}
+                  title={clickable ? (isOn ? "Click to remove this filter" : `Filter the report to ${r.label}`) : undefined}
+                  className={
+                    "border-b border-[var(--color-border)] last:border-0 " +
+                    (clickable ? "cursor-pointer hover:bg-zinc-50 " : "") +
+                    (isOn ? "bg-blue-50/60 " : "")
+                  }
+                >
+                  <td className="px-4 py-2 font-medium text-[var(--color-text)]">
+                    {isOn && <span className="mr-1 text-[var(--color-primary)]">✓</span>}
+                    {r.label}
+                  </td>
                   {extraCols.map((c) => (
                     <td key={c.head} className="px-4 py-2 text-[var(--color-text-muted)]">{c.get(r)}</td>
                   ))}

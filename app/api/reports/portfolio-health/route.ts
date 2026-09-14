@@ -6,9 +6,12 @@ import {
   listSnapshotDates,
   resolveComparisons,
   saveSnapshot,
+  saveCube,
+  readCube,
   snapshotDate,
   type PortfolioSnapshot,
 } from "@/lib/portfolioSnapshot";
+import type { PortfolioCube } from "@/lib/portfolioCube";
 
 /* Portfolio Stock Health — one channel's roll-up, plus its comparison columns.
  *
@@ -35,25 +38,49 @@ export async function GET(req: NextRequest) {
       return Response.json({ error: "channelId is required" }, { status: 400 });
     }
 
+    /* The cube is fetched on its own (`?part=cube`) once the page has painted,
+       because it is ~1MB and the tiles should not wait for it. The exception is
+       a live computation: that already has the cube in hand, and making the
+       page ask for it separately would re-run the whole twenty-second load. */
+    if (url.searchParams.get("part") === "cube") {
+      const dates = await listSnapshotDates(channelId);
+      const newest = dates.length ? dates[dates.length - 1] : null;
+      const cube = newest ? await readCube(channelId, newest) : null;
+      if (!cube) {
+        return Response.json(
+          { error: "No stored cube for this channel yet. Use Recalculate now." },
+          { status: 404, headers: noCacheHeaders() },
+        );
+      }
+      return Response.json({ cube }, { headers: noCacheHeaders() });
+    }
+
     let snapshot: PortfolioSnapshot | null = null;
     let computedLive = false;
+    let cube: PortfolioCube | null = null;
+    let cubeAvailable = false;
 
     if (!live) {
       const dates = await listSnapshotDates(channelId);
       const newest = dates.length ? dates[dates.length - 1] : null;
-      if (newest) snapshot = await readSnapshot(channelId, newest);
+      if (newest) {
+        snapshot = await readSnapshot(channelId, newest);
+        if (snapshot) cubeAvailable = (await readCube(channelId, newest)) !== null;
+      }
     }
 
     if (!snapshot) {
+      const now = new Date();
+      const date = snapshotDate(now);
       const loaded = await loadPortfolioHealth({
         channelId,
+        date,
         year: url.searchParams.get("year"),
         month: url.searchParams.get("month"),
         week: url.searchParams.get("week"),
       });
-      const now = new Date();
       snapshot = {
-        date: snapshotDate(now),
+        date,
         channelId,
         channelName: loaded.channelName,
         capturedAt: now.toISOString(),
@@ -61,10 +88,15 @@ export async function GET(req: NextRequest) {
         health: loaded.health,
       };
       computedLive = true;
+      cube = loaded.cube;
+      cubeAvailable = true;
       // Only ever saved on an explicit ask. A read that quietly writes would
       // let anyone opening the page mint a capture the comparison columns then
       // measure against, and the history would record page views, not weeks.
-      if (save) await saveSnapshot(snapshot);
+      if (save) {
+        await saveSnapshot(snapshot);
+        await saveCube(loaded.cube);
+      }
     }
 
     const comparisons = await resolveComparisons(channelId, snapshot.date);
@@ -75,6 +107,8 @@ export async function GET(req: NextRequest) {
         snapshot,
         comparisons,
         computedLive,
+        cube,
+        cubeAvailable,
         /* How much history exists at all. The page needs this to explain empty
            comparison columns as "we have not been capturing long enough" and
            not as "nothing changed". */

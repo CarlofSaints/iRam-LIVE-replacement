@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { getChannels } from "@/lib/channelData";
 import { loadPortfolioHealth } from "@/lib/portfolioLoad";
-import { saveSnapshot, snapshotDate } from "@/lib/portfolioSnapshot";
+import { saveSnapshot, saveCube, snapshotDate } from "@/lib/portfolioSnapshot";
 import { addLog } from "@/lib/activityLog";
 
 /* Weekly Portfolio Stock Health capture — the thing that makes the comparison
@@ -64,7 +64,7 @@ export async function GET(req: NextRequest) {
 
     for (const channel of mains) {
       try {
-        const loaded = await loadPortfolioHealth({ channelId: channel.id });
+        const loaded = await loadPortfolioHealth({ channelId: channel.id, date });
 
         // A channel with no data at all should not mint an empty capture that
         // later weeks then compare against and read as a total collapse.
@@ -87,6 +87,11 @@ export async function GET(req: NextRequest) {
           periodLabel: loaded.periodLabel,
           health: loaded.health,
         });
+        // The cube is what makes the page filterable. Saved second and to its
+        // own key: an aggregate capture with no cube still renders (the page
+        // falls back to the stored tables), but a cube with no capture would
+        // be an orphan nothing reads.
+        await saveCube(loaded.cube);
 
         results.push({
           channelId: channel.id,

@@ -42,6 +42,18 @@ import {
   type StockFlagInputs,
   type StockFlags,
 } from "./stockFlags";
+import {
+  FLAG_DISC,
+  FLAG_LOW,
+  FLAG_NEG,
+  FLAG_OOS,
+  FLAG_PHANTOM,
+  type CubeArticle,
+  type CubeClient,
+  type CubeRow,
+  type CubeSite,
+  type PortfolioCube,
+} from "./portfolioCube";
 
 type Row = { [k: string]: unknown };
 
@@ -261,6 +273,12 @@ export interface PortfolioAccumulator {
   /** Fold in one client's enriched rows. */
   addRows(rows: Row[]): void;
   finish(): PortfolioHealth;
+  /**
+   * The dictionary-encoded flagged-line cube the report page filters on.
+   * Built in the same pass as the counts, so the two can never disagree about
+   * a line. Call after finish(). See lib/portfolioCube.ts.
+   */
+  cube(channelId: string, date: string): PortfolioCube;
 }
 
 export function createPortfolioAccumulator(
@@ -302,6 +320,43 @@ export function createPortfolioAccumulator(
   const excluded: ExcludedVendor[] = [];
   let activeLines = 0;
   let baseLines = 0;
+
+  /* Cube dictionaries, filled in the same pass as the counts. Only FLAGGED
+     lines are kept: every tile and table on the report counts something that
+     is wrong, so a clean line cannot change a number on the page and has no
+     business being shipped to the browser. */
+  const cubeSites: CubeSite[] = [];
+  const cubeSiteIdx = new Map<string, number>();
+  const cubeClients: CubeClient[] = [];
+  const cubeClientIdx = new Map<string, number>();
+  const cubeArticles: CubeArticle[] = [];
+  const cubeArticleIdx = new Map<string, number>();
+  const cubeRows: CubeRow[] = [];
+
+  function siteIndex(code: string, name: string, province: string, profile: string): number {
+    const hit = cubeSiteIdx.get(code);
+    if (hit !== undefined) return hit;
+    const i = cubeSites.length;
+    cubeSites.push({ code, name, province, profile });
+    cubeSiteIdx.set(code, i);
+    return i;
+  }
+  function clientIndex(id: string, name: string): number {
+    const hit = cubeClientIdx.get(id);
+    if (hit !== undefined) return hit;
+    const i = cubeClients.length;
+    cubeClients.push({ id, name });
+    cubeClientIdx.set(id, i);
+    return i;
+  }
+  function articleIndex(code: string, description: string): number {
+    const hit = cubeArticleIdx.get(code);
+    if (hit !== undefined) return hit;
+    const i = cubeArticles.length;
+    cubeArticles.push({ code, description });
+    cubeArticleIdx.set(code, i);
+    return i;
+  }
 
   function addRows(rows: Row[]): void {
   // 1. Drop stale vendors BEFORE anything is counted, so no figure anywhere in
@@ -350,6 +405,22 @@ export function createPortfolioAccumulator(
       b.lines++;
       addCounts(b.counts, m.flags);
     }
+
+    // Cube: flagged lines only, built off the SAME flags the counts used.
+    const bits =
+      (m.flags.oos ? FLAG_OOS : 0) |
+      (m.flags.lowCover ? FLAG_LOW : 0) |
+      (m.flags.phantom ? FLAG_PHANTOM : 0) |
+      (m.flags.negSoh ? FLAG_NEG : 0) |
+      (m.flags.discontinued ? FLAG_DISC : 0);
+    if (bits !== 0) {
+      cubeRows.push([
+        siteIndex(siteCode, storeName, province, profile),
+        clientIndex(clientId, clientNames.get(clientId) ?? clientId),
+        articleIndex(article, desc),
+        bits,
+      ]);
+    }
   }
   }
 
@@ -380,7 +451,20 @@ export function createPortfolioAccumulator(
     };
   }
 
-  return { addRows, finish };
+  function cube(channelId: string, date: string): PortfolioCube {
+    return {
+      version: 1,
+      channelId,
+      date,
+      sites: cubeSites,
+      clients: cubeClients,
+      articles: cubeArticles,
+      rows: cubeRows,
+      activeLines,
+    };
+  }
+
+  return { addRows, finish, cube };
 }
 
 /** One-shot convenience: every row at once. Used by the tests. */
