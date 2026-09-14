@@ -30,6 +30,7 @@ const NOTIFY_FLAGS = [
   "receiveStoreReportDigest",
   "receiveActionReport",
   "receiveLoadStatus",
+  "receivePortfolioHealth",
 ] as const;
 
 export type NotifyFlag = (typeof NOTIFY_FLAGS)[number];

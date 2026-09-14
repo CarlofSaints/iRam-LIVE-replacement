@@ -15,7 +15,7 @@ export default function UsersPage() {
   const [clients, setClients] = useState<{ id: string; name: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ name: "", email: "", password: "", role: "cam", forcePasswordChange: true, receiveStoreAlerts: false, receiveProductAlerts: false, receiveStoreReportDigest: false, receiveActionReport: false, receiveLoadStatus: false, clientIds: [] as string[] });
+  const [form, setForm] = useState({ name: "", email: "", password: "", role: "cam", forcePasswordChange: true, receiveStoreAlerts: false, receiveProductAlerts: false, receiveStoreReportDigest: false, receiveActionReport: false, receiveLoadStatus: false, receivePortfolioHealth: false, clientIds: [] as string[] });
   const [error, setError] = useState("");
   const [editId, setEditId] = useState<string | null>(null);
 
@@ -149,7 +149,7 @@ export default function UsersPage() {
     })();
   }, []);
 
-  const blankForm = { name: "", email: "", password: "", role: "cam", forcePasswordChange: true, receiveStoreAlerts: false, receiveProductAlerts: false, receiveStoreReportDigest: false, receiveActionReport: false, receiveLoadStatus: false, clientIds: [] as string[] };
+  const blankForm = { name: "", email: "", password: "", role: "cam", forcePasswordChange: true, receiveStoreAlerts: false, receiveProductAlerts: false, receiveStoreReportDigest: false, receiveActionReport: false, receiveLoadStatus: false, receivePortfolioHealth: false, clientIds: [] as string[] };
   const toggleFormClient = (id: string) =>
     setForm((f) => ({ ...f, clientIds: f.clientIds.includes(id) ? f.clientIds.filter((c) => c !== id) : [...f.clientIds, id] }));
 
@@ -173,7 +173,7 @@ export default function UsersPage() {
 
   function startEdit(u: UserSafe) {
     setEditId(u.id);
-    setForm({ name: u.name, email: u.email, password: "", role: u.role, forcePasswordChange: u.forcePasswordChange, receiveStoreAlerts: u.receiveStoreAlerts ?? false, receiveProductAlerts: u.receiveProductAlerts ?? false, receiveStoreReportDigest: u.receiveStoreReportDigest ?? false, receiveActionReport: u.receiveActionReport ?? false, receiveLoadStatus: u.receiveLoadStatus ?? false, clientIds: u.clientIds ?? [] });
+    setForm({ name: u.name, email: u.email, password: "", role: u.role, forcePasswordChange: u.forcePasswordChange, receiveStoreAlerts: u.receiveStoreAlerts ?? false, receiveProductAlerts: u.receiveProductAlerts ?? false, receiveStoreReportDigest: u.receiveStoreReportDigest ?? false, receiveActionReport: u.receiveActionReport ?? false, receiveLoadStatus: u.receiveLoadStatus ?? false, receivePortfolioHealth: u.receivePortfolioHealth ?? false, clientIds: u.clientIds ?? [] });
     setShowForm(true);
     setError("");
   }
@@ -189,7 +189,7 @@ export default function UsersPage() {
 
   const alertCount = (u: UserSafe) =>
     [u.receiveStoreAlerts, u.receiveProductAlerts, u.receiveStoreReportDigest,
-     u.receiveActionReport, u.receiveLoadStatus].filter(Boolean).length;
+     u.receiveActionReport, u.receiveLoadStatus, u.receivePortfolioHealth].filter(Boolean).length;
   const userTools = useTableTools<UserSafe>(
     users,
     {
@@ -253,6 +253,10 @@ export default function UsersPage() {
             <label className="col-span-2 flex items-center gap-2 text-sm">
               <input type="checkbox" checked={form.receiveLoadStatus} onChange={(e) => setForm({ ...form, receiveLoadStatus: e.target.checked })} />
               Receive DISPO load status (weekdays 16:00 — who hasn&apos;t loaded this week)
+            </label>
+            <label className="col-span-2 flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={form.receivePortfolioHealth} onChange={(e) => setForm({ ...form, receivePortfolioHealth: e.target.checked })} />
+              Receive weekly Portfolio Stock Health summary (one mail per channel, Thursdays)
             </label>
 
             {/* Client scoping — restrict this account to specific clients */}
@@ -435,6 +439,11 @@ export default function UsersPage() {
                         {u.receiveLoadStatus && (
                           <span className="rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700">
                             Load Status
+                          </span>
+                        )}
+                        {u.receivePortfolioHealth && (
+                          <span className="rounded-full bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-700">
+                            Stock Health
                           </span>
                         )}
                       </div>

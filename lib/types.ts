@@ -124,6 +124,7 @@ export interface User {
   receiveStoreReportDigest?: boolean;  // gets the daily store-report engagement digest
   receiveActionReport?: boolean;       // gets the weekly rep action-claim spreadsheet (manager/CAM)
   receiveLoadStatus?: boolean;         // gets the 16:00 weekday "who hasn't loaded a DISPO this week" status email
+  receivePortfolioHealth?: boolean;    // gets the weekly Portfolio Stock Health summary, one mail per channel
   // Client scoping — when non-empty, this user may only see data for these
   // client IDs (external "client" accounts). Empty/undefined = all clients.
   clientIds?: string[];
