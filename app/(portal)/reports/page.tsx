@@ -43,7 +43,9 @@ export default function ReportsPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [clientId, setClientId] = useState("");
-  const [mainChannelId, setMainChannelId] = useState("");
+  // Several main channels may be ticked (e.g. Makro + Walmart together); each
+  // report then holds exactly the stores of the channels ticked, no more.
+  const [mainChannelIds, setMainChannelIds] = useState<string[]>([]);
   const [selectedSubIds, setSelectedSubIds] = useState<string[]>([]);
   const [ledgers, setLedgers] = useState<SalesLedgerMeta[]>([]);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
@@ -112,7 +114,7 @@ export default function ReportsPage() {
     if (!clientId) {
       setLedgers([]);
       setSelectedClient(null);
-      setMainChannelId("");
+      setMainChannelIds([]);
       setSelectedSubIds([]);
       setStats(null);
       setReportYear("");
@@ -125,7 +127,7 @@ export default function ReportsPage() {
     }
     const client = clients.find((c) => c.id === clientId) ?? null;
     setSelectedClient(client);
-    setMainChannelId("");
+    setMainChannelIds([]);
     setSelectedSubIds([]);
     setStats(null);
 
@@ -189,10 +191,14 @@ export default function ReportsPage() {
     })();
   }, [clientId, clients]);
 
-  // When main channel changes, reset sub-channel selection
+  // When the main channels change, drop only the sub-channels whose main was
+  // unticked — adding Walmart must not wipe the Makro sub-channels already picked.
   useEffect(() => {
-    setSelectedSubIds([]);
-  }, [mainChannelId]);
+    setSelectedSubIds((prev) =>
+      prev.filter((id) => mainChannelIds.includes(channels.find((c) => c.id === id)?.parentId ?? "")),
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mainChannelIds.join(",")]);
 
   // Derive main channels that have at least one sub-channel assigned to the client
   const allSubChannels = channels.filter((c) => !!c.parentId);
@@ -207,20 +213,15 @@ export default function ReportsPage() {
       )
     : [];
 
-  // Derive sub-channels under the selected main channel
-  const subChannels = mainChannelId
-    ? channels.filter((ch) => ch.parentId === mainChannelId)
-    : [];
+  // Derive sub-channels under the selected main channels
+  const subChannels = channels.filter((ch) => !!ch.parentId && mainChannelIds.includes(ch.parentId));
 
   // If a main channel has no sub-channels, the ledger uses the main channel ID directly
   const hasSubChannels = subChannels.length > 0;
 
-  // The effective channel IDs for the report.
-  const effectiveChannelIds = mainChannelId
-    ? hasSubChannels
-      ? [mainChannelId, ...selectedSubIds]
-      : [mainChannelId]
-    : [];
+  // The effective channel IDs for the report: every ticked main, plus any
+  // ticked sub-channels (which only ever sit under a ticked main).
+  const effectiveChannelIds = [...mainChannelIds, ...selectedSubIds];
 
   /* The period each report will ACTUALLY be labelled with, resolved by the same
      function the server uses, over the same ledgers. Shown next to each download
@@ -262,7 +263,7 @@ export default function ReportsPage() {
       setStatsLoading(false);
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clientId, mainChannelId, selectedSubIds.join(",")]);
+  }, [clientId, mainChannelIds.join(","), selectedSubIds.join(",")]);
 
   // Load report filter options (sub-channels, categories, vendors) for the
   // selection. Vendors feed BOTH cards; the others are Month-End only.
@@ -309,7 +310,7 @@ export default function ReportsPage() {
       }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clientId, mainChannelId, selectedSubIds.join(",")]);
+  }, [clientId, mainChannelIds.join(","), selectedSubIds.join(",")]);
 
   // Data requirement checks
   const hasLedger =
@@ -423,7 +424,6 @@ export default function ReportsPage() {
       if (phLastSold) params.set("phLastSold", String(phLastSold));
       if (phLastReceived) params.set("phLastReceived", String(phLastReceived));
       if (ndMonths) params.set("ndMonths", String(ndMonths));
-      if (mainChannelId) params.set("mainChannelId", mainChannelId);
       if (selectedSheets.length) params.set("sheets", selectedSheets.join(","));
 
       const startedAt = Date.now();
@@ -521,22 +521,33 @@ export default function ReportsPage() {
           </div>
           <div>
             <label className="mb-1 block text-sm font-medium text-[var(--color-text)]">
-              Main Channel
+              Main Channels
             </label>
-            <SearchSelect
-              value={mainChannelId}
-              onChange={setMainChannelId}
-              disabled={!clientId}
-              options={clientMainChannels.map((ch) => ({ value: ch.id, label: ch.name }))}
-              allLabel="Select a main channel"
-              searchLabel="channels"
-              widthClass="w-full"
-            />
+            {clientId ? (
+              <MultiSelect
+                label="Channels"
+                options={clientMainChannels.map((ch) => ({ value: ch.id, label: ch.name }))}
+                selected={mainChannelIds}
+                onChange={setMainChannelIds}
+                summary={
+                  mainChannelIds.length
+                    ? clientMainChannels.filter((ch) => mainChannelIds.includes(ch.id)).map((ch) => ch.name).join(" + ")
+                    : "Select main channels"
+                }
+              />
+            ) : (
+              <div className="rounded-lg border border-[var(--color-border)] bg-zinc-50 px-3 py-1.5 text-sm text-[var(--color-text-muted)]">
+                Select a client first
+              </div>
+            )}
+            <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+              A report holds only the stores of the channels ticked. Tick more than one to combine them.
+            </p>
           </div>
         </div>
 
         {/* Row 2: Sub Channel checkboxes */}
-        {mainChannelId && hasSubChannels && (
+        {hasSubChannels && (
           <div>
             <div className="mb-2 flex items-center justify-between">
               <label className="text-sm font-medium text-[var(--color-text)]">
@@ -579,6 +590,11 @@ export default function ReportsPage() {
                       onChange={() => toggleSubChannel(ch.id)}
                       className="accent-[var(--color-primary)]"
                     />
+                    {mainChannelIds.length > 1 && (
+                      <span className="text-xs text-[var(--color-text-muted)]">
+                        {channels.find((c) => c.id === ch.parentId)?.name} ·
+                      </span>
+                    )}
                     {ch.name}
                     {hasData && (
                       <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-green-500" />
@@ -656,12 +672,12 @@ export default function ReportsPage() {
         {/* Period selectors — Vital Signs. Named, because the Month-End card
             below has an identical Year/Month/Week row and nothing distinguished
             them. */}
-        {clientId && mainChannelId && (
+        {clientId && mainChannelIds.length > 0 && (
           <p className="mb-1 text-xs font-semibold text-[var(--color-text-muted)]">
             Period — Vital Signs
           </p>
         )}
-        {clientId && mainChannelId && (
+        {clientId && mainChannelIds.length > 0 && (
           <div className="mb-4 grid grid-cols-3 gap-3">
             <div>
               <label className="mb-1 block text-xs font-medium text-[var(--color-text-muted)]">
@@ -712,7 +728,7 @@ export default function ReportsPage() {
             </div>
           </div>
         )}
-        {clientId && mainChannelId && (
+        {clientId && mainChannelIds.length > 0 && (
           <p className="mb-4 -mt-2 text-xs text-[var(--color-text-muted)]">
             Filename will read{" "}
             <span className="font-semibold text-[var(--color-text)]">{vsPeriod.label}</span>
@@ -722,7 +738,7 @@ export default function ReportsPage() {
           </p>
         )}
 
-        {clientId && mainChannelId && (
+        {clientId && mainChannelIds.length > 0 && (
           <VendorScope
             vendors={dimVendors}
             rowsWithoutVendor={rowsWithoutVendor}
@@ -765,12 +781,12 @@ export default function ReportsPage() {
             Select a client and channel to generate the report.
           </p>
         )}
-        {clientId && !mainChannelId && (
+        {clientId && mainChannelIds.length === 0 && (
           <p className="mt-4 text-sm text-[var(--color-text-muted)]">
-            Select a main channel to continue.
+            Select one or more main channels to continue.
           </p>
         )}
-        {mainChannelId && hasSubChannels && selectedSubIds.length === 0 && (
+        {hasSubChannels && selectedSubIds.length === 0 && (
           <p className="mt-4 text-sm text-[var(--color-text-muted)]">
             Select at least one sub channel.
           </p>
@@ -828,7 +844,7 @@ export default function ReportsPage() {
         )}
 
         {/* Sheets to include */}
-        {clientId && mainChannelId && (
+        {clientId && mainChannelIds.length > 0 && (
           <div className="mb-4">
             <label className="mb-1 block text-xs font-medium text-[var(--color-text-muted)]">
               Sheets to include
@@ -853,12 +869,12 @@ export default function ReportsPage() {
         )}
 
         {/* Period selectors — Month-End */}
-        {clientId && mainChannelId && (
+        {clientId && mainChannelIds.length > 0 && (
           <p className="mb-1 text-xs font-semibold text-[var(--color-text-muted)]">
             Period — Month-End
           </p>
         )}
-        {clientId && mainChannelId && (
+        {clientId && mainChannelIds.length > 0 && (
           <div className="mb-4 grid grid-cols-3 gap-3">
             <div>
               <label className="mb-1 block text-xs font-medium text-[var(--color-text-muted)]">
@@ -910,7 +926,7 @@ export default function ReportsPage() {
           </div>
         )}
 
-        {clientId && mainChannelId && (
+        {clientId && mainChannelIds.length > 0 && (
           <p className="mb-4 -mt-2 text-xs text-[var(--color-text-muted)]">
             Sheets and filename will read{" "}
             <span className="font-semibold text-[var(--color-text)]">{mePeriod.label}</span>
@@ -920,7 +936,7 @@ export default function ReportsPage() {
           </p>
         )}
 
-        {clientId && mainChannelId && (
+        {clientId && mainChannelIds.length > 0 && (
           <VendorScope
             vendors={dimVendors}
             rowsWithoutVendor={rowsWithoutVendor}
@@ -931,7 +947,7 @@ export default function ReportsPage() {
         )}
 
         {/* Dimension filters — Sub-Channel + Category (empty = all) */}
-        {clientId && mainChannelId && (dimSubChannels.length > 0 || dimCategories.length > 0) && (
+        {clientId && mainChannelIds.length > 0 && (dimSubChannels.length > 0 || dimCategories.length > 0) && (
           <div className="mb-4 space-y-3 rounded-lg border border-[var(--color-border)] bg-zinc-50 p-3">
             <p className="text-xs font-semibold text-[var(--color-text-muted)]">
               Filters — scope every sheet (leave empty for all)
@@ -962,7 +978,7 @@ export default function ReportsPage() {
         )}
 
         {/* Phantom-stock thresholds */}
-        {clientId && mainChannelId && (
+        {clientId && mainChannelIds.length > 0 && (
           <div className="mb-4 grid grid-cols-2 gap-3 rounded-lg border border-[var(--color-border)] bg-zinc-50 p-3">
             <p className="col-span-2 text-xs font-semibold text-[var(--color-text-muted)]">
               Phantom Stock — flag SOH &gt; 0 with no recent sale / receipt
@@ -1001,7 +1017,7 @@ export default function ReportsPage() {
         )}
 
         {/* Numerical Distribution rolling window */}
-        {clientId && mainChannelId && (
+        {clientId && mainChannelIds.length > 0 && (
           <div className="mb-4 rounded-lg border border-[var(--color-border)] bg-zinc-50 p-3">
             <label className="mb-1 block text-xs font-semibold text-[var(--color-text-muted)]">
               Numerical Distribution — rolling window

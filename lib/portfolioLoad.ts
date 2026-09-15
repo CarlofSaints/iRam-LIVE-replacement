@@ -19,7 +19,8 @@ import { getSalesLedger, getSalesLedgerMeta } from "./salesData";
 import { enrichLedger } from "./enrichment";
 import { getStatusDefinitions } from "./statusData";
 import { getChannels } from "./channelData";
-import { expandToChannelGroups, dedupeByFreshestLoad } from "./channelGroup";
+import { expandToChannelGroups, scopeRowsToSelection } from "./channelGroup";
+import { getMergedStores } from "./storeFileData";
 import { resolveReportPeriod } from "./reportPeriod";
 import { capDateColumns } from "./monthEndReport";
 import {
@@ -80,9 +81,10 @@ export async function loadPortfolioHealth(opts: LoadPortfolioOpts): Promise<Load
   // stores are missing from their own channel's portfolio view.
   const readChannelIds = expandToChannelGroups([opts.channelId], allChannels);
 
-  const [clients, discontinuedCodes] = await Promise.all([
+  const [clients, discontinuedCodes, stores] = await Promise.all([
     getActiveClients(),
     discontinuedCodesFor(readChannelIds),
+    getMergedStores(),
   ]);
 
   /* ── Pass 1: metas only ───────────────────────────────────────
@@ -138,18 +140,18 @@ export async function loadPortfolioHealth(opts: LoadPortfolioOpts): Promise<Load
     }
 
     const ledgers = await Promise.all(
-      readChannelIds.map((chId) => getSalesLedger(client.id, chId)),
+      readChannelIds.map(async (chId) => ({ channelId: chId, rows: await getSalesLedger(client.id, chId) })),
     );
-    const rows = ledgers.flat();
-    if (rows.length === 0) {
+    if (ledgers.every((l) => l.rows.length === 0)) {
       clientsWithNoData.push(client.name);
       continue;
     }
 
     // One row per Article|Site, freshest load winning — the companion ledgers
     // mean a re-homed store otherwise appears twice, once live and once as the
-    // frozen pre-split copy.
-    const deduped = dedupeByFreshestLoad(rows, dateColumns);
+    // frozen pre-split copy — then only THIS channel's stores: reading the
+    // group must not put Walmart's stores in Makro's portfolio.
+    const deduped = scopeRowsToSelection(ledgers, [opts.channelId], allChannels, stores, dateColumns);
     const enriched = await enrichLedger(deduped.rows, client.id);
 
     // The engine groups by client, and an enriched row does not carry one.

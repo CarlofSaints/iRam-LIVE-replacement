@@ -16,7 +16,8 @@ import { saveReportToSharePointSafe } from "@/lib/sharepoint";
 import { resolveReportPeriod, reportVendorPart } from "@/lib/reportPeriod";
 import { parseVendorParam, filterRowsByVendor } from "@/lib/vendorScope";
 import { getChannels } from "@/lib/channelData";
-import { expandToChannelGroups, dedupeByFreshestLoad } from "@/lib/channelGroup";
+import { expandToChannelGroups, scopeRowsToSelection, pickedMetas } from "@/lib/channelGroup";
+import { getMergedStores } from "@/lib/storeFileData";
 import { contentDisposition } from "@/lib/contentDisposition";
 
 export const maxDuration = 120;
@@ -71,14 +72,12 @@ export async function GET(req: NextRequest) {
 
     const allRows: Record<string, unknown>[] = [];
     const allDateCols = new Set<string>();
-    const channelNames: string[] = [];
     let clientName = "";
 
     for (const { rows, meta } of ledgerResults) {
       if (rows.length > 0) allRows.push(...rows);
       if (meta) {
         for (const dc of meta.dateColumns ?? []) allDateCols.add(dc);
-        if (meta.channelName) channelNames.push(meta.channelName);
         if (meta.clientName) clientName = meta.clientName;
       }
     }
@@ -96,7 +95,7 @@ export async function GET(req: NextRequest) {
        otherwise August) put that month into an August report's series and its
        averages. Same defect as the Month-End report, same cure. */
     const period = resolveReportPeriod(
-      ledgerResults.map(({ meta }) => meta),
+      pickedMetas(ledgerResults, channelIds, allChannelsForGroup),
       { year: yearParam, month: monthParam, week: weekParam },
     );
 
@@ -113,12 +112,25 @@ export async function GET(req: NextRequest) {
        row in its owner's ledger and the frozen pre-split copy in the ledger it
        was loaded from. Keeping the most recently loaded copy resolves that in
        favour of the live one — and drops the fossil rather than printing it. */
-    const deduped = dedupeByFreshestLoad(allRows, dateColumns);
-    if (deduped.supersededRows > 0) {
+    /* …then cut back to the channels that were PICKED: a Walmart report is
+       Walmart's stores only, unless Makro was ticked as well. See
+       scopeRowsToSelection. */
+    const deduped = scopeRowsToSelection(
+      ledgerResults, channelIds, allChannelsForGroup, await getMergedStores(), dateColumns,
+    );
+    const channelNames = deduped.channelNames;
+    if (deduped.supersededRows > 0 || deduped.droppedOtherChannel > 0) {
       console.log(
         `[vital-signs] ${clientName}: dropped ${deduped.supersededRows} duplicate row(s) ` +
         `across ${readChannelIds.length} ledger(s) in the channel group ` +
-        `(${deduped.supersededStale} of them all-zero stale copies).`,
+        `(${deduped.supersededStale} of them all-zero stale copies), and ` +
+        `${deduped.droppedOtherChannel} row(s) on channels not picked.`,
+      );
+    }
+    if (deduped.rows.length === 0) {
+      return Response.json(
+        { error: `No sales data found for ${channelNames.join(" + ")}` },
+        { status: 404 }
       );
     }
 
@@ -232,7 +244,7 @@ export async function GET(req: NextRequest) {
     const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx", compression: true });
 
     // 7. Log activity
-    const channelLabel = channelNames.join(", ") || channelIds.join(", ");
+    const channelLabel = channelNames.join(" + ");
     addLog({
       userId: session.userId,
       userName: session.name,
@@ -252,7 +264,9 @@ export async function GET(req: NextRequest) {
 
     // Period resolved further up, before the date columns were capped to it.
     const datePart = period.filePart;
-    const fileName = `Vital Signs - ${clientName} - ${vendorNum} - ${datePart}.xlsx`;
+    // The channel is in the name, or a Makro and a Walmart run are the same file
+    // (and the second SharePoint save lands on top of the first).
+    const fileName = `Vital Signs - ${clientName} - ${channelNames.join(" + ")} - ${vendorNum} - ${datePart}.xlsx`;
     console.log(
       `[vital-signs] period ${period.label} — year:${period.source.year} month:${period.source.month} week:${period.source.week}`,
     );

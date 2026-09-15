@@ -32,7 +32,7 @@ import { saveReportToSharePointSafe } from "@/lib/sharepoint";
 import { resolveReportPeriod, reportVendorPart } from "@/lib/reportPeriod";
 import { parseVendorParam, rowVendor } from "@/lib/vendorScope";
 import { getChannels } from "@/lib/channelData";
-import { expandToChannelGroups, dedupeByFreshestLoad } from "@/lib/channelGroup";
+import { expandToChannelGroups, scopeRowsToSelection, pickedMetas } from "@/lib/channelGroup";
 import { contentDisposition } from "@/lib/contentDisposition";
 
 /* This report is an order of magnitude heavier than Vital Signs: it reads the
@@ -138,14 +138,12 @@ export async function GET(req: NextRequest) {
 
     const allRows: Record<string, unknown>[] = [];
     const allDateCols = new Set<string>();
-    const channelNames: string[] = [];
     let clientName = "";
 
     for (const { rows, meta } of ledgerResults) {
       if (rows.length > 0) allRows.push(...rows);
       if (meta) {
         for (const dc of meta.dateColumns ?? []) allDateCols.add(dc);
-        if (meta.channelName) channelNames.push(meta.channelName);
         if (meta.clientName) clientName = meta.clientName;
       }
     }
@@ -163,7 +161,7 @@ export async function GET(req: NextRequest) {
        filename and the sheet headers but none of the numbers underneath
        them. See lib/reportPeriod.ts for how each field resolves. */
     const period = resolveReportPeriod(
-      ledgerResults.map(({ meta }) => meta),
+      pickedMetas(ledgerResults, channelIds, allChannelsForGroup),
       { year: yearParam, month: monthParam, week: weekParam },
     );
     const rYear = period.year;
@@ -186,12 +184,24 @@ export async function GET(req: NextRequest) {
     /* One row per Article|Site, freshest load winning — the companion ledgers
        hold the live copy of any store the split re-homed, and the ledger it was
        loaded from still holds the frozen one. */
-    const deduped = dedupeByFreshestLoad(allRows, dateColumns);
-    if (deduped.supersededRows > 0) {
+    /* …then cut back to the channels that were PICKED — see
+       scopeRowsToSelection. A Walmart report is Walmart's stores only. */
+    const deduped = scopeRowsToSelection(
+      ledgerResults, channelIds, allChannelsForGroup, await getMergedStores(), dateColumns,
+    );
+    const channelNames = deduped.channelNames;
+    if (deduped.supersededRows > 0 || deduped.droppedOtherChannel > 0) {
       console.log(
         `[month-end] ${clientName}: dropped ${deduped.supersededRows} duplicate row(s) ` +
         `across ${readChannelIds.length} ledger(s) in the channel group ` +
-        `(${deduped.supersededStale} of them all-zero stale copies).`,
+        `(${deduped.supersededStale} of them all-zero stale copies), and ` +
+        `${deduped.droppedOtherChannel} row(s) on channels not picked.`,
+      );
+    }
+    if (deduped.rows.length === 0) {
+      return Response.json(
+        { error: `No sales data found for ${channelNames.join(" + ")}` },
+        { status: 404 }
       );
     }
 
@@ -267,7 +277,7 @@ export async function GET(req: NextRequest) {
        the sub-channel / category filters the user applied. */
     const vendorNum = reportVendorPart(reportRows, client?.vendorNumbers);
     const rWeek = period.week;
-    const channelLabel = channelNames.join(", ") || channelIds.join(", ");
+    const channelLabel = channelNames.join(" + ");
 
     // So "why does it say Wk1?" is answerable from the logs without a redeploy.
     console.log(
@@ -380,7 +390,9 @@ export async function GET(req: NextRequest) {
 
     // 10. Return as downloadable xlsx
     const datePart = period.filePart;
-    const fileName = `Month End - ${clientName || "Report"} - ${vendorNum} - ${datePart}.xlsx`;
+    // The channel is in the name, or a Makro and a Walmart run are the same file
+    // (and the second SharePoint save lands on top of the first).
+    const fileName = `Month End - ${clientName || "Report"} - ${channelLabel} - ${vendorNum} - ${datePart}.xlsx`;
 
     const fileBytes = new Uint8Array(buf);
     // Auto-save to the client's Month-End SharePoint folder (best-effort)

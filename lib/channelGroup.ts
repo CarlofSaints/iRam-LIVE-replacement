@@ -68,6 +68,23 @@ export function expandToChannelGroups(
   return out;
 }
 
+/**
+ * The metas that should decide a report's PERIOD: the picked channels' own
+ * ledgers, not the companions read alongside them. Falls back to every ledger
+ * read when none of the picked ones has a meta, rather than resolving nothing.
+ */
+export function pickedMetas<M>(
+  ledgers: { channelId: string; meta: M | null }[],
+  selectedIds: string[],
+  allChannels: Channel[],
+): (M | null)[] {
+  const byId = new Map(allChannels.map((c) => [c.id, c]));
+  const mainOf = (id: string) => byId.get(id)?.parentId ?? id;
+  const wanted = new Set(selectedIds.map(mainOf));
+  const picked = ledgers.filter((l) => wanted.has(mainOf(l.channelId)) && l.meta);
+  return (picked.length ? picked : ledgers).map((l) => l.meta);
+}
+
 /** The ledger key, matching salesData's buildRowKey. */
 function rowKey(row: Record<string, unknown>): string | null {
   const a = String(row["Article"] ?? "").trim().toLowerCase();
@@ -139,4 +156,96 @@ export function dedupeByFreshestLoad(
     else out.push(best.get(item)!);
   }
   return { rows: out, supersededRows, supersededStale };
+}
+
+export interface ScopedRows {
+  rows: Record<string, unknown>[];
+  supersededRows: number;
+  supersededStale: number;
+  /** Rows whose store belongs to a channel in the group that was NOT picked. */
+  droppedOtherChannel: number;
+  /** The picked MAIN channels' names, and only those — for labels and filenames. */
+  channelNames: string[];
+}
+
+/**
+ * Reading the whole group is only half the job: the rows must then be cut back
+ * to the channels that were actually PICKED.
+ *
+ * Reading Makro's companions was added so Walmart's live rows became visible
+ * (f613e0c), but nothing filtered them back out, so a Walmart report carried
+ * every Makro store and a Makro report every Walmart store, and both files were
+ * labelled with the whole group's names (Carl, 15 Sep 2026).
+ *
+ * Each row belongs to the channel that OWNS its store: the store master's
+ * `channel`, matched by name within the group, which is exactly how the upload
+ * split decides (uploads/route.ts). A site with no store-master record belongs
+ * to the ledger it was read from. The fossil copy of a Walmart store left in
+ * the Makro ledger therefore belongs to Walmart too, not to Makro.
+ *
+ * Deduplication runs per GROUP, never across groups: a site code is unique
+ * inside one group but not across unrelated channels, so picking Makro and
+ * Massbuild together must not collapse their rows onto each other.
+ */
+export function scopeRowsToSelection(
+  ledgers: { channelId: string; rows: Record<string, unknown>[] }[],
+  selectedIds: string[],
+  allChannels: Channel[],
+  stores: { siteNum?: string; channel?: string }[],
+  dateColumns: string[],
+): ScopedRows {
+  const byId = new Map(allChannels.map((c) => [c.id, c]));
+  const mainOf = (id: string) => byId.get(id)?.parentId ?? id;
+  const selectedMains = [...new Set(selectedIds.map(mainOf))];
+  const wanted = new Set(selectedMains);
+
+  const groupKey = (mainId: string) => {
+    const ids = buildChannelGroup(mainId, allChannels).map((c) => c.id).sort();
+    return ids.length ? ids.join(",") : mainId;
+  };
+  const buckets = new Map<string, { mainId: string; ledgers: typeof ledgers }>();
+  for (const l of ledgers) {
+    const mainId = mainOf(l.channelId);
+    const k = groupKey(mainId);
+    const b = buckets.get(k) ?? { mainId, ledgers: [] };
+    b.ledgers.push(l);
+    buckets.set(k, b);
+  }
+
+  const out: Record<string, unknown>[] = [];
+  let supersededRows = 0, supersededStale = 0, droppedOtherChannel = 0;
+
+  for (const { mainId, ledgers: group } of buckets.values()) {
+    const origin = new Map<Record<string, unknown>, string>();
+    const all: Record<string, unknown>[] = [];
+    for (const l of group) {
+      for (const r of l.rows) { origin.set(r, mainOf(l.channelId)); all.push(r); }
+    }
+    const d = dedupeByFreshestLoad(all, dateColumns);
+    supersededRows += d.supersededRows;
+    supersededStale += d.supersededStale;
+
+    const byName = new Map<string, string>();
+    for (const c of buildChannelGroup(mainId, allChannels)) byName.set(c.name.trim().toUpperCase(), c.id);
+    const siteOwner = new Map<string, string>();
+    for (const s of stores) {
+      const owner = byName.get(String(s.channel ?? "").trim().toUpperCase());
+      if (owner && s.siteNum) siteOwner.set(String(s.siteNum).trim().toLowerCase(), owner);
+    }
+
+    for (const r of d.rows) {
+      const site = String(r["Site"] ?? "").trim().toLowerCase();
+      const owner = (site && siteOwner.get(site)) || origin.get(r);
+      if (owner && wanted.has(owner)) out.push(r);
+      else droppedOtherChannel++;
+    }
+  }
+
+  return {
+    rows: out,
+    supersededRows,
+    supersededStale,
+    droppedOtherChannel,
+    channelNames: selectedMains.map((id) => byId.get(id)?.name ?? id),
+  };
 }

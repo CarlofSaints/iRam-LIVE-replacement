@@ -13,6 +13,8 @@ import {
   buildChannelGroup,
   expandToChannelGroups,
   dedupeByFreshestLoad,
+  scopeRowsToSelection,
+  pickedMetas,
 } from "../lib/channelGroup";
 import type { Channel } from "../lib/types";
 
@@ -135,6 +137,71 @@ console.log("\n── …but nothing else is disturbed ────────�
     { Article: "A", Site: "M01", SOH: 42, "07-2026": 1, _lastLoadedAt: "2026-08-18T00:00:00Z" },
   ], DATES);
   eq("an unstamped row loses to a stamped one", unstamped.rows[0]["SOH"], 42);
+}
+
+console.log("\n── A report holds ONLY the channels picked (15 Sep 2026) ──");
+{
+  /* Carl: "when a user selects Walmart, the vital signs report includes all
+     makro stores too … same thing if i select only Makro". The group is read
+     whole so Walmart's live rows are visible; it must then be cut back. */
+  const DATES = ["08-2026"];
+  const STORES = [
+    { siteNum: "M01", channel: "MAKRO" },
+    { siteNum: "A01", channel: "WALMART" },
+    { siteNum: "B01", channel: "BUILDERS" },
+  ];
+  const row = (Site: string, SOH: number, at: string) =>
+    ({ Article: "415952", Site, SOH, "08-2026": SOH, _lastLoadedAt: at });
+  const makroLedger = {
+    channelId: "makro",
+    rows: [
+      row("M01", 10, "2026-08-18T00:00:00Z"),
+      row("A01", 0, "2026-06-01T00:00:00Z"),   // pre-split fossil of a Walmart store
+      row("X99", 5, "2026-08-18T00:00:00Z"),   // site not in the store master
+    ],
+  };
+  const walmartLedger = { channelId: "walmart", rows: [row("A01", 379, "2026-08-18T00:00:00Z")] };
+  const both = [makroLedger, walmartLedger];
+  const sites = (rows: Record<string, unknown>[]) => rows.map((r) => r["Site"]).sort().join(",");
+
+  const w = scopeRowsToSelection(both, ["walmart"], CHANNELS, STORES, DATES);
+  eq("Walmart only: Walmart's store, and no Makro store", sites(w.rows), "A01");
+  eq("…it is the live row, not the fossil", w.rows[0]?.["SOH"], 379);
+  eq("…labelled Walmart alone", w.channelNames.join(" + "), "WALMART");
+  eq("…and the Makro rows are counted as dropped", w.droppedOtherChannel, 2);
+
+  const m = scopeRowsToSelection(both, ["makro"], CHANNELS, STORES, DATES);
+  eq("Makro only: no Walmart store, not even its fossil copy", sites(m.rows), "M01,X99");
+  eq("…a site with no store record stays with the ledger it came from", m.rows.some((r) => r["Site"] === "X99"), true);
+  eq("…labelled Makro alone", m.channelNames.join(" + "), "MAKRO");
+
+  const mw = scopeRowsToSelection(both, ["makro", "walmart"], CHANNELS, STORES, DATES);
+  eq("Makro + Walmart ticked: both channels' stores", sites(mw.rows), "A01,M01,X99");
+  eq("…with the fossil still collapsed onto the live row", mw.rows.find((r) => r["Site"] === "A01")?.["SOH"], 379);
+  eq("…labelled with both", mw.channelNames.join(" + "), "MAKRO + WALMART");
+
+  eq("a Makro sub-channel pick means Makro's stores",
+    sites(scopeRowsToSelection(both, ["makro", "makro-dc"], CHANNELS, STORES, DATES).rows), "M01,X99");
+
+  // Unrelated channels share site codes; picking both must never merge them.
+  const clash = scopeRowsToSelection(
+    [
+      { channelId: "makro", rows: [row("M01", 10, "2026-08-18T00:00:00Z")] },
+      { channelId: "builders", rows: [row("M01", 77, "2026-08-01T00:00:00Z")] },
+    ],
+    ["makro", "builders"], CHANNELS, [], DATES,
+  );
+  eq("the same Article|Site on unrelated channels is two rows, not one", clash.rows.length, 2);
+  eq("…nothing reported as superseded", clash.supersededRows, 0);
+
+  const metas = pickedMetas(
+    [{ channelId: "makro", meta: "makro-meta" }, { channelId: "walmart", meta: "walmart-meta" }],
+    ["walmart"], CHANNELS,
+  );
+  eq("the period comes from the picked channel's own ledger", metas.join(","), "walmart-meta");
+  eq("…falling back to every ledger read when the picked one has none",
+    pickedMetas([{ channelId: "makro", meta: "makro-meta" }, { channelId: "walmart", meta: null }], ["walmart"], CHANNELS).join(","),
+    "makro-meta,");
 }
 
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"} — ${pass} passed, ${fail} failed\n`);
