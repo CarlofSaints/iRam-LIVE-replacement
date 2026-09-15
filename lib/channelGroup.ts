@@ -164,6 +164,8 @@ export interface ScopedRows {
   supersededStale: number;
   /** Rows whose store belongs to a channel in the group that was NOT picked. */
   droppedOtherChannel: number;
+  /** Rows on a picked channel whose store is not in a ticked sub-channel. */
+  droppedSubChannel: number;
   /** The picked MAIN channels' names, and only those — for labels and filenames. */
   channelNames: string[];
 }
@@ -191,13 +193,31 @@ export function scopeRowsToSelection(
   ledgers: { channelId: string; rows: Record<string, unknown>[] }[],
   selectedIds: string[],
   allChannels: Channel[],
-  stores: { siteNum?: string; channel?: string }[],
+  stores: { siteNum?: string; channel?: string; subChannel?: string }[],
   dateColumns: string[],
 ): ScopedRows {
   const byId = new Map(allChannels.map((c) => [c.id, c]));
   const mainOf = (id: string) => byId.get(id)?.parentId ?? id;
   const selectedMains = [...new Set(selectedIds.map(mainOf))];
   const wanted = new Set(selectedMains);
+
+  /* Ticked SUB-channels narrow their main channel to those stores — the store
+     file's SUB_CHANNEL, e.g. Makro's liquor stores vs its main stores (Carl,
+     15 Sep 2026: some clients report liquor only, some main only). A main with
+     every sub ticked, or none, is not narrowed, and a main that has no
+     sub-channels (Walmart) is never touched by another main's ticks. */
+  const subsByMain = new Map<string, Set<string>>();
+  for (const id of new Set(selectedIds)) {
+    const c = byId.get(id);
+    if (!c?.parentId) continue;
+    const set = subsByMain.get(c.parentId) ?? new Set<string>();
+    set.add(c.name.trim().toUpperCase());
+    subsByMain.set(c.parentId, set);
+  }
+  for (const [mainId, set] of [...subsByMain]) {
+    const total = allChannels.filter((c) => c.parentId === mainId).length;
+    if (set.size >= total) subsByMain.delete(mainId);
+  }
 
   const groupKey = (mainId: string) => {
     const ids = buildChannelGroup(mainId, allChannels).map((c) => c.id).sort();
@@ -213,7 +233,7 @@ export function scopeRowsToSelection(
   }
 
   const out: Record<string, unknown>[] = [];
-  let supersededRows = 0, supersededStale = 0, droppedOtherChannel = 0;
+  let supersededRows = 0, supersededStale = 0, droppedOtherChannel = 0, droppedSubChannel = 0;
 
   for (const { mainId, ledgers: group } of buckets.values()) {
     const origin = new Map<Record<string, unknown>, string>();
@@ -228,16 +248,25 @@ export function scopeRowsToSelection(
     const byName = new Map<string, string>();
     for (const c of buildChannelGroup(mainId, allChannels)) byName.set(c.name.trim().toUpperCase(), c.id);
     const siteOwner = new Map<string, string>();
+    const siteSub = new Map<string, string>();
     for (const s of stores) {
       const owner = byName.get(String(s.channel ?? "").trim().toUpperCase());
-      if (owner && s.siteNum) siteOwner.set(String(s.siteNum).trim().toLowerCase(), owner);
+      if (owner && s.siteNum) {
+        const key = String(s.siteNum).trim().toLowerCase();
+        siteOwner.set(key, owner);
+        siteSub.set(key, String(s.subChannel ?? "").trim().toUpperCase());
+      }
     }
 
     for (const r of d.rows) {
       const site = String(r["Site"] ?? "").trim().toLowerCase();
       const owner = (site && siteOwner.get(site)) || origin.get(r);
-      if (owner && wanted.has(owner)) out.push(r);
-      else droppedOtherChannel++;
+      if (!owner || !wanted.has(owner)) { droppedOtherChannel++; continue; }
+      // A store the store master cannot place in a sub-channel cannot be shown
+      // to be liquor or main, so a narrowed report leaves it out — counted.
+      const subs = subsByMain.get(owner);
+      if (subs && !subs.has(siteSub.get(site) ?? "")) { droppedSubChannel++; continue; }
+      out.push(r);
     }
   }
 
@@ -246,6 +275,13 @@ export function scopeRowsToSelection(
     supersededRows,
     supersededStale,
     droppedOtherChannel,
-    channelNames: selectedMains.map((id) => byId.get(id)?.name ?? id),
+    droppedSubChannel,
+    // A narrowed channel says so, or a liquor run and a main run carry the same
+    // label and filename (and overwrite each other in SharePoint).
+    channelNames: selectedMains.map((id) => {
+      const name = byId.get(id)?.name ?? id;
+      const subs = subsByMain.get(id);
+      return subs ? `${name} (${[...subs].sort().join(", ")})` : name;
+    }),
   };
 }

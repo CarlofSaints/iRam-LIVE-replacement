@@ -18,8 +18,6 @@ interface ReportStats {
   totalStores: number;
 }
 
-// Sub-channels pre-selected by default on the report (others must be ticked in).
-const DEFAULT_SUBCHANNELS = ["MAKRO", "BWH", "BEX", "BTD", "SS"];
 
 const REPORT_SHEETS = [
   { key: "sales", label: "Sales" },
@@ -71,7 +69,6 @@ export default function ReportsPage() {
   // Dimension filters — Month-End (Sub-Channel + Category)
   const [dimSubChannels, setDimSubChannels] = useState<string[]>([]);
   const [dimCategories, setDimCategories] = useState<string[]>([]);
-  const [meSubChannels, setMeSubChannels] = useState<string[]>([]);
   const [meCategories, setMeCategories] = useState<string[]>([]);
   /* Vendors present in the selected channels' rows, plus how many rows carry
      no vendor at all. A client with ONE vendor never sees this control — see
@@ -268,7 +265,6 @@ export default function ReportsPage() {
   // Load report filter options (sub-channels, categories, vendors) for the
   // selection. Vendors feed BOTH cards; the others are Month-End only.
   useEffect(() => {
-    setMeSubChannels([]);
     setMeCategories([]);
     setMeVendors([]);
     setVsVendors([]);
@@ -293,9 +289,6 @@ export default function ReportsPage() {
              user asks for, never something that happens to them. */
           setDimVendors(d.vendors ?? []);
           setRowsWithoutVendor(d.rowsWithoutVendor ?? 0);
-          // Default-select the standard sub-channels that exist (else leave all)
-          const def = subs.filter((s) => DEFAULT_SUBCHANNELS.includes(String(s).trim().toUpperCase()));
-          setMeSubChannels(def);
         } else {
           setDimSubChannels([]);
           setDimCategories([]);
@@ -338,20 +331,6 @@ export default function ReportsPage() {
     return analyzeCoverage([...cols]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ledgers, effectiveChannelIds.join(",")]);
-
-  function toggleSubChannel(id: string) {
-    setSelectedSubIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    );
-  }
-
-  function selectAllSubs() {
-    setSelectedSubIds(subChannels.map((ch) => ch.id));
-  }
-
-  function clearAllSubs() {
-    setSelectedSubIds([]);
-  }
 
   // Build a toast suffix describing the SharePoint auto-save result (from response headers)
   function spSaveSuffix(res: Response): string {
@@ -418,7 +397,6 @@ export default function ReportsPage() {
       if (meYear) params.set("year", String(meYear));
       if (meMonth) params.set("month", String(meMonth));
       if (meWeek) params.set("week", String(meWeek));
-      if (meSubChannels.length) params.set("subChannels", meSubChannels.join(","));
       if (meCategories.length) params.set("categories", meCategories.join(","));
       if (meVendors.length) params.set("vendors", meVendors.join(","));
       if (phLastSold) params.set("phLastSold", String(phLastSold));
@@ -546,63 +524,34 @@ export default function ReportsPage() {
           </div>
         </div>
 
-        {/* Row 2: Sub Channel checkboxes */}
+        {/* Row 2: Sub Channels — the store file's SUB_CHANNEL (e.g. Makro main
+            vs liquor stores). ONE filter for every report on this page. */}
         {hasSubChannels && (
           <div>
-            <div className="mb-2 flex items-center justify-between">
-              <label className="text-sm font-medium text-[var(--color-text)]">
-                Sub Channels
-              </label>
-              <div className="flex gap-2">
-                <button
-                  onClick={selectAllSubs}
-                  className="text-xs font-medium text-[var(--color-primary)] hover:underline"
-                >
-                  Select All
-                </button>
-                <span className="text-xs text-[var(--color-text-muted)]">|</span>
-                <button
-                  onClick={clearAllSubs}
-                  className="text-xs font-medium text-[var(--color-text-muted)] hover:underline"
-                >
-                  Clear
-                </button>
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {subChannels.map((ch) => {
-                const checked = selectedSubIds.includes(ch.id);
-                const hasData = ledgers.some(
-                  (l) => l.channelId === ch.id && l.totalRows > 0
-                );
-                return (
-                  <label
-                    key={ch.id}
-                    className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors ${
-                      checked
-                        ? "border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)]"
-                        : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-zinc-400"
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggleSubChannel(ch.id)}
-                      className="accent-[var(--color-primary)]"
-                    />
-                    {mainChannelIds.length > 1 && (
-                      <span className="text-xs text-[var(--color-text-muted)]">
-                        {channels.find((c) => c.id === ch.parentId)?.name} ·
-                      </span>
-                    )}
-                    {ch.name}
-                    {hasData && (
-                      <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-green-500" />
-                    )}
-                  </label>
-                );
-              })}
-            </div>
+            <label className="mb-1 block text-sm font-medium text-[var(--color-text)]">
+              Sub Channels
+            </label>
+            <MultiSelect
+              label="Sub-channels"
+              options={subChannels.map((ch) => ({
+                value: ch.id,
+                label: mainChannelIds.length > 1
+                  ? `${channels.find((c) => c.id === ch.parentId)?.name ?? ""} · ${ch.name}`
+                  : ch.name,
+              }))}
+              selected={selectedSubIds}
+              onChange={setSelectedSubIds}
+              summary={
+                selectedSubIds.length === 0
+                  ? "Select sub-channels"
+                  : selectedSubIds.length === subChannels.length
+                    ? `All ${subChannels.length} sub-channels`
+                    : subChannels.filter((ch) => selectedSubIds.includes(ch.id)).map((ch) => ch.name).join(", ")
+              }
+            />
+            <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+              Every report below uses only the stores in the chosen sub-channels, e.g. only liquor or only main stores.
+            </p>
           </div>
         )}
       </div>
@@ -946,23 +895,15 @@ export default function ReportsPage() {
           />
         )}
 
-        {/* Dimension filters — Sub-Channel + Category (empty = all) */}
-        {clientId && mainChannelIds.length > 0 && (dimSubChannels.length > 0 || dimCategories.length > 0) && (
+        {/* Dimension filter — Category (empty = all). Sub-channels are NOT here:
+            the Sub Channels ticks at the top scope every report on this page,
+            and a second, Month-End-only sub-channel filter could contradict
+            them (liquor ticked above, liquor excluded here = an empty report). */}
+        {clientId && mainChannelIds.length > 0 && dimCategories.length > 0 && (
           <div className="mb-4 space-y-3 rounded-lg border border-[var(--color-border)] bg-zinc-50 p-3">
             <p className="text-xs font-semibold text-[var(--color-text-muted)]">
-              Filters — scope every sheet (leave empty for all)
+              Filters — scope every sheet (leave empty for all). Sub-channels are chosen at the top of the page.
             </p>
-            {dimSubChannels.length > 0 && (
-              <FilterChips
-                title="Sub-Channel"
-                options={dimSubChannels}
-                selected={meSubChannels}
-                onToggle={(v) =>
-                  setMeSubChannels((p) => (p.includes(v) ? p.filter((x) => x !== v) : [...p, v]))
-                }
-                onClear={() => setMeSubChannels([])}
-              />
-            )}
             {dimCategories.length > 0 && (
               <FilterChips
                 title="Category"

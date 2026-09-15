@@ -190,12 +190,13 @@ export async function GET(req: NextRequest) {
       ledgerResults, channelIds, allChannelsForGroup, await getMergedStores(), dateColumns,
     );
     const channelNames = deduped.channelNames;
-    if (deduped.supersededRows > 0 || deduped.droppedOtherChannel > 0) {
+    if (deduped.supersededRows > 0 || deduped.droppedOtherChannel > 0 || deduped.droppedSubChannel > 0) {
       console.log(
         `[month-end] ${clientName}: dropped ${deduped.supersededRows} duplicate row(s) ` +
         `across ${readChannelIds.length} ledger(s) in the channel group ` +
-        `(${deduped.supersededStale} of them all-zero stale copies), and ` +
-        `${deduped.droppedOtherChannel} row(s) on channels not picked.`,
+        `(${deduped.supersededStale} of them all-zero stale copies), ` +
+        `${deduped.droppedOtherChannel} row(s) on channels not picked, and ` +
+        `${deduped.droppedSubChannel} row(s) outside the ticked sub-channels.`,
       );
     }
     if (deduped.rows.length === 0) {

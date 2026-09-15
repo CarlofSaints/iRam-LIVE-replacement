@@ -204,5 +204,44 @@ console.log("\n── A report holds ONLY the channels picked (15 Sep 2026) ─�
     "makro-meta,");
 }
 
+console.log("\n── Liquor vs main stores: the SUB_CHANNEL ticks ─────────");
+{
+  /* Carl, 15 Sep 2026: "some clients i need to run the report only for the
+     liquor stores and some clients only for main stores". */
+  const CH: Channel[] = [
+    ch("makro", "MAKRO (MAIN)", { companionChannelIds: ["walmart"] }),
+    ch("walmart", "WALMART"),
+    ch("sub-makro", "MAKRO", { parentId: "makro" }),
+    ch("sub-liquor", "MAKRO LIQUOR", { parentId: "makro" }),
+  ];
+  const STORES = [
+    { siteNum: "M01", channel: "MAKRO (MAIN)", subChannel: "Makro" },           // case differs
+    { siteNum: "L01", channel: "MAKRO (MAIN)", subChannel: "MAKRO LIQUOR " },   // trailing space
+    { siteNum: "A01", channel: "WALMART", subChannel: "WALMART" },
+  ];
+  const r = (Site: string) => ({ Article: "1", Site, SOH: 1, "08-2026": 1, _lastLoadedAt: "2026-08-18T00:00:00Z" });
+  const L = [
+    { channelId: "makro", rows: [r("M01"), r("L01"), r("X99")] },   // X99: no store record
+    { channelId: "walmart", rows: [r("A01")] },
+  ];
+  const DATES = ["08-2026"];
+  const sites = (rows: Record<string, unknown>[]) => rows.map((x) => x["Site"]).sort().join(",");
+
+  const liq = scopeRowsToSelection(L, ["makro", "sub-liquor"], CH, STORES, DATES);
+  eq("liquor ticked: the liquor store only", sites(liq.rows), "L01");
+  eq("…the main store and the unplaceable one are counted out", liq.droppedSubChannel, 2);
+  eq("…and the label says liquor, so it cannot overwrite a main run", liq.channelNames.join(" + "), "MAKRO (MAIN) (MAKRO LIQUOR)");
+
+  eq("main ticked: the main store only",
+    sites(scopeRowsToSelection(L, ["makro", "sub-makro"], CH, STORES, DATES).rows), "M01");
+
+  const all = scopeRowsToSelection(L, ["makro", "sub-makro", "sub-liquor"], CH, STORES, DATES);
+  eq("every sub ticked: not narrowed, nothing left out", sites(all.rows), "L01,M01,X99");
+  eq("…labelled as the plain channel", all.channelNames.join(" + "), "MAKRO (MAIN)");
+
+  eq("Makro's liquor tick never narrows Walmart, which has no sub-channels",
+    sites(scopeRowsToSelection(L, ["makro", "sub-liquor", "walmart"], CH, STORES, DATES).rows), "A01,L01");
+}
+
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"} — ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);
