@@ -15,6 +15,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { authFetch } from "@/lib/useAuth";
+import DataTable from "@/components/DataTable";
 
 interface AuditRow {
   id: string;
@@ -228,46 +229,47 @@ export default function StoreReportAuditPanel() {
           )}
 
           {rows.length > 0 && (
-            <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-[var(--color-border)] bg-zinc-50 text-left text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
-                    <th className="px-4 py-2">Time</th>
-                    <th className="px-4 py-2">Site</th>
-                    <th className="px-4 py-2">Store</th>
-                    <th className="px-4 py-2">Channel</th>
-                    <th className="px-4 py-2">Rep</th>
-                    <th className="px-4 py-2">What happened</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((r) => {
+            <DataTable
+              id="store-reports:send-audit"
+              rows={rows}
+              rowKey={(r) => r.id}
+              className="text-sm"
+              maxHeightClass="max-h-[40rem]"
+              initialSort="time"
+              initialDir="desc"
+              columns={[
+                { key: "time", label: "Time", width: 80, sort: (r) => r.at, className: "whitespace-nowrap text-[var(--color-text-muted)]", render: (r) => time(r.at) },
+                { key: "site", label: "Site", width: 90, sort: (r) => r.siteCode, className: "font-mono font-medium", render: (r) => r.siteCode || "—" },
+                { key: "store", label: "Store", width: 240, sort: (r) => r.store, className: "text-[var(--color-text-muted)]", render: (r) => r.store || "—" },
+                { key: "channel", label: "Channel", width: 130, sort: (r) => r.channel, className: "text-[var(--color-text-muted)]", render: (r) => r.channel || "—" },
+                {
+                  key: "rep", label: "Rep", width: 240, sort: (r) => r.repName || r.repEmail,
+                  render: (r) => (
+                    <>
+                      <div>{r.repName || "—"}</div>
+                      <div className="text-xs text-[var(--color-text-muted)]">{r.repEmail || "no email"}</div>
+                    </>
+                  ),
+                },
+                {
+                  key: "what", label: "What happened", width: 460, sort: (r) => meta(r.status).label,
+                  render: (r) => {
                     const m = meta(r.status);
                     return (
-                      <tr key={r.id} className="border-b border-[var(--color-border)] last:border-0 align-top">
-                        <td className="whitespace-nowrap px-4 py-2 text-[var(--color-text-muted)]">{time(r.at)}</td>
-                        <td className="px-4 py-2 font-mono font-medium">{r.siteCode || "—"}</td>
-                        <td className="px-4 py-2 text-[var(--color-text-muted)]">{r.store || "—"}</td>
-                        <td className="px-4 py-2 text-[var(--color-text-muted)]">{r.channel || "—"}</td>
-                        <td className="px-4 py-2">
-                          <div>{r.repName || "—"}</div>
-                          <div className="text-xs text-[var(--color-text-muted)]">{r.repEmail || "no email"}</div>
-                        </td>
-                        <td className="px-4 py-2">
-                          <span className={"inline-block rounded-full border px-2 py-0.5 text-xs font-medium " + TONE_CLASS[m.tone]}>
-                            {m.label}
-                            {r.status === "sent" && r.actions !== undefined ? ` · ${r.actions} actions` : ""}
-                          </span>
-                          {m.help && (
-                            <div className="mt-1 text-xs text-[var(--color-text-muted)]">{m.help}</div>
-                          )}
-                        </td>
-                      </tr>
+                      <>
+                        <span className={"inline-block rounded-full border px-2 py-0.5 text-xs font-medium " + TONE_CLASS[m.tone]}>
+                          {m.label}
+                          {r.status === "sent" && r.actions !== undefined ? ` · ${r.actions} actions` : ""}
+                        </span>
+                        {m.help && (
+                          <div className="mt-1 text-xs text-[var(--color-text-muted)]">{m.help}</div>
+                        )}
+                      </>
                     );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                  },
+                },
+              ]}
+            />
           )}
 
           <p className="mt-3 text-xs text-[var(--color-text-muted)]">

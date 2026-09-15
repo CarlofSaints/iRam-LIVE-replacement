@@ -1,9 +1,10 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { authFetch, useAuth, usePermissions } from "@/lib/useAuth";
 import SearchSelect from "@/components/SearchSelect";
 import StoreReportAuditPanel from "@/components/StoreReportAuditPanel";
+import DataTable from "@/components/DataTable";
 
 // Loose code compare (mirrors the server) + light name-similarity ranking
 // (Bravo-style: normalise, then shared-token + substring score).
@@ -731,7 +732,7 @@ export default function StoreReportsTestPage() {
   }
 
   return (
-    <div className="p-8 max-w-3xl">
+    <div className="p-8">
       <h1 className="mb-2 text-2xl font-bold text-[var(--color-text)]">Store Reports — Test</h1>
       <p className="mb-6 max-w-2xl text-sm text-[var(--color-text-muted)]">
         Pick a client and store, then preview the live action-list page or email the summary to yourself
@@ -904,71 +905,67 @@ export default function StoreReportsTestPage() {
                 </div>
               )}
 
-              <div className="max-h-80 overflow-y-auto rounded-lg border border-[var(--color-border)]">
-                <table className="w-full text-xs">
-                  <thead className="sticky top-0 bg-zinc-50 text-[var(--color-text-muted)]">
-                    <tr>
-                      <th className="px-3 py-2 text-left">
-                        <input type="checkbox" checked={allVisibleSelected} onChange={toggleSelectAllVisible}
-                          title="Select all shown" className="h-3.5 w-3.5 align-middle accent-[var(--color-primary)]" />
-                      </th>
-                      <th className="px-3 py-2 text-left">Perigee code</th>
-                      <th className="px-3 py-2 text-left">Perigee name</th>
-                      <th className="px-3 py-2 text-left">Status</th>
-                      <th className="px-3 py-2 text-left">DISPO code</th>
-                      <th className="px-3 py-2 text-left">DISPO name</th>
-                      <th className="px-3 py-2 text-left">Action / note</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {visibleRows.map((r, i) => {
-                      // Search ALL callable DISPO stores (dispoAll) so a store
-                      // already used by another code still shows up (annotated),
-                      // falling back to the unmatched-only list for old payloads.
-                      const candSource: DispoCandidate[] = codeRes.dispoAll?.length
-                        ? codeRes.dispoAll
-                        : (codeRes.dispoOnly || []).map((c) => ({ ...c, claim: null }));
-                      const candidates = candSource
-                        .filter((c) => { const q = linkSearch.trim().toLowerCase(); return !q || (c.code + " " + (c.name || "")).toLowerCase().includes(q); })
-                        .map((c) => ({ ...c, _s: nameScore(r.name || "", c.name || "") }))
-                        .sort((a, b) => b._s - a._s || (a.name || a.code).localeCompare(b.name || b.code))
-                        .slice(0, 60);
-                      return (
-                      <Fragment key={i}>
-                        <tr className="border-t border-zinc-100 align-top">
-                          <td className="px-3 py-2">
-                            <input type="checkbox" checked={selectedCodes.has(looseCode(r.code))} onChange={() => toggleSelect(r.code)}
-                              className="h-3.5 w-3.5 align-middle accent-[var(--color-primary)]" />
-                          </td>
-                          <td className="px-3 py-2 font-mono">{r.code}</td>
-                          <td className="px-3 py-2">{r.name || ""}</td>
-                          <td className="px-3 py-2">
-                            <span className={
-                              r.status === "match" ? "text-green-600 font-semibold"
-                                : r.status === "linked" ? "text-blue-600 font-semibold"
-                                : r.status === "format-diff" ? "text-amber-600 font-semibold"
-                                : "text-red-600 font-semibold"}>
-                              {r.status === "match" ? "✓ match" : r.status === "linked" ? "🔗 linked" : r.status === "format-diff" ? "~ format diff" : "✗ no match"}
-                            </span>
-                          </td>
-                          <td className="px-3 py-2 font-mono">{r.dispoCode || ""}</td>
-                          <td className="px-3 py-2">{r.dispoName || ""}</td>
-                          <td className="px-3 py-2">
-                            <div className="flex flex-wrap items-center gap-2 text-xs">
-                              {r.status === "linked" ? (
-                                <button onClick={() => unlink(r.code)} disabled={codeBusy} className="font-medium text-red-600 hover:underline disabled:opacity-50">Unlink</button>
-                              ) : (r.status === "no-match" || r.status === "format-diff") ? (
-                                <button onClick={() => { setLinkFor(linkFor === r.code ? null : r.code); setLinkSearch(""); }} className="rounded border border-[var(--color-border)] px-2 py-1 font-medium text-[var(--color-text)] hover:border-zinc-400">
-                                  {linkFor === r.code ? "Close" : "🔗 Link"}
-                                </button>
-                              ) : null}
-                              <button onClick={() => ignoreCodes([r.code])} disabled={codeBusy} title="Move to the Ignored grid (park until its data is loaded)" className="font-medium text-amber-600 hover:underline disabled:opacity-50">Ignore</button>
-                              <button onClick={() => removeFromList(r.code)} disabled={codeBusy} title="Remove from list" className="font-medium text-[var(--color-text-muted)] hover:text-red-600 hover:underline disabled:opacity-50">Remove</button>
-                              {r.reason && r.status !== "linked" && <span className="text-[var(--color-text-muted)]">{r.reason}</span>}
-                            </div>
-                          </td>
-                        </tr>
-                        {linkFor === r.code && (
+              <DataTable
+                id="store-reports:site-code-check"
+                rows={visibleRows}
+                rowKey={(r) => r.code}
+                maxHeightClass="max-h-[36rem]"
+                columns={[
+                  {
+                    key: "select", width: 40,
+                    label: <input type="checkbox" checked={allVisibleSelected} onChange={toggleSelectAllVisible}
+                      title="Select all shown" className="h-3.5 w-3.5 align-middle accent-[var(--color-primary)]" />,
+                    render: (r) => <input type="checkbox" checked={selectedCodes.has(looseCode(r.code))} onChange={() => toggleSelect(r.code)}
+                      className="h-3.5 w-3.5 align-middle accent-[var(--color-primary)]" />,
+                  },
+                  { key: "code", label: "Perigee code", width: 110, sort: (r) => r.code, className: "font-mono", render: (r) => r.code },
+                  { key: "name", label: "Perigee name", width: 240, sort: (r) => r.name || "", render: (r) => r.name || "" },
+                  {
+                    key: "status", label: "Status", width: 120, sort: (r) => r.status,
+                    render: (r) => (
+                      <span className={
+                        r.status === "match" ? "text-green-600 font-semibold"
+                          : r.status === "linked" ? "text-blue-600 font-semibold"
+                          : r.status === "format-diff" ? "text-amber-600 font-semibold"
+                          : "text-red-600 font-semibold"}>
+                        {r.status === "match" ? "✓ match" : r.status === "linked" ? "🔗 linked" : r.status === "format-diff" ? "~ format diff" : "✗ no match"}
+                      </span>
+                    ),
+                  },
+                  { key: "dispoCode", label: "DISPO code", width: 110, sort: (r) => r.dispoCode || "", className: "font-mono", render: (r) => r.dispoCode || "" },
+                  { key: "dispoName", label: "DISPO name", width: 240, sort: (r) => r.dispoName || "", render: (r) => r.dispoName || "" },
+                  {
+                    key: "action", label: "Action / note", width: 340, sort: (r) => r.reason || "",
+                    render: (r) => (
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                        {r.status === "linked" ? (
+                          <button onClick={() => unlink(r.code)} disabled={codeBusy} className="font-medium text-red-600 hover:underline disabled:opacity-50">Unlink</button>
+                        ) : (r.status === "no-match" || r.status === "format-diff") ? (
+                          <button onClick={() => { setLinkFor(linkFor === r.code ? null : r.code); setLinkSearch(""); }} className="rounded border border-[var(--color-border)] px-2 py-1 font-medium text-[var(--color-text)] hover:border-zinc-400">
+                            {linkFor === r.code ? "Close" : "🔗 Link"}
+                          </button>
+                        ) : null}
+                        <button onClick={() => ignoreCodes([r.code])} disabled={codeBusy} title="Move to the Ignored grid (park until its data is loaded)" className="font-medium text-amber-600 hover:underline disabled:opacity-50">Ignore</button>
+                        <button onClick={() => removeFromList(r.code)} disabled={codeBusy} title="Remove from list" className="font-medium text-[var(--color-text-muted)] hover:text-red-600 hover:underline disabled:opacity-50">Remove</button>
+                        {r.reason && r.status !== "linked" && <span className="text-[var(--color-text-muted)]">{r.reason}</span>}
+                      </div>
+                    ),
+                  },
+                ]}
+                afterRow={(r) => {
+                  if (linkFor !== r.code) return null;
+                  // Search ALL callable DISPO stores (dispoAll) so a store
+                  // already used by another code still shows up (annotated),
+                  // falling back to the unmatched-only list for old payloads.
+                  const candSource: DispoCandidate[] = codeRes.dispoAll?.length
+                    ? codeRes.dispoAll
+                    : (codeRes.dispoOnly || []).map((c) => ({ ...c, claim: null }));
+                  const candidates = candSource
+                    .filter((c) => { const q = linkSearch.trim().toLowerCase(); return !q || (c.code + " " + (c.name || "")).toLowerCase().includes(q); })
+                    .map((c) => ({ ...c, _s: nameScore(r.name || "", c.name || "") }))
+                    .sort((a, b) => b._s - a._s || (a.name || a.code).localeCompare(b.name || b.code))
+                    .slice(0, 60);
+                  return (
                           <tr className="bg-blue-50/60">
                             <td colSpan={7} className="px-3 py-3">
                               <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -1018,12 +1015,9 @@ export default function StoreReportsTestPage() {
                               )}
                             </td>
                           </tr>
-                        )}
-                      </Fragment>
-                    ); })}
-                  </tbody>
-                </table>
-              </div>
+                  );
+                }}
+              />
 
               {/* Ignored grid — parked stores we can't map yet (e.g. channel not
                   loaded). Kept separate so they don't clutter the main mapping grid. */}
@@ -1036,35 +1030,30 @@ export default function StoreReportsTestPage() {
                       Restore all shown
                     </button>
                   </div>
-                  <div className="max-h-64 overflow-y-auto rounded-lg border border-amber-200 bg-amber-50/40">
-                    <table className="w-full text-xs">
-                      <thead className="sticky top-0 bg-amber-50 text-amber-800">
-                        <tr>
-                          <th className="px-3 py-2 text-left">Perigee code</th>
-                          <th className="px-3 py-2 text-left">Perigee name</th>
-                          <th className="px-3 py-2 text-left">Channel</th>
-                          <th className="px-3 py-2 text-left">Status</th>
-                          <th className="px-3 py-2 text-left">Action</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {ignoredRows.map((r, i) => (
-                          <tr key={i} className="border-t border-amber-100">
-                            <td className="px-3 py-1.5 font-mono">{r.code}</td>
-                            <td className="px-3 py-1.5">{r.name || ""}</td>
-                            <td className="px-3 py-1.5">{r.channel || "Unknown"}</td>
-                            <td className="px-3 py-1.5">
-                              {r.status === "match" ? "✓ match" : r.status === "linked" ? "🔗 linked" : r.status === "format-diff" ? "~ format diff" : "✗ no match"}
-                            </td>
-                            <td className="px-3 py-1.5">
-                              <button onClick={() => unignoreCodes([r.code])} disabled={codeBusy}
-                                className="font-medium text-[var(--color-primary)] hover:underline disabled:opacity-50">Restore</button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                  <DataTable
+                    id="store-reports:ignored-codes"
+                    rows={ignoredRows}
+                    rowKey={(r) => r.code}
+                    maxHeightClass="max-h-80"
+                    headClassName="bg-amber-50 text-amber-800"
+                    wrapperClassName="border-amber-200 bg-amber-50/40"
+                    columns={[
+                      { key: "code", label: "Perigee code", width: 110, sort: (r) => r.code, className: "font-mono", render: (r) => r.code },
+                      { key: "name", label: "Perigee name", width: 260, sort: (r) => r.name || "", render: (r) => r.name || "" },
+                      { key: "channel", label: "Channel", width: 120, sort: (r) => r.channel || "Unknown", render: (r) => r.channel || "Unknown" },
+                      {
+                        key: "status", label: "Status", width: 120, sort: (r) => r.status,
+                        render: (r) => (r.status === "match" ? "✓ match" : r.status === "linked" ? "🔗 linked" : r.status === "format-diff" ? "~ format diff" : "✗ no match"),
+                      },
+                      {
+                        key: "action", label: "Action", width: 100,
+                        render: (r) => (
+                          <button onClick={() => unignoreCodes([r.code])} disabled={codeBusy}
+                            className="font-medium text-[var(--color-primary)] hover:underline disabled:opacity-50">Restore</button>
+                        ),
+                      },
+                    ]}
+                  />
                 </div>
               )}
 
@@ -1196,22 +1185,21 @@ export default function StoreReportsTestPage() {
                 ) : null;
               })()}
               {runResult.outcomes.length > 0 && (
-                <div className="mt-3 max-h-64 overflow-y-auto rounded-lg border border-[var(--color-border)]">
-                  <table className="w-full text-xs">
-                    <thead className="bg-zinc-50 text-[var(--color-text-muted)]">
-                      <tr><th className="px-3 py-2 text-left">Store</th><th className="px-3 py-2 text-left">Rep</th><th className="px-3 py-2 text-left">Status</th><th className="px-3 py-2 text-right">Actions</th></tr>
-                    </thead>
-                    <tbody>
-                      {runResult.outcomes.map((o, i) => (
-                        <tr key={i} className="border-t border-zinc-100">
-                          <td className="px-3 py-1.5">{o.store || o.siteCode}</td>
-                          <td className="px-3 py-1.5">{o.repEmail || "—"}</td>
-                          <td className="px-3 py-1.5">{STATUS_LABELS[o.status] ?? o.status}{o.detail ? ` — ${o.detail}` : ""}</td>
-                          <td className="px-3 py-1.5 text-right">{o.actions ?? ""}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="mt-3">
+                  <DataTable
+                    id="store-reports:run-outcomes"
+                    rows={runResult.outcomes}
+                    rowKey={(o, i) => `${o.siteCode}|${o.repEmail}|${i}`}
+                    columns={[
+                      { key: "store", label: "Store", width: 240, sort: (o) => o.store || o.siteCode, render: (o) => o.store || o.siteCode },
+                      { key: "rep", label: "Rep", width: 220, sort: (o) => o.repEmail, render: (o) => o.repEmail || "—" },
+                      {
+                        key: "status", label: "Status", width: 380, sort: (o) => STATUS_LABELS[o.status] ?? o.status,
+                        render: (o) => `${STATUS_LABELS[o.status] ?? o.status}${o.detail ? ` — ${o.detail}` : ""}`,
+                      },
+                      { key: "actions", label: "Actions", width: 90, align: "right", sort: (o) => o.actions, render: (o) => o.actions ?? "" },
+                    ]}
+                  />
                 </div>
               )}
             </div>
@@ -1313,34 +1301,38 @@ export default function StoreReportsTestPage() {
                     {claimsBusy ? "Loading…" : (claimsData?.claims.length ? "No claims match these filters." : "No rep actions to show for this period.")}
                   </div>
                 ) : (
-                  <div className="max-h-[520px] overflow-auto rounded-xl border border-[var(--color-border)] bg-white">
-                    <table className="w-full text-left text-sm">
-                      <thead className="sticky top-0 z-10 bg-zinc-50 text-xs uppercase text-[var(--color-text-muted)] shadow-sm">
-                        <tr>
-                          <th className="px-3 py-2">Rep</th><th className="px-3 py-2">Store</th><th className="px-3 py-2">Channel</th><th className="px-3 py-2">Client</th>
-                          <th className="px-3 py-2">Article</th><th className="px-3 py-2">Action(s)</th>
-                          <th className="px-3 py-2">Verdict</th><th className="px-3 py-2 text-right">SOH→New</th>
-                          <th className="px-3 py-2 text-right">Gap</th><th className="px-3 py-2">Notes</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {claimsFiltered.map((c, i) => (
-                          <tr key={i} className="border-t border-[var(--color-border)] align-top">
-                            <td className="px-3 py-2 font-medium text-[var(--color-text)]">{c.repName || "—"}</td>
-                            <td className="px-3 py-2">{c.store}</td>
-                            <td className="px-3 py-2 text-xs text-[var(--color-text-muted)]">{c.channel || "—"}</td>
-                            <td className="px-3 py-2">{c.clientName}</td>
-                            <td className="px-3 py-2"><div className="font-medium">{c.article}</div><div className="text-xs text-[var(--color-text-muted)]">{c.description}</div></td>
-                            <td className="px-3 py-2 text-xs">{c.categories.map((x) => CAT_LABELS[x] || x).join(", ")}</td>
-                            <td className="px-3 py-2"><span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${VERDICT_STYLE[c.verdict]}`}>{VERDICT_LABEL[c.verdict]}</span></td>
-                            <td className="px-3 py-2 text-right whitespace-nowrap">{c.soh}{c.newSoh != null ? ` → ${c.newSoh}` : ""}</td>
-                            <td className="px-3 py-2 text-right">{c.gapDays != null ? `${c.gapDays}d` : "—"}</td>
-                            <td className="px-3 py-2 text-xs text-[var(--color-text-muted)] max-w-xs">{c.note}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                  <DataTable
+                    id="store-reports:rep-action-claims"
+                    rows={claimsFiltered}
+                    rowKey={(c, i) => `${c.repName}|${c.store}|${c.article}|${i}`}
+                    maxHeightClass="max-h-[36rem]"
+                    className="text-sm"
+                    columns={[
+                      { key: "rep", label: "Rep", width: 160, sort: (c) => c.repName, className: "font-medium text-[var(--color-text)]", render: (c) => c.repName || "—" },
+                      { key: "store", label: "Store", width: 200, sort: (c) => c.store, render: (c) => c.store },
+                      { key: "channel", label: "Channel", width: 110, sort: (c) => c.channel, className: "text-xs text-[var(--color-text-muted)]", render: (c) => c.channel || "—" },
+                      { key: "client", label: "Client", width: 180, sort: (c) => c.clientName, render: (c) => c.clientName },
+                      {
+                        key: "article", label: "Article", width: 240, sort: (c) => c.article,
+                        render: (c) => (<><div className="font-medium">{c.article}</div><div className="text-xs text-[var(--color-text-muted)]">{c.description}</div></>),
+                      },
+                      {
+                        key: "actions", label: "Action(s)", width: 160, className: "text-xs",
+                        sort: (c) => c.categories.map((x) => CAT_LABELS[x] || x).join(", "),
+                        render: (c) => c.categories.map((x) => CAT_LABELS[x] || x).join(", "),
+                      },
+                      {
+                        key: "verdict", label: "Verdict", width: 120, sort: (c) => VERDICT_LABEL[c.verdict],
+                        render: (c) => <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${VERDICT_STYLE[c.verdict]}`}>{VERDICT_LABEL[c.verdict]}</span>,
+                      },
+                      {
+                        key: "soh", label: "SOH→New", width: 100, align: "right", sort: (c) => c.soh, className: "whitespace-nowrap",
+                        render: (c) => `${c.soh}${c.newSoh != null ? ` → ${c.newSoh}` : ""}`,
+                      },
+                      { key: "gap", label: "Gap", width: 70, align: "right", sort: (c) => c.gapDays, render: (c) => (c.gapDays != null ? `${c.gapDays}d` : "—") },
+                      { key: "notes", label: "Notes", width: 260, sort: (c) => c.note, className: "text-xs text-[var(--color-text-muted)]", render: (c) => c.note },
+                    ]}
+                  />
                 )}
               </>
             )}
@@ -1422,39 +1414,35 @@ export default function StoreReportsTestPage() {
               <div className="mb-3 text-xs text-[var(--color-text-muted)]">Re-reading {engDay}…</div>
             )}
             {/* Per-channel summary */}
-            <div className="mb-4 overflow-x-auto rounded-xl border border-[var(--color-border)] bg-white">
-              <table className="w-full text-sm">
-                <thead className="bg-zinc-50 text-[var(--color-text-muted)]">
-                  <tr>
-                    <th className="px-4 py-2.5 text-left font-semibold">Channel</th>
-                    <th className="px-4 py-2.5 text-center font-semibold">Sent</th>
-                    <th className="px-4 py-2.5 text-center font-semibold">Opened</th>
-                    <th className="px-4 py-2.5 text-center font-semibold">Used</th>
+            <div className="mb-4">
+              <DataTable
+                id="store-reports:engagement-summary"
+                rows={eng.summary}
+                rowKey={(s) => s.channel}
+                className="text-sm"
+                maxHeightClass=""
+                empty="No reports sent on this day."
+                columns={[
+                  { key: "channel", label: "Channel", width: 220, sort: (s) => s.channel, className: "font-medium text-[var(--color-text)]", render: (s) => s.channel },
+                  { key: "sent", label: "Sent", width: 120, align: "center", sort: (s) => s.sent, render: (s) => s.sent },
+                  {
+                    key: "opened", label: "Opened", width: 160, align: "center", sort: (s) => (s.sent ? s.opened / s.sent : 0),
+                    render: (s) => <>{s.opened} <span className="text-[var(--color-text-muted)]">({s.sent ? Math.round((s.opened / s.sent) * 100) : 0}%)</span></>,
+                  },
+                  {
+                    key: "used", label: "Used", width: 160, align: "center", sort: (s) => (s.sent ? s.used / s.sent : 0),
+                    render: (s) => <>{s.used} <span className="text-[var(--color-text-muted)]">({s.sent ? Math.round((s.used / s.sent) * 100) : 0}%)</span></>,
+                  },
+                ]}
+                footer={eng.summary.length > 0 ? (
+                  <tr className="border-t-2 border-[var(--color-border)] bg-zinc-50 font-semibold">
+                    <td className="px-3 py-2">Total</td>
+                    <td className="px-3 py-2 text-center">{eng.totalSent}</td>
+                    <td className="px-3 py-2 text-center">{eng.summary.reduce((a, s) => a + s.opened, 0)}</td>
+                    <td className="px-3 py-2 text-center">{eng.summary.reduce((a, s) => a + s.used, 0)}</td>
                   </tr>
-                </thead>
-                <tbody>
-                  {eng.summary.length === 0 ? (
-                    <tr><td colSpan={4} className="px-4 py-6 text-center text-[var(--color-text-muted)]">No reports sent on this day.</td></tr>
-                  ) : eng.summary.map((s) => (
-                    <tr key={s.channel} className="border-t border-zinc-100">
-                      <td className="px-4 py-2.5 font-medium text-[var(--color-text)]">{s.channel}</td>
-                      <td className="px-4 py-2.5 text-center">{s.sent}</td>
-                      <td className="px-4 py-2.5 text-center">{s.opened} <span className="text-[var(--color-text-muted)]">({s.sent ? Math.round((s.opened / s.sent) * 100) : 0}%)</span></td>
-                      <td className="px-4 py-2.5 text-center">{s.used} <span className="text-[var(--color-text-muted)]">({s.sent ? Math.round((s.used / s.sent) * 100) : 0}%)</span></td>
-                    </tr>
-                  ))}
-                </tbody>
-                {eng.summary.length > 0 && (
-                  <tfoot>
-                    <tr className="border-t-2 border-[var(--color-border)] bg-zinc-50 font-semibold">
-                      <td className="px-4 py-2.5">Total</td>
-                      <td className="px-4 py-2.5 text-center">{eng.totalSent}</td>
-                      <td className="px-4 py-2.5 text-center">{eng.summary.reduce((a, s) => a + s.opened, 0)}</td>
-                      <td className="px-4 py-2.5 text-center">{eng.summary.reduce((a, s) => a + s.used, 0)}</td>
-                    </tr>
-                  </tfoot>
-                )}
-              </table>
+                ) : undefined}
+              />
             </div>
 
             {/* Detail log */}
@@ -1486,43 +1474,35 @@ export default function StoreReportsTestPage() {
                   <span className="text-xs text-[var(--color-text-muted)]">showing {engDetailFiltered.length} of {eng.detail.length}</span>
                 </div>
 
-                <div className="max-h-96 overflow-y-auto rounded-xl border border-[var(--color-border)] bg-white">
-                  <table className="w-full text-xs">
-                    <thead className="sticky top-0 z-10 bg-zinc-50 text-[var(--color-text-muted)] shadow-sm">
-                      <tr>
-                        <th className="px-3 py-2 text-left font-semibold">Store</th>
-                        <th className="px-3 py-2 text-left font-semibold">Site</th>
-                        <th className="px-3 py-2 text-left font-semibold">Channel</th>
-                        <th className="px-3 py-2 text-left font-semibold">Rep</th>
-                        <th className="px-3 py-2 text-center font-semibold">Opened</th>
-                        <th className="px-3 py-2 text-center font-semibold">Used</th>
-                        <th className="px-3 py-2 text-center font-semibold">Cards</th>
-                        <th className="px-3 py-2 text-center font-semibold">Report</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {engDetailFiltered.length === 0 ? (
-                        <tr><td colSpan={8} className="px-3 py-8 text-center text-[var(--color-text-muted)]">No rows match these filters.</td></tr>
-                      ) : engDetailFiltered.map((d, i) => (
-                        <tr key={i} className="border-t border-zinc-100">
-                          <td className="px-3 py-1.5">{d.store}{d.test && <span className="ml-1 rounded bg-zinc-100 px-1 text-[10px] text-zinc-500">test</span>}</td>
-                          <td className="px-3 py-1.5 font-mono text-[var(--color-text-muted)]">{d.siteCode}</td>
-                          <td className="px-3 py-1.5">{d.channel}</td>
-                          <td className="px-3 py-1.5">{d.repName || d.repEmail}</td>
-                          <td className="px-3 py-1.5 text-center">{d.opened ? "✓" : "—"}</td>
-                          <td className="px-3 py-1.5 text-center">{d.used ? <span className="font-semibold text-green-600">✓</span> : "—"}</td>
-                          <td className="px-3 py-1.5 text-center">{d.distinctCards.length}</td>
-                          <td className="px-3 py-1.5 text-center">
-                            {d.reportUrl ? (
-                              <a href={d.reportUrl} target="_blank" rel="noreferrer"
-                                className="font-medium text-[var(--color-primary)] hover:underline">Open</a>
-                            ) : "—"}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <DataTable
+                  id="store-reports:engagement-detail"
+                  rows={engDetailFiltered}
+                  rowKey={(d, i) => `${d.siteCode}|${d.repEmail}|${d.sentAt}|${i}`}
+                  maxHeightClass="max-h-[36rem]"
+                  empty="No rows match these filters."
+                  columns={[
+                    {
+                      key: "store", label: "Store", width: 240, sort: (d) => d.store,
+                      render: (d) => <>{d.store}{d.test && <span className="ml-1 rounded bg-zinc-100 px-1 text-[10px] text-zinc-500">test</span>}</>,
+                    },
+                    { key: "site", label: "Site", width: 90, sort: (d) => d.siteCode, className: "font-mono text-[var(--color-text-muted)]", render: (d) => d.siteCode },
+                    { key: "channel", label: "Channel", width: 120, sort: (d) => d.channel, render: (d) => d.channel },
+                    { key: "rep", label: "Rep", width: 200, sort: (d) => d.repName || d.repEmail, render: (d) => d.repName || d.repEmail },
+                    { key: "opened", label: "Opened", width: 80, align: "center", sort: (d) => d.opened, render: (d) => (d.opened ? "✓" : "—") },
+                    {
+                      key: "used", label: "Used", width: 80, align: "center", sort: (d) => d.used,
+                      render: (d) => (d.used ? <span className="font-semibold text-green-600">✓</span> : "—"),
+                    },
+                    { key: "cards", label: "Cards", width: 80, align: "center", sort: (d) => d.distinctCards.length, render: (d) => d.distinctCards.length },
+                    {
+                      key: "report", label: "Report", width: 80, align: "center",
+                      render: (d) => (d.reportUrl ? (
+                        <a href={d.reportUrl} target="_blank" rel="noreferrer"
+                          className="font-medium text-[var(--color-primary)] hover:underline">Open</a>
+                      ) : "—"),
+                    },
+                  ]}
+                />
               </>
             )}
           </>
