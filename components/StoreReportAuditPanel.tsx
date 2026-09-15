@@ -57,7 +57,7 @@ const STATUS_META: Record<string, { label: string; help: string; tone: "good" | 
   "skipped-no-email": { label: "Rep has no email", help: "Perigee has no email address for this rep.", tone: "bad" },
   "skipped-channel": {
     label: "Channel switched off",
-    help: "This Perigee channel is not in the Sync Settings channel list, so no report is sent. Deliberate (e.g. no DISPO loaded for it yet): add it back there to switch it on.",
+    help: "This Perigee channel is not in the Channel allow-list under Auto-send (check-in trigger), so no report is sent. Deliberate (e.g. no DISPO loaded for it yet): add it back there to switch it on.",
     tone: "muted",
   },
   "failed": { label: "Failed", help: "The report could not be built or sent. See the detail.", tone: "bad" },

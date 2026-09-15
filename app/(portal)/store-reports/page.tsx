@@ -500,7 +500,7 @@ export default function StoreReportsTestPage() {
         "DISPO Code": r.dispoCode || "",
         "DISPO Name": r.dispoName || "",
         "Duplicate DISPO match": key && (dispoCounts.get(key) || 0) > 1 ? "DUPLICATE" : "",
-        "Note": r.channelOff ? "Channel switched off in Sync Settings" : r.reason || "",
+        "Note": r.channelOff ? "Channel switched off (Auto-send channel allow-list)" : r.reason || "",
       };
     });
     const wb = XLSX.utils.book_new();
@@ -882,7 +882,7 @@ export default function StoreReportsTestPage() {
                 <details className="mb-3 rounded-lg border border-[var(--color-border)] bg-zinc-50 px-3 py-2 text-xs text-[var(--color-text-muted)]">
                   <summary className="cursor-pointer">
                     <b className="text-[var(--color-text)]">{offRows.length} store{offRows.length === 1 ? "" : "s"} on {offChannels.join(", ")}</b> not shown:
-                    {offChannels.length === 1 ? " that channel is" : " those channels are"} switched off in Sync Settings (not in the channel allow-list).
+                    {offChannels.length === 1 ? " that channel is" : " those channels are"} switched off: not in the <b>Channel allow-list</b> under <b>Auto-send (check-in trigger)</b> further down this page.
                     Add {offChannels.length === 1 ? "it" : "them"} back there to bring these stores back.
                   </summary>
                   <div className="mt-2 break-words">{offRows.map((r) => r.name ? `${r.code} (${r.name})` : r.code).join("  ·  ")}</div>
