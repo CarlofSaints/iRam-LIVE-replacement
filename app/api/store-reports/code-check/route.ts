@@ -4,6 +4,7 @@ import { getActiveClients } from "@/lib/clientData";
 import { getAllSalesLedgers, getSalesLedger } from "@/lib/salesData";
 import { getMergedStores } from "@/lib/storeFileData";
 import { getCodeMap, buildResolver, looseCode, type CodeMapping } from "@/lib/storeReportCodeMap";
+import { getSyncSettings, channelSwitchedOff } from "@/lib/storeReportSync";
 import type { StoreRecord } from "@/lib/types";
 
 // Reps don't call on DCs, online stores or closed stores — so they never need
@@ -110,6 +111,7 @@ export async function POST(req: NextRequest) {
       ? (body.mappings as CodeMapping[]).filter((m) => m && typeof m.perigeeCode === "string" && typeof m.dispoCode === "string")
       : await getCodeMap();
     const resolve = buildResolver(map);
+    const allowList = (await getSyncSettings()).channels;
     const dispoName = (code?: string) => (code ? nameByLoose.get(looseCode(code)) || "" : "");
     // Prefer a banner detected from the Perigee name (consistent labels), then the
     // matched DISPO store's name, then the store-master sub-channel, else Unknown.
@@ -122,6 +124,13 @@ export async function POST(req: NextRequest) {
     };
 
     const results = entries.map((e) => {
+      const r = judgeEntry(e);
+      // A channel taken out of the Sync Settings allow-list is switched off: its
+      // check-ins get no report, so its stores are not mapping work either.
+      return { ...r, channelOff: channelSwitchedOff(r.channel, allowList) };
+    });
+
+    function judgeEntry(e: Entry) {
       const code = e.code;
       const linked = resolve(code);
       if (linked) {
@@ -135,7 +144,7 @@ export async function POST(req: NextRequest) {
       const d = dispoDigits.get(digits(code));
       if (d && digits(code)) return { code, name: e.name, status: "format-diff" as const, dispoCode: d, dispoName: dispoName(d), channel: channelOf(d, e.name), reason: "leading zeros / prefix differs — link to confirm" };
       return { code, name: e.name, status: "no-match" as const, dispoName: "", channel: channelOf(undefined, e.name) };
-    });
+    }
 
     // Candidates for linking = DISPO codes NOT in the pasted list, NOT already a
     // link target, and callable (drop DC / online / closed stores).
@@ -156,6 +165,7 @@ export async function POST(req: NextRequest) {
     // (so you can still link a second code to it, or reassign a manual link).
     const claimByDispo = new Map<string, { by: string; via: "match" | "format-diff" | "linked" }>();
     for (const r of results) {
+      if (r.channelOff) continue;
       if (r.dispoCode && (r.status === "match" || r.status === "format-diff" || r.status === "linked")) {
         const lc = looseCode(r.dispoCode);
         if (!claimByDispo.has(lc)) claimByDispo.set(lc, { by: r.code, via: r.status });
@@ -171,10 +181,11 @@ export async function POST(req: NextRequest) {
     return Response.json(
       {
         checked: entries.length,
-        matched: results.filter((r) => r.status === "match").length,
-        linked: results.filter((r) => r.status === "linked").length,
-        formatDiff: results.filter((r) => r.status === "format-diff").length,
-        noMatch: results.filter((r) => r.status === "no-match").length,
+        matched: results.filter((r) => !r.channelOff && r.status === "match").length,
+        linked: results.filter((r) => !r.channelOff && r.status === "linked").length,
+        formatDiff: results.filter((r) => !r.channelOff && r.status === "format-diff").length,
+        noMatch: results.filter((r) => !r.channelOff && r.status === "no-match").length,
+        switchedOff: results.filter((r) => r.channelOff).length,
         dispoCodeCount: dispoExact.size,
         dispoOnlyCount: dispoOnly.length,
         results,

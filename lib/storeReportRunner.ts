@@ -14,7 +14,7 @@
    dryRun = do everything except actually send/log — for safe previewing.
    ────────────────────────────────────────────────────────────── */
 
-import { getSyncSettings, recordLastRun, normaliseVisit, type SyncLastRun } from "./storeReportSync";
+import { getSyncSettings, recordLastRun, normaliseVisit, normChannel, type SyncLastRun } from "./storeReportSync";
 import { getTodayMassmartVisits } from "./sqlProxy";
 import { hasProcessedVisit, hasSent, addSend } from "./storeReportLog";
 import { loadStoreReport, formatGeneratedAt, storeReportLogos, reportBaseUrl } from "./storeReportLoad";
@@ -25,7 +25,7 @@ import { addTrackingSend, trackingDay } from "./storeReportTracking";
 import { recordAuditOutcomes } from "./storeReportAudit";
 import { v4 as uuid } from "uuid";
 
-const normCh = (s: string) => s.toLowerCase().replace(/[\s_-]+/g, "");
+const normCh = normChannel;
 
 export interface RunOptions {
   force?: boolean;     // ignore enabled flag + throttle (Run now)
@@ -65,7 +65,7 @@ export const OUTCOME_LABELS: Record<RunVisitStatus, string> = {
   "skipped-no-mapping": "Site not in loaded data / unmapped",
   "skipped-no-sitecode": "Visit had no site code",
   "skipped-no-email": "Rep has no email",
-  "skipped-channel": "Channel not in allow-list",
+  "skipped-channel": "Channel switched off (not in allow-list)",
   "failed": "Failed",
 };
 

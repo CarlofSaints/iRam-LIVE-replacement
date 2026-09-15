@@ -39,7 +39,7 @@ const STATUS_LABELS: Record<string, string> = {
   "skipped-no-mapping": "Site not in loaded data / unmapped",
   "skipped-no-sitecode": "Visit had no site code",
   "skipped-no-email": "Rep has no email",
-  "skipped-channel": "Channel not in allow-list",
+  "skipped-channel": "Channel switched off (not in allow-list)",
   "failed": "Failed",
 };
 
@@ -58,7 +58,7 @@ interface RunResult { ok: boolean; armedPeriod: string | null; visitsSeen: numbe
 interface EngSummary { channel: string; sent: number; opened: number; used: number }
 interface EngDetail { store: string; siteCode: string; channel: string; repName: string; repEmail: string; sentAt: string; opened: boolean; used: boolean; cardClicks: number; distinctCards: string[]; reportUrl: string; test: boolean }
 interface EngResult { day: string; summary: EngSummary[]; totalSent: number; detail: EngDetail[] }
-interface CodeRow { code: string; name?: string; status: "match" | "linked" | "format-diff" | "no-match"; dispoCode?: string; dispoName?: string; channel?: string; reason?: string }
+interface CodeRow { code: string; name?: string; status: "match" | "linked" | "format-diff" | "no-match"; dispoCode?: string; dispoName?: string; channel?: string; reason?: string; channelOff?: boolean }
 interface CodeMapping { perigeeCode: string; dispoCode: string }
 interface DispoOnly { code: string; name?: string }
 interface DispoClaim { by: string; via: "match" | "format-diff" | "linked" }
@@ -500,7 +500,7 @@ export default function StoreReportsTestPage() {
         "DISPO Code": r.dispoCode || "",
         "DISPO Name": r.dispoName || "",
         "Duplicate DISPO match": key && (dispoCounts.get(key) || 0) > 1 ? "DUPLICATE" : "",
-        "Note": r.reason || "",
+        "Note": r.channelOff ? "Channel switched off in Sync Settings" : r.reason || "",
       };
     });
     const wb = XLSX.utils.book_new();
@@ -635,20 +635,26 @@ export default function StoreReportsTestPage() {
   // Split results into the active mapping grid vs the parked "ignore for now"
   // grid, then apply the channel filter so mapping can be done one banner at a time.
   const rowChannel = (r: CodeRow) => r.channel || "Unknown";
+  // Stores on a channel switched off in Sync Settings (e.g. Game with no DISPO
+  // loaded) are not mapping work: they leave both grids and every count, and
+  // are summarised in one line instead of disappearing without a word.
+  const offRows = useMemo(() => (codeRes?.results || []).filter((r) => r.channelOff), [codeRes]);
+  const liveResults = useMemo(() => (codeRes?.results || []).filter((r) => !r.channelOff), [codeRes]);
+  const offChannels = useMemo(() => Array.from(new Set(offRows.map(rowChannel))).sort(), [offRows]);
   const channelOptions = useMemo(() => {
     const set = new Set<string>();
-    (codeRes?.results || []).forEach((r) => set.add(rowChannel(r)));
+    liveResults.forEach((r) => set.add(rowChannel(r)));
     return Array.from(set).sort();
-  }, [codeRes]);
+  }, [liveResults]);
   const inChannel = (r: CodeRow) => channelFilter === "all" || rowChannel(r) === channelFilter;
 
   const activeRows = useMemo(
-    () => (codeRes?.results || []).filter((r) => !ignored.has(looseCode(r.code)) && inChannel(r)),
-    [codeRes, ignored, channelFilter]
+    () => liveResults.filter((r) => !ignored.has(looseCode(r.code)) && inChannel(r)),
+    [liveResults, ignored, channelFilter]
   );
   const ignoredRows = useMemo(
-    () => (codeRes?.results || []).filter((r) => ignored.has(looseCode(r.code)) && inChannel(r)),
-    [codeRes, ignored, channelFilter]
+    () => liveResults.filter((r) => ignored.has(looseCode(r.code)) && inChannel(r)),
+    [liveResults, ignored, channelFilter]
   );
   // Card counts reflect the current channel + ignore state (what's actually in play).
   const counts = useMemo(() => ({
@@ -871,6 +877,17 @@ export default function StoreReportsTestPage() {
                 ))}
                 <span className="rounded-md bg-zinc-50 px-2.5 py-1 font-medium text-[var(--color-text-muted)] border border-[var(--color-border)]">{codeRes.dispoCodeCount} DISPO codes</span>
               </div>
+
+              {offRows.length > 0 && (
+                <details className="mb-3 rounded-lg border border-[var(--color-border)] bg-zinc-50 px-3 py-2 text-xs text-[var(--color-text-muted)]">
+                  <summary className="cursor-pointer">
+                    <b className="text-[var(--color-text)]">{offRows.length} store{offRows.length === 1 ? "" : "s"} on {offChannels.join(", ")}</b> not shown:
+                    {offChannels.length === 1 ? " that channel is" : " those channels are"} switched off in Sync Settings (not in the channel allow-list).
+                    Add {offChannels.length === 1 ? "it" : "them"} back there to bring these stores back.
+                  </summary>
+                  <div className="mt-2 break-words">{offRows.map((r) => r.name ? `${r.code} (${r.name})` : r.code).join("  ·  ")}</div>
+                </details>
+              )}
 
               {selectedCodes.size > 0 && (
                 <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-[var(--color-border)] bg-zinc-50 px-3 py-2 text-xs">
@@ -1102,7 +1119,7 @@ export default function StoreReportsTestPage() {
                   rows={6}
                   className="w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm font-mono"
                   placeholder="Makro&#10;BWH&#10;..." />
-                <span className="mt-1 block text-xs text-[var(--color-text-muted)]">Only check-ins on these Perigee channels trigger a report (matched ignoring case / spaces / dashes).</span>
+                <span className="mt-1 block text-xs text-[var(--color-text-muted)]">Only check-ins on these Perigee channels trigger a report (matched ignoring case / spaces / dashes). <b>Remove a channel to switch it off</b>: its check-ins get no report and its stores drop out of the Site Code Check (e.g. Game while no Game DISPO is loaded).</span>
               </label>
 
               <label className="mt-4 block max-w-xs">

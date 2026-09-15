@@ -55,7 +55,11 @@ const STATUS_META: Record<string, { label: string; help: string; tone: "good" | 
   },
   "skipped-no-sitecode": { label: "Visit had no site code", help: "Perigee sent a check-in with no store on it.", tone: "bad" },
   "skipped-no-email": { label: "Rep has no email", help: "Perigee has no email address for this rep.", tone: "bad" },
-  "skipped-channel": { label: "Channel not allowed", help: "This Perigee channel is not in the Sync Settings allow-list.", tone: "warn" },
+  "skipped-channel": {
+    label: "Channel switched off",
+    help: "This Perigee channel is not in the Sync Settings channel list, so no report is sent. Deliberate (e.g. no DISPO loaded for it yet): add it back there to switch it on.",
+    tone: "muted",
+  },
   "failed": { label: "Failed", help: "The report could not be built or sent. See the detail.", tone: "bad" },
 };
 

@@ -19,6 +19,26 @@ export const DEFAULT_CHANNELS = [
   "Makro", "Makro-Liquor", "Game", "TWH", "WallmartGroup", "Walmart",
 ];
 
+/** Channel names compare ignoring case / spaces / underscores / dashes. */
+export const normChannel = (s: string) => String(s ?? "").toLowerCase().replace(/[\s_-]+/g, "");
+
+/**
+ * Is this channel SWITCHED OFF? The allow-list is the one switch: take a
+ * channel out of it and its check-ins get no report, and its stores drop out
+ * of the Site Code Check (e.g. Game, while there is no Game DISPO loaded).
+ *
+ * Only a channel we KNOW is judged. "Unknown", "SS" (the list says BSS) or a
+ * brand-new banner is never hidden, because absence from the list then means
+ * "nobody has named it yet", not "someone turned it off".
+ */
+export function channelSwitchedOff(channel: string, allowList: string[]): boolean {
+  const c = normChannel(channel);
+  if (!c) return false;
+  const known = new Set(DEFAULT_CHANNELS.map(normChannel));
+  if (!known.has(c)) return false;
+  return !new Set(allowList.map(normChannel)).has(c);
+}
+
 export interface SyncLastRun {
   at: string;
   ok: boolean;
