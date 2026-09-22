@@ -36,6 +36,7 @@ const STATUS_LABELS: Record<string, string> = {
   "sent": "Sent",
   "would-send": "Would send",
   "skipped-duplicate": "Already sent today",
+  "skipped-repeat-not-sent": "Seen earlier today — NOTHING was sent",
   "skipped-no-data": "No actions to report",
   "skipped-no-mapping": "Site not in loaded data / unmapped",
   "skipped-no-sitecode": "Visit had no site code",
