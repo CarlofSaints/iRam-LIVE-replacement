@@ -7,7 +7,8 @@
    previously only visible in the ephemeral run payload:
 
      skipped-no-email · skipped-channel · skipped-duplicate ·
-     skipped-no-sitecode · skipped-no-mapping · skipped-no-data · failed · sent
+     skipped-repeat-not-sent · skipped-no-sitecode · skipped-no-mapping ·
+     skipped-no-data · failed · sent
 
    It is diagnostic-only — nothing reads it back into the send flow, so it can
    never affect dedup or suppress a legitimate retry. It answers, after the fact:

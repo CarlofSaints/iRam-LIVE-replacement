@@ -16,7 +16,7 @@
 
 import { getSyncSettings, recordLastRun, normaliseVisit, normChannel, type SyncLastRun } from "./storeReportSync";
 import { getTodayMassmartVisits } from "./sqlProxy";
-import { hasProcessedVisit, hasSent, addSend } from "./storeReportLog";
+import { processedVisitStatus, hasSent, addSend } from "./storeReportLog";
 import { loadStoreReport, formatGeneratedAt, storeReportLogos, reportBaseUrl } from "./storeReportLoad";
 import { signReportLink } from "./reportLink";
 import { renderStoreReportEmail } from "./storeReportEmail";
@@ -36,6 +36,7 @@ export interface RunOptions {
 export type RunVisitStatus =
   | "sent"
   | "skipped-duplicate"
+  | "skipped-repeat-not-sent"
   | "skipped-no-data"
   | "skipped-no-mapping"
   | "skipped-no-sitecode"
@@ -61,6 +62,7 @@ export const OUTCOME_LABELS: Record<RunVisitStatus, string> = {
   "sent": "Sent",
   "would-send": "Would send",
   "skipped-duplicate": "Already sent today",
+  "skipped-repeat-not-sent": "Seen earlier today — NOTHING was sent",
   "skipped-no-data": "No actions to report",
   "skipped-no-mapping": "Site not in loaded data / unmapped",
   "skipped-no-sitecode": "Visit had no site code",
@@ -146,9 +148,25 @@ export async function runStoreReportSync(opts: RunOptions): Promise<RunResult> {
       skipped++; outcomes.push({ ...who, siteCode: v.siteCode, repEmail: v.repEmail, store: "", status: "skipped-channel", detail: v.channel }); continue;
     }
 
-    // Dedup: same visit GUID already processed today, or this store×rep already sent today.
-    if (v.visitGuid && await hasProcessedVisit(dedupKey, v.visitGuid)) {
-      skipped++; outcomes.push({ ...who, siteCode: v.siteCode, repEmail: v.repEmail, store: "", status: "skipped-duplicate", detail: "visit already processed today" }); continue;
+    /* Dedup: same visit GUID already processed today, or this store×rep already
+       sent today. ⚠️ A GUID in the ledger does NOT mean a report went out —
+       `skipped_no_data` is written here too (clean store, or site in no loaded
+       DISPO). Reporting both as "Already sent today" buried the real reason
+       three minutes after it was recorded and made a total non-delivery look
+       like a healthy run. Say which one it was. */
+    if (v.visitGuid) {
+      const prior = await processedVisitStatus(dedupKey, v.visitGuid);
+      if (prior) {
+        skipped++;
+        outcomes.push({
+          ...who, siteCode: v.siteCode, repEmail: v.repEmail, store: "",
+          status: prior === "sent" ? "skipped-duplicate" : "skipped-repeat-not-sent",
+          detail: prior === "sent"
+            ? "visit already processed today — report was sent"
+            : "visit already processed today — NO report was sent; see this rep's earlier row for the real reason",
+        });
+        continue;
+      }
     }
     if (v.repEmail && await hasSent(dedupKey, v.siteCode, v.repEmail)) {
       skipped++; outcomes.push({ ...who, siteCode: v.siteCode, repEmail: v.repEmail, store: "", status: "skipped-duplicate", detail: "store+rep already sent today" }); continue;
