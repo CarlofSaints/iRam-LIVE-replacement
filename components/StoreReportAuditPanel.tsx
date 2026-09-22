@@ -227,9 +227,25 @@ export default function StoreReportAuditPanel() {
 
           {data.total > 0 && rows.length === 0 && (
             <div className="rounded-lg border border-[var(--color-border)] bg-zinc-50 p-4 text-sm text-[var(--color-text-muted)]">
-              {data.total} check-in{data.total === 1 ? " was" : "s were"} processed on this day, but
-              none match this search. The rep may not have checked in — an absent row means Perigee
-              never reported a visit, which is a different thing from a report being skipped.
+              <b>{data.total} check-in{data.total === 1 ? " was" : "s were"} processed on this day,
+              but none match this search.</b>
+              <div className="mt-2">
+                <b>Try a shorter search before concluding the rep was not here.</b> This matches the
+                text exactly, against the name and email <i>as Perigee spells them</i> — a full
+                address like <code>Bradley.H@iram.co.za</code> finds nothing if Perigee holds
+                <code>bradleyh@</code> or a different address entirely. Search a first name on its
+                own, or the site code on its own.
+              </div>
+              <div className="mt-2">
+                Then clear the search and click the reason counts above — with only a handful of
+                rows behind most of them, reading the reason you care about in full is quicker than
+                guessing a search term, and it is the only way to be sure a rep is genuinely absent.
+              </div>
+              <div className="mt-2">
+                If nothing turns up either way, the rep really did not have a check-in processed —
+                Perigee never reported a visit, which is a different thing from a report being
+                skipped.
+              </div>
             </div>
           )}
 
