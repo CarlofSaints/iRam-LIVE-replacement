@@ -62,7 +62,7 @@ export const OUTCOME_LABELS: Record<RunVisitStatus, string> = {
   "sent": "Sent",
   "would-send": "Would send",
   "skipped-duplicate": "Already sent today",
-  "skipped-repeat-not-sent": "Seen earlier today — NOTHING was sent",
+  "skipped-repeat-not-sent": "Seen earlier today — NO report for this store",
   "skipped-no-data": "No actions to report",
   "skipped-no-mapping": "Site not in loaded data / unmapped",
   "skipped-no-sitecode": "Visit had no site code",
@@ -154,21 +154,36 @@ export async function runStoreReportSync(opts: RunOptions): Promise<RunResult> {
        DISPO). Reporting both as "Already sent today" buried the real reason
        three minutes after it was recorded and made a total non-delivery look
        like a healthy run. Say which one it was. */
-    if (v.visitGuid) {
-      const prior = await processedVisitStatus(dedupKey, v.visitGuid);
-      if (prior) {
-        skipped++;
-        outcomes.push({
-          ...who, siteCode: v.siteCode, repEmail: v.repEmail, store: "",
-          status: prior === "sent" ? "skipped-duplicate" : "skipped-repeat-not-sent",
-          detail: prior === "sent"
-            ? "visit already processed today — report was sent"
-            : "visit already processed today — NO report was sent; see this rep's earlier row for the real reason",
-        });
-        continue;
-      }
+    /* 🔴 The dedup reads are STRICT (see getSendsForPeriod) and throw when the
+       blob read fails, rather than reporting an empty ledger. An empty ledger
+       reads as "nobody has been sent anything today", which would re-email
+       every rep who already had their report. So a broken read must never fall
+       through to the send: drop THIS visit, leave nothing in the ledger, and
+       let the next 3-minute cycle retry it. One cycle is the entire cost. */
+    let prior: Awaited<ReturnType<typeof processedVisitStatus>> = null;
+    let alreadySentToRep = false;
+    try {
+      if (v.visitGuid) prior = await processedVisitStatus(dedupKey, v.visitGuid);
+      if (!prior && v.repEmail) alreadySentToRep = await hasSent(dedupKey, v.siteCode, v.repEmail);
+    } catch (e) {
+      failed++;
+      const detail = e instanceof Error ? e.message : "send-ledger read failed";
+      outcomes.push({ ...who, siteCode: v.siteCode, repEmail: v.repEmail, store: v.siteCode, status: "failed", detail: `could not read today's send ledger, so this visit was skipped rather than risk a duplicate: ${detail}` });
+      continue;
     }
-    if (v.repEmail && await hasSent(dedupKey, v.siteCode, v.repEmail)) {
+
+    if (prior) {
+      skipped++;
+      outcomes.push({
+        ...who, siteCode: v.siteCode, repEmail: v.repEmail, store: "",
+        status: prior === "sent" ? "skipped-duplicate" : "skipped-repeat-not-sent",
+        detail: prior === "sent"
+          ? "visit already processed today — report was sent"
+          : "visit already processed today — NO report was sent for this store; see this rep's earlier row for this store for the real reason",
+      });
+      continue;
+    }
+    if (alreadySentToRep) {
       skipped++; outcomes.push({ ...who, siteCode: v.siteCode, repEmail: v.repEmail, store: "", status: "skipped-duplicate", detail: "store+rep already sent today" }); continue;
     }
     if (!v.repEmail) {

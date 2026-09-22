@@ -45,8 +45,8 @@ const STATUS_META: Record<string, { label: string; help: string; tone: "good" | 
   "would-send": { label: "Would send (dry run)", help: "A dry run — nothing was actually sent.", tone: "muted" },
   "skipped-duplicate": { label: "Already sent today", help: "Working as intended: one report per store per rep per day. The report DID go out on an earlier run.", tone: "muted" },
   "skipped-repeat-not-sent": {
-    label: "Seen earlier today — nothing was sent",
-    help: "The poller saw this visit on an earlier run and no report went out then, so it is not retried. This rep has received NOTHING today. Clear the reason filter and look at this rep's earlier row on this day — that row carries the real reason (usually 'Site not in any loaded DISPO' or 'Nothing to report').",
+    label: "Seen earlier today — no report for this store",
+    help: "The poller saw this visit on an earlier run, no report went out for THIS store then, and it is not retried today. ⚠️ This is about one store, not the rep's whole day — the same rep may have had reports for their other stores. Clear the reason filter and find this rep's earlier row for this store: that row carries the real reason, usually 'Site not in any loaded DISPO' or 'Nothing to report'.",
     tone: "bad",
   },
   "skipped-no-data": {

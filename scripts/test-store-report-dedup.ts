@@ -76,6 +76,19 @@ async function main() {
   check("hasSent true for the real send", await hasSent(DAY, "M12", "sent@iram.co.za"), true);
   check("hasSent ignores email case", await hasSent(DAY, "M12", "SENT@IRAM.CO.ZA"), true);
 
+  // Finding 4: the winner must be the NEWEST record, not array position.
+  // Two records for one GUID happen when polls overlap; a send outranks a skip
+  // whichever order they landed in.
+  await addSend({ ...base, siteCode: "M55", repEmail: "two@iram.co.za", visitGuid: "guid-two", status: "skipped_no_data", sentAt: "2099-01-02T08:00:00.000Z" });
+  await addSend({ ...base, siteCode: "M55", repEmail: "two@iram.co.za", visitGuid: "guid-two", status: "sent", sentAt: "2099-01-02T09:00:00.000Z" });
+  check("newest record wins for a repeated GUID", await processedVisitStatus(DAY, "guid-two"), "sent");
+
+  // ...and still wins when the newer one was written FIRST, which is exactly
+  // what array position would get wrong.
+  await addSend({ ...base, siteCode: "M56", repEmail: "rev@iram.co.za", visitGuid: "guid-rev", status: "sent", sentAt: "2099-01-02T11:00:00.000Z" });
+  await addSend({ ...base, siteCode: "M56", repEmail: "rev@iram.co.za", visitGuid: "guid-rev", status: "skipped_no_data", sentAt: "2099-01-02T10:00:00.000Z" });
+  check("a delivered report is not reported as nothing-sent", await processedVisitStatus(DAY, "guid-rev"), "sent");
+
   rmSync(keyPath, { force: true });
   console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURE(S)`);
   process.exit(failures === 0 ? 0 : 1);

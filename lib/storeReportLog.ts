@@ -18,15 +18,28 @@
    ────────────────────────────────────────────────────────────── */
 
 import type { StoreReportSend } from "./types";
-import { readJson, writeJson } from "./blob";
+import { readJsonStrict, writeJson } from "./blob";
 import { v4 as uuid } from "uuid";
 
 function logKey(periodKey: string): string {
   return `store-reports/sends/${periodKey}.json`;
 }
 
+/* 🔴 STRICT on purpose. lib/blob.ts says it outright: "anything that writes
+   back must use readJsonStrict()". This ledger is read-modify-written by
+   `addSend`, so a forgiving read that turned a network blip into `[]` would
+   save one record over the whole day's forty and the next poll would re-email
+   every rep who had already had their report.
+
+   It is also the DEDUP source of truth, where the same blip is just as bad in
+   the other direction: an empty read means "nobody has been sent anything",
+   and the poller sends the lot again. Both failure modes are duplicate mail to
+   real reps, so a read that did not work must THROW and let the caller skip
+   the visit — it costs one 3-minute cycle and nothing else. `fallback` is
+   returned only when the blob genuinely does not exist yet (the day's first
+   write). See [[writing-back-a-baked-list-deletes-new-rows]]. */
 export async function getSendsForPeriod(periodKey: string): Promise<StoreReportSend[]> {
-  return readJson<StoreReportSend[]>(logKey(periodKey), []);
+  return readJsonStrict<StoreReportSend[]>(logKey(periodKey), []);
 }
 
 // Dedup checks: a real send already exists for this (store, rep), or the exact
@@ -62,7 +75,16 @@ export async function processedVisitStatus(
   if (!visitGuid) return null;
   const sends = await getSendsForPeriod(periodKey);
   const g = visitGuid.trim().toLowerCase();
-  return sends.find((s) => s.visitGuid.trim().toLowerCase() === g)?.status ?? null;
+  const matches = sends.filter((s) => s.visitGuid.trim().toLowerCase() === g);
+  if (matches.length === 0) return null;
+  /* ⚠️ Pick the NEWEST by sentAt, never "the first one in the array". Today
+     `addSend` unshifts, so index 0 happens to be newest — but this is the one
+     function whose entire job is deciding WHICH status wins, and resting that
+     on an ordering convention kept two files away is how a delivered report
+     would come to report as "nothing was sent", which is the exact false
+     reading this whole change exists to remove. Two records for one GUID is
+     rare (overlapping polls) and a send always outranks a skip. */
+  return matches.reduce((newest, s) => (s.sentAt > newest.sentAt ? s : newest)).status;
 }
 
 /** Was this visit GUID seen at all today, whatever the outcome? Prefer
