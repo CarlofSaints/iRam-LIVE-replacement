@@ -5,6 +5,7 @@ import { useTableTools } from "@/lib/useTableTools";
 import { SortableTh, TableSearch } from "@/components/TableTools";
 import { useParams } from "next/navigation";
 import { authFetch, useAuth } from "@/lib/useAuth";
+import { upload } from "@vercel/blob/client";
 import UploadZone from "@/components/UploadZone";
 import type { Client, Channel, CAM, ControlFileType, UploadMeta, ProductFieldMapping, LinksFieldMapping } from "@/lib/types";
 import type { ReportConfig } from "@/lib/reportConfig";
@@ -18,7 +19,9 @@ const CF_LABELS: Record<ControlFileType, string> = {
   custom_sites: "Custom Sites",
   promotions: "Promotions",
 };
-const CF_TYPES: ControlFileType[] = ["pmf", "links", "ranging", "custom_sites", "promotions"];
+// Above this, control files go browser → Blob instead of through the function body.
+const BLOB_THRESHOLD_BYTES = 4 * 1024 * 1024;
+const CF_TYPES: ControlFileType[] =["pmf", "links", "ranging", "custom_sites", "promotions"];
 
 // SharePoint save folder per report type (spUrls key → label). Status Robot is
 // a report that hasn't been built yet — the folder can be configured now.
@@ -203,15 +206,41 @@ export default function ClientDetailPage() {
 
   async function handleControlFileUpload(type: ControlFileType, file: File) {
     setUploading(type);
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("type", type);
-    const res = await authFetch(`/api/clients/${id}/control-files`, {
-      method: "POST",
-      body: formData,
-      rawBody: true,
-      headers: {},
-    });
+    let res: Response;
+    try {
+      if (file.size > BLOB_THRESHOLD_BYTES) {
+        // Too big to POST through the function (~4.5MB body cap). Upload straight
+        // to Blob from the browser, then send only the URL to be parsed.
+        const blob = await upload(file.name, file, {
+          access: "public",
+          handleUploadUrl: `/api/clients/${id}/control-files/blob`,
+        });
+        res = await authFetch(`/api/clients/${id}/control-files`, {
+          method: "POST",
+          body: JSON.stringify({ blobUrl: blob.url, fileName: file.name, type }),
+        });
+      } else {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("type", type);
+        res = await authFetch(`/api/clients/${id}/control-files`, {
+          method: "POST",
+          body: formData,
+          rawBody: true,
+          headers: {},
+        });
+      }
+    } catch (e) {
+      setToast(`${CF_LABELS[type]} upload failed: ${e instanceof Error ? e.message : String(e)}`);
+      setTimeout(() => setToast(""), 8000);
+      setUploading(null);
+      return;
+    }
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      setToast(`${CF_LABELS[type]} upload failed: ${err?.error || `HTTP ${res.status}`}`);
+      setTimeout(() => setToast(""), 8000);
+    }
     if (res.ok) {
       const json = await res.json();
       setToast(`${CF_LABELS[type]} uploaded`);

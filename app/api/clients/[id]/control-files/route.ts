@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import * as XLSX from "xlsx";
+import { del } from "@vercel/blob";
 import { getClientById } from "@/lib/clientData";
 import {
   saveControlFileData,
@@ -24,10 +25,25 @@ const PARSERS: Record<ControlFileType, (rows: Record<string, unknown>[]) => Reco
   promotions: parsePromotionsSheet,
 };
 
+// A Range Management file is ~20MB of Excel; reading and parsing it overruns the
+// default function duration.
+export const maxDuration = 300;
+
+// Only fetch back files that live in our own Blob store, never an arbitrary URL.
+function isOwnBlobUrl(u: string): boolean {
+  try {
+    const url = new URL(u);
+    return url.protocol === "https:" && url.hostname.endsWith(".blob.vercel-storage.com");
+  } catch {
+    return false;
+  }
+}
+
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  let tempBlobUrl: string | null = null;
   try {
     const session = await requirePermission(req, "manage_control_files");
     const { id } = await params;
@@ -35,14 +51,33 @@ export async function POST(
     const client = await getClientById(id);
     if (!client) return Response.json({ error: "Client not found" }, { status: 404, headers: noCacheHeaders() });
 
-    const formData = await req.formData();
-    const file = formData.get("file") as File | null;
-    const type = formData.get("type") as ControlFileType | null;
+    // Large files arrive as JSON { blobUrl, fileName, type } after the browser has
+    // uploaded them to Blob (see ./blob/route.ts); small ones still come as a form.
+    let type: ControlFileType | null;
+    let fileName: string;
+    let buffer: Buffer;
+    if ((req.headers.get("content-type") || "").includes("application/json")) {
+      const body = await req.json();
+      type = (body.type ?? null) as ControlFileType | null;
+      fileName = String(body.fileName || "upload.xlsx");
+      tempBlobUrl = typeof body.blobUrl === "string" && isOwnBlobUrl(body.blobUrl) ? body.blobUrl : null;
+      if (!tempBlobUrl) return Response.json({ error: "Missing uploaded file reference" }, { status: 400, headers: noCacheHeaders() });
+      if (!type || !PARSERS[type]) return Response.json({ error: "Invalid file type" }, { status: 400, headers: noCacheHeaders() });
+      const r = await fetch(tempBlobUrl);
+      if (!r.ok) {
+        return Response.json({ error: `Could not read the uploaded file back (HTTP ${r.status}). Please try again.` }, { status: 400, headers: noCacheHeaders() });
+      }
+      buffer = Buffer.from(await r.arrayBuffer());
+    } else {
+      const formData = await req.formData();
+      const file = formData.get("file") as File | null;
+      type = formData.get("type") as ControlFileType | null;
+      if (!file || !type) return Response.json({ error: "File and type are required" }, { status: 400, headers: noCacheHeaders() });
+      if (!PARSERS[type]) return Response.json({ error: "Invalid file type" }, { status: 400, headers: noCacheHeaders() });
+      fileName = file.name;
+      buffer = Buffer.from(await file.arrayBuffer());
+    }
 
-    if (!file || !type) return Response.json({ error: "File and type are required" }, { status: 400, headers: noCacheHeaders() });
-    if (!PARSERS[type]) return Response.json({ error: "Invalid file type" }, { status: 400, headers: noCacheHeaders() });
-
-    const buffer = Buffer.from(await file.arrayBuffer());
     const workbook = XLSX.read(buffer, { type: "buffer", cellDates: true });
     const sheetName = workbook.SheetNames[0];
     const sheet = workbook.Sheets[sheetName];
@@ -64,7 +99,7 @@ export async function POST(
     }
 
     await saveControlFileData(id, type, parsed, {
-      fileName: file.name,
+      fileName,
       uploadedAt: new Date().toISOString(),
       uploadedBy: session.name,
       rowCount: parsed.length,
@@ -93,5 +128,9 @@ export async function POST(
     return Response.json({ success: true, rowCount: parsed.length, productMasterCount }, { headers: noCacheHeaders() });
   } catch (err) {
     return handleAuthError(err);
+  } finally {
+    if (tempBlobUrl) {
+      try { await del(tempBlobUrl); } catch { /* best-effort cleanup */ }
+    }
   }
 }
