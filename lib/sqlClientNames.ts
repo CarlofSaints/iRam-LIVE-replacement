@@ -32,6 +32,62 @@ export interface SqlClientNameList {
   columns: string[];
   rowCount: number;
   error: string | null;
+  /** Per name, the vendor codes and channels SQL holds for it. The SP returns
+      one row per client × channel; the vendor code is the strongest link back
+      to an iRam client, which stores vendorNumbers. Empty when the SP has no
+      recognisable vendor or channel column. */
+  entries: SqlClientEntry[];
+}
+
+export interface SqlClientEntry {
+  name: string;
+  vendorCodes: string[];
+  channels: string[];
+}
+
+/** The column holding a value, by normalised header, or null. */
+function findColumn(columns: string[], wants: string[]): string | null {
+  const norm = (s: string) => s.trim().toLowerCase().replace(/[_\s]+/g, "");
+  for (const w of wants) {
+    const hit = columns.find((c) => norm(c) === w);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/* Vendor codes compared as strings with leading zeros dropped — SQL may hold
+   "01063" where iRam holds "1063", and the two are the same vendor. */
+export function normaliseVendorCode(v: unknown): string {
+  const s = String(v ?? "").trim();
+  return /^\d+$/.test(s) ? s.replace(/^0+(?=\d)/, "") : s.toUpperCase();
+}
+
+export function buildEntries(rows: Record<string, unknown>[], nameColumn: string | null): SqlClientEntry[] {
+  if (!nameColumn) return [];
+  const columns = collectColumns(rows);
+  const vendorCol = findColumn(columns, ["vendorcode", "vendorno", "vendornumber", "vendor"]);
+  const channelCol = findColumn(columns, ["channel", "channelname"]);
+  const byName = new Map<string, { vendors: Set<string>; channels: Set<string> }>();
+  for (const r of rows) {
+    const name = String(r[nameColumn] ?? "").trim();
+    if (!name) continue;
+    const e = byName.get(name) ?? { vendors: new Set(), channels: new Set() };
+    byName.set(name, e);
+    // A cell may carry several codes ("1063, 1064").
+    if (vendorCol) {
+      for (const part of String(r[vendorCol] ?? "").split(/[,;/]/)) {
+        const v = normaliseVendorCode(part);
+        if (v) e.vendors.add(v);
+      }
+    }
+    if (channelCol) {
+      const ch = String(r[channelCol] ?? "").trim();
+      if (ch) e.channels.add(ch);
+    }
+  }
+  return [...byName.entries()]
+    .map(([name, e]) => ({ name, vendorCodes: [...e.vendors].sort(), channels: [...e.channels].sort() }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /* Names the column most likely to hold the client name. Exact matches first,
@@ -66,7 +122,7 @@ export function pickNameColumn(rows: Record<string, unknown>[]): string | null {
 export async function getIramLiveClientNames(): Promise<SqlClientNameList> {
   if (!isProxyConfigured()) {
     return {
-      configured: false, names: [], nameColumn: null, columns: [], rowCount: 0,
+      configured: false, names: [], nameColumn: null, columns: [], rowCount: 0, entries: [],
       error:
         "SQL_PROXY_URL and/or SQL_PROXY_API_KEY are not set on this deployment, " +
         "so the client list cannot be read from SQL Server.",
@@ -84,10 +140,11 @@ export async function getIramLiveClientNames(): Promise<SqlClientNameList> {
     return {
       configured: true, names, nameColumn,
       columns: collectColumns(rows), rowCount: rows.length, error: null,
+      entries: buildEntries(rows, nameColumn),
     };
   } catch (e) {
     return {
-      configured: true, names: [], nameColumn: null, columns: [], rowCount: 0,
+      configured: true, names: [], nameColumn: null, columns: [], rowCount: 0, entries: [],
       error: e instanceof Error ? e.message : String(e),
     };
   }

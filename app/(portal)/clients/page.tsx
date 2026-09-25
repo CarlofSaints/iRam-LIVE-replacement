@@ -554,6 +554,13 @@ export default function ClientsPage() {
           className="rounded-lg border border-[var(--color-border)] bg-white px-4 py-2 text-sm font-semibold text-[var(--color-text)] hover:border-zinc-400 disabled:opacity-40">
           ⬇ Export to Excel ({filtered.length})
         </button>
+        {canManage && (
+          <Link href="/clients/sql-mapping"
+            title="Set the name SQL Server knows each client by, for every client on one page"
+            className="rounded-lg border border-[var(--color-border)] bg-white px-4 py-2 text-sm font-semibold text-[var(--color-text)] hover:border-zinc-400">
+            Map SQL names
+          </Link>
+        )}
       </div>
 
       <div className="rounded-xl border border-[var(--color-border)] bg-white">

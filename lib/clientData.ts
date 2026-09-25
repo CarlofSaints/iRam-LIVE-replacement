@@ -161,6 +161,24 @@ export async function updateClient(id: string, updates: ClientInput): Promise<Cl
   return clients[idx];
 }
 
+/* Many sqlClientName changes in ONE read-modify-write. Saving the mapping
+   screen one updateClient() per row would write clients.json N times, each
+   off a read that can lag the previous write. null clears a mapping. */
+export async function setSqlClientNames(
+  changes: { id: string; sqlClientName: string | null }[],
+): Promise<Client[]> {
+  const clients = await getClients();
+  const changed: Client[] = [];
+  for (const ch of changes) {
+    const idx = clients.findIndex((c) => c.id === ch.id);
+    if (idx === -1) throw new Error(`Client not found: ${ch.id}`);
+    clients[idx] = { ...clients[idx], ...pickClientFields({ sqlClientName: ch.sqlClientName ?? "" }) };
+    changed.push(clients[idx]);
+  }
+  await writeJson(KEY, clients);
+  return changed;
+}
+
 /**
  * Archive (active:false) or restore a client. Archiving keeps every byte of the
  * client's data — it only takes them out of the operational flows listed on
