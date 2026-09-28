@@ -32,7 +32,14 @@ export interface PerigeeFetchResult {
   rows: Record<string, unknown>[];
   pagesFetched: number;
   stoppedReason: string;
+  // False when it stopped early (a later page failed, the page cap, or the
+  // time budget ran out): some of today's visits were NOT read.
+  complete: boolean;
 }
+
+const COMPLETE_REASONS = new Set([
+  "reached last page", "collected reported total", "no pagination metadata", "no rows returned", "empty page",
+]);
 
 function extractData(resp: unknown): Record<string, unknown>[] {
   if (Array.isArray(resp)) return resp as Record<string, unknown>[];
@@ -73,10 +80,14 @@ export async function fetchPerigeeVisits(
   token: string,
   startDate: string,
   endDate: string,
-  opts?: { maxPages?: number; endpoint?: string; timeoutMs?: number },
+  // deadline = epoch ms by which the WHOLE fetch must be done, all pages
+  // together. The poller shares one budget across every client's feed so a
+  // slow customer can't push the run past its time limit.
+  opts?: { maxPages?: number; endpoint?: string; timeoutMs?: number; deadline?: number },
 ): Promise<PerigeeFetchResult> {
   const endpoint = opts?.endpoint || PERIGEE_VISITS_URL;
-  const maxPages = opts?.maxPages ?? 50;
+  const maxPages = opts?.maxPages ?? 20;
+  const perPageMs = opts?.timeoutMs ?? 20_000;
   const all: Record<string, unknown>[] = [];
   let reportedTotal: number | null = null;
   let reportedLastPage: number | null = null;
@@ -86,14 +97,26 @@ export async function fetchPerigeeVisits(
 
   for (; page <= maxPages; page++) {
     const url = page === 1 ? endpoint : `${endpoint}${endpoint.includes("?") ? "&" : "?"}page=${page}`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ startDate, endDate, page }),
-      cache: "no-store",
-      // One slow customer must not eat the whole 3-minute poll.
-      signal: AbortSignal.timeout(opts?.timeoutMs ?? 25_000),
-    });
+    const left = opts?.deadline ? opts.deadline - Date.now() : perPageMs;
+    if (left <= 0) {
+      if (page === 1) throw new Error("timed out before Perigee answered");
+      stoppedReason = "ran out of time";
+      break;
+    }
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ startDate, endDate, page }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(Math.min(perPageMs, left)),
+      });
+    } catch (e) {
+      if (page === 1) throw e;
+      stoppedReason = `page ${page} did not answer`;
+      break;
+    }
 
     if (!res.ok) {
       if (page === 1) {
@@ -136,7 +159,20 @@ export async function fetchPerigeeVisits(
   }
   if (page > maxPages) stoppedReason = `hit max page cap (${maxPages})`;
 
-  return { rows: all, pagesFetched: Math.min(page, maxPages), stoppedReason };
+  return { rows: all, pagesFetched: Math.min(page, maxPages), stoppedReason, complete: COMPLETE_REASONS.has(stoppedReason) };
+}
+
+/** A feed failure in words an admin can act on. Deliberately NOT Perigee's
+ *  response body: that is stored and shown to every store-report manager, and
+ *  an upstream error page can echo request details. */
+export function describeFeedError(e: unknown): string {
+  if (e instanceof PerigeeFetchError) {
+    if (e.status === 401 || e.status === 403) return `Perigee refused the token (${e.status})`;
+    if (e.status === 429) return "Perigee rate-limited the request (429)";
+    return `Perigee answered ${e.status}`;
+  }
+  if (e instanceof Error && /timed out|timeout|abort/i.test(`${e.name} ${e.message}`)) return "Perigee did not answer in time";
+  return "Could not reach Perigee";
 }
 
 function pick(row: Record<string, unknown>, candidates: string[]): string {
@@ -160,7 +196,10 @@ function pick(row: Record<string, unknown>, candidates: string[]): string {
  *  follow Bravo's mapping of the same API. The store may only be given as
  *  "STORE NAME - CODE", in which case the code is the part after the last " - ". */
 export function normalisePerigeeApiVisit(row: Record<string, unknown>): NormalisedVisit {
-  let siteCode = pick(row, ["storeCode", "placeId", "siteCode", "placeCode"]);
+  // Never Perigee's internal placeId: it is not a retailer site code, and a
+  // wrong code would email the rep a DIFFERENT store's report. No code means
+  // the visit is skipped ("no site code"), which the Test button makes visible.
+  let siteCode = pick(row, ["storeCode", "siteCode"]);
   if (!siteCode) {
     const rawStore = pick(row, ["store", "Store Full Name", "storeName", "place"]);
     if (rawStore.includes(" - ")) siteCode = rawStore.substring(rawStore.lastIndexOf(" - ") + 3).trim();

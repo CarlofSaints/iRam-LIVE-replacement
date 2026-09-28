@@ -58,6 +58,9 @@ async function main() {
   check("rep without the tick → not-client-rep", f("rep-unticked@alpha.co.za", "alpha") === "not-client-rep");
   check("rep limited to OTHER clients → not-client-rep", f("rep@alpha.co.za", "bravo") === "not-client-rep");
   check("rep with nothing ticked → blocked", f("rep-empty@alpha.co.za", "alpha") === "blocked");
+  const multi = scopeForFeedVisit(idx, "manager@alpha.co.za", "alpha2");
+  check("rep ticked for 2 clients → ONLY the feed's client", multi.kind === "clients" && multi.clientIds.join(",") === "alpha2",
+    JSON.stringify(multi));
 
   console.log("\nPerigee API row → visit");
   const { normalisePerigeeApiVisit } = await import("../lib/perigeeApi");
@@ -65,8 +68,9 @@ async function main() {
   check("store code from 'NAME - CODE'", n1.siteCode === "M27");
   check("email preferred over username", n1.repEmail === "A@x.co.za");
   check("id becomes the visit GUID", n1.visitGuid === "5");
-  const n2 = normalisePerigeeApiVisit({ placeId: "G016", username: "u@x.co.za" });
-  check("placeId + username fallback", n2.siteCode === "G016" && n2.repEmail === "u@x.co.za");
+  const n2 = normalisePerigeeApiVisit({ placeId: "48213", username: "u@x.co.za" });
+  check("Perigee's internal placeId is NEVER used as a site code", n2.siteCode === "");
+  check("username used as the email when it is one", n2.repEmail === "u@x.co.za");
   check("a non-email username is not an email", normalisePerigeeApiVisit({ username: "jsmith" }).repEmail === "");
 
   console.log("\nEmail matching");

@@ -34,6 +34,8 @@ const IRAM_REP = "iram.rep@iram.co.za";
 const ALPHA_REP = "cust.rep@alpha.co.za";
 const STRANGER = "stranger@other.co.za";
 const BRAVO_REP = "rep@bravo.co.za";
+const MULTI_REP = "both@alpha.co.za";      // ticked for ALPHA and BRAVO
+const ALPHA_REP_2 = "second@alpha.co.za";  // only checks in during run 3
 
 function seed(dir: string) {
   const d = (p: string) => join(dir, "data", p);
@@ -65,16 +67,16 @@ function seed(dir: string) {
     user("admin@iram.co.za", { role: "admin" }),
     user(ALPHA_REP, { storeReportOwnClientsOnly: true, storeReportClientIds: [ALPHA.id] }),
     user(BRAVO_REP, { storeReportOwnClientsOnly: true, storeReportClientIds: [BRAVO.id] }),
-  ]));
-  writeFileSync(d("store-reports/perigee-feeds.json"), JSON.stringify([
-    { clientId: ALPHA.id, token: "tok-alpha", enabled: true, updatedAt: "2026-09-28T00:00:00.000Z", updatedBy: "test" },
+    user(MULTI_REP, { storeReportOwnClientsOnly: true, storeReportClientIds: [ALPHA.id, BRAVO.id] }),
+    user(ALPHA_REP_2, { storeReportOwnClientsOnly: true, storeReportClientIds: [ALPHA.id] }),
   ]));
   writeFileSync(d("store-reports/sync.json"), JSON.stringify({ enabled: true, channels: ["Makro"], minIntervalSeconds: 0 }));
 }
 
 // ── Fake network ──
 const sent: { to: string; html: string }[] = [];
-let feedMode: "ok" | "401" = "ok";
+let feedMode: "ok" | "401" | "page2-fails" = "ok";
+let sqlDown = false;
 const perigeeCalls: { auth: string; body: Record<string, unknown> }[] = [];
 
 function installFetch() {
@@ -82,13 +84,22 @@ function installFetch() {
     const url = String(input instanceof Request ? input.url : input);
     const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { "Content-Type": "application/json" } });
     if (url.startsWith("https://sql-proxy.test/query")) {
+      if (sqlDown) return new Response("proxy down", { status: 502 });
       return json({ count: 1, data: [{ id: "sql-1", storeCode: SITE, channelName: "Makro", StoreName: "MAKRO WOODMEAD", email: IRAM_REP, UserName: "Iram Rep" }] });
     }
     if (url.startsWith("https://perigee.test/api/visits")) {
       const headers = new Headers(init?.headers);
       perigeeCalls.push({ auth: headers.get("authorization") ?? "", body: JSON.parse(String(init?.body ?? "{}")) });
-      if (feedMode === "401") return new Response("Unauthenticated.", { status: 401 });
-      return json({ visits: { current_page: 1, last_page: 1, total: 4, data: [
+      if (feedMode === "401") return new Response("Unauthenticated. SECRET-ECHO", { status: 401 });
+      if (feedMode === "page2-fails") {
+        const page = Number(JSON.parse(String(init?.body ?? "{}")).page ?? 1);
+        if (page > 1) return new Response("boom", { status: 500 });
+        return json({ visits: { current_page: 1, last_page: 2, total: 2, data: [
+          { id: 21, storeCode: SITE, email: ALPHA_REP_2, displayName: "Second", channel: "Makro" },
+        ] } });
+      }
+      return json({ visits: { current_page: 1, last_page: 1, total: 5, data: [
+        { id: 16, storeCode: SITE, email: MULTI_REP, displayName: "Both", channel: "Makro" },
         { id: 11, store: "MAKRO WOODMEAD - M27", email: ALPHA_REP, displayName: "Alpha Rep", channel: "Makro" },
         { id: 12, storeCode: SITE, email: IRAM_REP, displayName: "Iram Rep", channel: "Makro" },
         { id: 13, storeCode: SITE, email: STRANGER, displayName: "Stranger", channel: "Makro" },
@@ -122,15 +133,22 @@ async function main() {
     const { runStoreReportSync } = await imp("lib/storeReportRunner.ts");
     const { verifyReportLink, linkClientIds } = await imp("lib/reportLink.ts");
     const { trackingDay } = await imp("lib/storeReportTracking.ts");
+    const { upsertPerigeeFeed } = await imp("lib/perigeeFeeds.ts");
+    await upsertPerigeeFeed(ALPHA.id, { token: "tok-alpha-SECRET", enabled: true }, "test");
+
+    console.log("\nToken at rest");
+    const feedsFile = readFileSync(join(dir, "data/store-reports/perigee-feeds.json"), "utf8");
+    check("the stored file does NOT contain the token", !feedsFile.includes("tok-alpha-SECRET") && !feedsFile.includes("alpha-SEC"));
+    check("…only its ending, for display", JSON.parse(feedsFile)[0].tokenEnding === "CRET");
 
     console.log("\nRun 1: main feed + ALPHA's feed");
     const res = await runStoreReportSync({ force: true, origin: "https://app.test" });
     const byEmail = (e: string) => res.outcomes.filter((o: { repEmail: string }) => o.repEmail === e);
 
-    check("Perigee called with ALPHA's token as a Bearer", perigeeCalls[0]?.auth === "Bearer tok-alpha", perigeeCalls[0]?.auth);
+    check("Perigee called with the decrypted token as a Bearer", perigeeCalls[0]?.auth === "Bearer tok-alpha-SECRET", perigeeCalls[0]?.auth);
     check("…for today (SAST) only", perigeeCalls[0]?.body.startDate === trackingDay() && perigeeCalls[0]?.body.endDate === trackingDay());
-    check("5 visits seen (1 main + 4 feed)", res.visitsSeen === 5, String(res.visitsSeen));
-    check("exactly 2 emails sent", sent.length === 2, sent.map((s) => s.to).join(","));
+    check("6 visits seen (1 main + 5 feed)", res.visitsSeen === 6, String(res.visitsSeen));
+    check("exactly 3 emails sent", sent.length === 3, sent.map((s) => s.to).join(","));
 
     const linkOf = (html: string) => {
       const m = /\/r\?r=([^&"]+)/.exec(html);
@@ -147,10 +165,14 @@ async function main() {
     check("BRAVO's rep on ALPHA's feed got nothing", !sent.some((s) => s.to === BRAVO_REP) && byEmail(BRAVO_REP)[0]?.status === "skipped-feed-not-client-rep",
       JSON.stringify(byEmail(BRAVO_REP)));
     check("iRam rep's feed copy skipped as a duplicate", byEmail(IRAM_REP).some((o: { status: string; feed?: string }) => o.status === "skipped-duplicate" && o.feed));
+    const multi = sent.find((s) => s.to === MULTI_REP);
+    check("rep ticked for ALPHA+BRAVO, on ALPHA's feed → ALPHA ONLY", !!multi && JSON.stringify(linkOf(multi.html)) === JSON.stringify([ALPHA.id]),
+      JSON.stringify(multi && linkOf(multi.html)));
 
-    const feeds = JSON.parse(readFileSync(join(dir, "data/store-reports/perigee-feeds.json"), "utf8"));
-    check("feed's last poll recorded (ok, 4 visits)", feeds[0].lastRun?.ok === true && feeds[0].lastRun?.visits === 4, JSON.stringify(feeds[0].lastRun));
-    check("token untouched by the run", feeds[0].token === "tok-alpha");
+    const runsPath = join(dir, "data/store-reports/perigee-feed-runs.json");
+    const runs = JSON.parse(readFileSync(runsPath, "utf8"));
+    check("last poll recorded in its OWN file (ok, 5 visits)", runs[ALPHA.id]?.ok === true && runs[ALPHA.id]?.visits === 5, JSON.stringify(runs));
+    check("token file not rewritten by the run", readFileSync(join(dir, "data/store-reports/perigee-feeds.json"), "utf8") === feedsFile);
 
     const audit = JSON.parse(readFileSync(join(dir, `data/store-reports/audit/${trackingDay()}.json`), "utf8"));
     check("audit names the feed on feed rows", audit.some((r: { detail?: string; repEmail: string }) => r.repEmail === STRANGER && r.detail?.startsWith("[ALPHA FOODS feed]")),
@@ -161,10 +183,22 @@ async function main() {
     const before = sent.length;
     const res2 = await runStoreReportSync({ force: true, origin: "https://app.test" });
     check("run still completes", res2.visitsSeen === 1, String(res2.visitsSeen));
-    check("run message names the failing feed", /Feed client-alpha failed: Perigee 401/.test(res2.message ?? ""), res2.message);
+    check("run message names the feed by CLIENT NAME", /ALPHA FOODS feed failed: Perigee refused the token \(401\)/.test(res2.message ?? ""), res2.message);
+    check("Perigee's response body is NOT stored or shown", !(res2.message ?? "").includes("SECRET-ECHO")
+      && !readFileSync(runsPath, "utf8").includes("SECRET-ECHO"));
+    check("run marked not-ok", res2.ok === false);
     check("nothing re-sent (dedup held)", sent.length === before);
-    const feeds2 = JSON.parse(readFileSync(join(dir, "data/store-reports/perigee-feeds.json"), "utf8"));
-    check("feed's last poll recorded as failed", feeds2[0].lastRun?.ok === false && /401/.test(feeds2[0].lastRun?.error ?? ""));
+    const runs2 = JSON.parse(readFileSync(runsPath, "utf8"));
+    check("feed's last poll recorded as failed", runs2[ALPHA.id]?.ok === false && /401/.test(runs2[ALPHA.id]?.error ?? ""));
+
+    console.log("\nRun 3: main feed DOWN, and the client feed's page 2 fails");
+    sqlDown = true;
+    feedMode = "page2-fails";
+    const res3 = await runStoreReportSync({ force: true, origin: "https://app.test" });
+    check("client feed still polled while the main feed is down", sent.some((s) => s.to === ALPHA_REP_2), res3.message);
+    check("run message names the main feed failure", /Main feed failed/.test(res3.message ?? ""), res3.message);
+    const runs3 = JSON.parse(readFileSync(runsPath, "utf8"));
+    check("partial read recorded as NOT ok", runs3[ALPHA.id]?.ok === false && /only part/.test(runs3[ALPHA.id]?.error ?? ""), JSON.stringify(runs3[ALPHA.id]));
   } finally {
     process.chdir(root);
     rmSync(dir, { recursive: true, force: true });

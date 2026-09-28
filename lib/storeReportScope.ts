@@ -78,7 +78,10 @@ export type FeedVisitScope =
 export function scopeForFeedVisit(index: ScopeIndex, email: string, feedClientId: string): FeedVisitScope {
   const s = scopeForEmail(index, email);
   if (s.kind === "blocked") return s;
-  if (s.kind === "clients" && s.clientIds.includes(feedClientId)) return s;
+  // Only the FEED's client, even for a rep ticked for several: this visit is
+  // evidence for client X alone, and a too-wide token under X must not be
+  // able to carry the rep's other clients into a report.
+  if (s.kind === "clients" && s.clientIds.includes(feedClientId)) return { kind: "clients", clientIds: [feedClientId] };
   return {
     kind: "not-client-rep",
     reason: s.kind === "all"

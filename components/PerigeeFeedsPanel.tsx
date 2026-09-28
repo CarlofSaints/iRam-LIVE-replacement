@@ -25,6 +25,8 @@ interface TestResult {
   error?: string;
   day?: string;
   visits?: number;
+  complete?: boolean;
+  stoppedReason?: string;
   withSiteCode?: number;
   withEmail?: number;
   reps?: string[];
@@ -177,7 +179,8 @@ export default function PerigeeFeedsPanel() {
             className="rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm font-medium disabled:opacity-50">
             {busy === "test" ? "Testing…" : "Test today's visits"}
           </button>
-          <button onClick={() => save({ token, enabled: true })} disabled={!clientId || !token || !!busy}
+          {/* Replacing a token keeps the feed's On/Off as it was; only a new feed starts On. */}
+          <button onClick={() => save(existing ? { token } : { token, enabled: true })} disabled={!clientId || !token || !!busy}
             className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
             {busy === "save" ? "Saving…" : existing ? "Replace token" : "Save and switch on"}
           </button>
@@ -198,6 +201,12 @@ export default function PerigeeFeedsPanel() {
                 {test.visits} visit{test.visits === 1 ? "" : "s"} today ({test.day})
                 {test.visits ? ` · ${test.withSiteCode} with a store code · ${test.withEmail} with a rep email` : ""}
               </div>
+              {test.complete === false && (
+                <p className="mt-1 text-amber-700">Only part of today&apos;s visits could be read ({test.stoppedReason}).</p>
+              )}
+              {!test.reps && !!test.visits && (
+                <p className="mt-1 text-[var(--color-text-muted)]">Rep names are only listed when you paste the token to test it.</p>
+              )}
               {test.visits === 0 && (
                 <p className="mt-1 text-[var(--color-text-muted)]">The token works, but nobody has checked in today. Test again after a check-in.</p>
               )}
@@ -206,14 +215,20 @@ export default function PerigeeFeedsPanel() {
               )}
               {!!test.visits && (test.withEmail ?? 0) < (test.visits ?? 0) && (
                 <p className="mt-1 text-amber-700">
-                  Some visits have no rep email, so they can&apos;t be matched to a user. Fields Perigee sent: {test.fieldNames?.join(", ")}
+                  Some visits have no rep email, so they can&apos;t be matched to a user.
+                  {!!test.fieldNames?.length && <> Fields Perigee sent: {test.fieldNames.join(", ")}</>}
                 </p>
               )}
-              <p className="mt-2 text-xs text-[var(--color-text-muted)]">
-                Check the reps: if this list includes people who don&apos;t work for this client, the token sees more than one
-                customer. They still won&apos;t receive this client&apos;s report unless set up as its rep, but ask Riaz for a
-                token limited to this customer.
-              </p>
+              {!!test.visits && (test.withSiteCode ?? 0) < (test.visits ?? 0) && (
+                <p className="mt-1 text-amber-700">Some visits have no store code, so no report can be built for them.</p>
+              )}
+              {!!test.reps?.length && (
+                <p className="mt-2 text-xs text-[var(--color-text-muted)]">
+                  Check the reps: if this list includes people who don&apos;t work for this client, the token sees more than one
+                  customer. They still won&apos;t receive this client&apos;s report unless set up as its rep, but ask Riaz for a
+                  token limited to this customer.
+                </p>
+              )}
             </>
           )}
         </div>
