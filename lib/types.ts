@@ -102,7 +102,7 @@ export const ROLE_DEFINITIONS: RoleDefinition[] = [
   {
     role: "rep",
     label: "Rep",
-    description: "Receives store reports on check-in, for their assigned client(s) only. Cannot log in.",
+    description: "Receives store reports on check-in. Cannot log in.",
     permissions: [],
   },
 ];
@@ -141,7 +141,8 @@ export interface User {
   // Kept apart from clientIds on purpose: that list governs what an account
   // sees in the portal and treats empty as "all"; this one governs an email and
   // treats empty as "nothing". An admin can be unrestricted in the portal and
-  // still get single-client store reports. Always on for the "rep" role.
+  // still get single-client store reports. Always a manual tick, never implied
+  // by the "rep" role.
   storeReportOwnClientsOnly?: boolean;
   storeReportClientIds?: string[];
 }

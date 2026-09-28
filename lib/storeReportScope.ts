@@ -5,7 +5,8 @@
    By default that report is CONSOLIDATED: every client opted in to store
    reports, which is right for iRam's own merchandisers. A customer's rep must
    only ever see their own client, so a user account can be marked "own
-   clients only" (always, for the "rep" role) with the clients they may see.
+   clients only" with the clients they may see. The tick is always a manual
+   choice, for a Rep as much as anyone (Carl, 28 Sep): the role never implies it.
 
    Rules, in order:
      • no account for this email          → all (today's behaviour, untouched)
@@ -32,12 +33,12 @@ export type StoreReportScope =
 export function normReportEmail(v: unknown): string {
   return String(v ?? "")
     .normalize("NFKC")
-    .replace(/[\s​-‍⁠﻿]/g, "")
+    .replace(/[\s\u200B-\u200D\u2060\uFEFF]/g, "")
     .toLowerCase();
 }
 
-export function isLimitedToOwnClients(u: Pick<User, "role" | "storeReportOwnClientsOnly">): boolean {
-  return u.role === "rep" || u.storeReportOwnClientsOnly === true;
+export function isLimitedToOwnClients(u: Pick<User, "storeReportOwnClientsOnly">): boolean {
+  return u.storeReportOwnClientsOnly === true;
 }
 
 export type ScopeIndex = Map<string, User[]>;

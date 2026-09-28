@@ -154,10 +154,10 @@ export default function UsersPage() {
     setForm((f) => ({ ...f, clientIds: f.clientIds.includes(id) ? f.clientIds.filter((c) => c !== id) : [...f.clientIds, id] }));
   const toggleReportClient = (id: string) =>
     setForm((f) => ({ ...f, storeReportClientIds: f.storeReportClientIds.includes(id) ? f.storeReportClientIds.filter((c) => c !== id) : [...f.storeReportClientIds, id] }));
-  // A Rep only ever receives emails: no password, no portal access, and their
-  // store reports are always limited to the clients ticked for them.
+  // A Rep only ever receives emails: no password, no portal access. Limiting
+  // their reports to their own clients is still a manual tick, like anyone's.
   const isRep = form.role === "rep";
-  const reportsLimited = isRep || form.storeReportOwnClientsOnly;
+  const reportsLimited = form.storeReportOwnClientsOnly;
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -305,11 +305,9 @@ export default function UsersPage() {
                 <input
                   type="checkbox"
                   checked={reportsLimited}
-                  disabled={isRep}
                   onChange={(e) => setForm({ ...form, storeReportOwnClientsOnly: e.target.checked })}
                 />
                 Only receives their own clients&apos; data
-                {isRep && <span className="text-xs text-[var(--color-text-muted)]">(always on for a Rep)</span>}
               </label>
               {reportsLimited && (
                 <>
@@ -499,7 +497,7 @@ export default function UsersPage() {
                             Stock Health
                           </span>
                         )}
-                        {(u.role === "rep" || u.storeReportOwnClientsOnly) && (
+                        {u.storeReportOwnClientsOnly && (
                           (u.storeReportClientIds?.length ?? 0) > 0 ? (
                             <span
                               title={clients.filter((c) => u.storeReportClientIds!.includes(c.id)).map((c) => c.name).join(", ")}

@@ -27,12 +27,13 @@ async function main() {
   console.log("\nScope rules");
   const idx = buildScopeIndex([
     user({ email: "admin@iram.co.za", role: "admin" }),
-    user({ email: "rep@alpha.co.za", role: "rep", storeReportClientIds: ["alpha"] }),
-    user({ email: "rep-empty@alpha.co.za", role: "rep" }),
-    user({ email: "rep-off@alpha.co.za", role: "rep", active: false, storeReportClientIds: ["alpha"] }),
+    user({ email: "rep@alpha.co.za", role: "rep", storeReportOwnClientsOnly: true, storeReportClientIds: ["alpha"] }),
+    user({ email: "rep-unticked@alpha.co.za", role: "rep", storeReportClientIds: ["alpha"] }),
+    user({ email: "rep-empty@alpha.co.za", role: "rep", storeReportOwnClientsOnly: true }),
+    user({ email: "rep-off@alpha.co.za", role: "rep", storeReportOwnClientsOnly: true, active: false, storeReportClientIds: ["alpha"] }),
     user({ email: "manager@alpha.co.za", role: "admin", storeReportOwnClientsOnly: true, storeReportClientIds: ["alpha", "alpha2"] }),
     user({ email: "manager-unticked@iram.co.za", role: "admin", storeReportOwnClientsOnly: false, storeReportClientIds: ["alpha"] }),
-    user({ email: "Dup@x.co.za", role: "rep", storeReportClientIds: ["alpha"] }),
+    user({ email: "Dup@x.co.za", role: "rep", storeReportOwnClientsOnly: true, storeReportClientIds: ["alpha"] }),
     user({ email: "dup@x.co.za ", role: "cam" }),
   ]);
 
@@ -41,6 +42,7 @@ async function main() {
   check("account not limited → all", s("admin@iram.co.za").kind === "all");
   const rep = s("rep@alpha.co.za");
   check("rep → only their client", rep.kind === "clients" && rep.clientIds.join(",") === "alpha");
+  check("rep WITHOUT the tick → all (the role never implies it)", s("rep-unticked@alpha.co.za").kind === "all");
   check("rep with nothing ticked → blocked", s("rep-empty@alpha.co.za").kind === "blocked");
   check("deactivated rep → blocked, not all", s("rep-off@alpha.co.za").kind === "blocked");
   const mgr = s("manager@alpha.co.za");
