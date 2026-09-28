@@ -66,6 +66,11 @@ const STATUS_META: Record<string, { label: string; help: string; tone: "good" | 
     help: "This person's user account is limited to their own clients, but none are ticked (or the account is deactivated, or two accounts share the email). Nothing was sent, on purpose. Fix it under Users and today's check-in sends on the next run.",
     tone: "bad",
   },
+  "skipped-feed-not-client-rep": {
+    label: "Client feed: not that client's rep",
+    help: "This check-in came from a client's own Perigee feed, but the person isn't set up under Users as that client's rep (box ticked and client ticked). Deliberate: iRam's own reps get their report from the main feed. If this IS the client's rep, set them up under Users.",
+    tone: "muted",
+  },
   "failed": { label: "Failed", help: "The report could not be built or sent. See the detail.", tone: "bad" },
 };
 

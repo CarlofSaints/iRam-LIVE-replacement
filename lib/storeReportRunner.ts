@@ -5,7 +5,9 @@
    Each run:
      1. respects the enabled flag + interval throttle (unless forced)
      2. requires an ARMED week (else check-ins are ignored)
-     3. pulls today's Massmart visits via the SQL proxy
+     3. pulls today's Massmart visits via the SQL proxy, then each client's own
+        Perigee feed (lib/perigeeFeeds.ts); feed visits only reach that
+        client's set-up reps
      4. filters to the configured channel allow-list
      5. per visit: dedups (visit GUID + store×rep), live-renders the store's
         consolidated report (minus excluded streams), emails the rep, logs the send
@@ -24,7 +26,11 @@ import { sendStoreReportEmail } from "./email";
 import { addTrackingSend, trackingDay } from "./storeReportTracking";
 import { recordAuditOutcomes } from "./storeReportAudit";
 import { getUsersStrict } from "./userData";
-import { buildScopeIndex, scopeForEmail, type ScopeIndex } from "./storeReportScope";
+import { buildScopeIndex, scopeForEmail, scopeForFeedVisit, type ScopeIndex } from "./storeReportScope";
+import { getPerigeeFeeds, recordPerigeeFeedRuns, type PerigeeFeedRun } from "./perigeeFeeds";
+import { fetchPerigeeVisits, normalisePerigeeApiVisit, PerigeeFetchError } from "./perigeeApi";
+import { getClients } from "./clientData";
+import type { NormalisedVisit } from "./storeReportSync";
 import { v4 as uuid } from "uuid";
 
 const normCh = normChannel;
@@ -44,6 +50,7 @@ export type RunVisitStatus =
   | "skipped-no-email"
   | "skipped-channel"
   | "skipped-rep-no-clients"
+  | "skipped-feed-not-client-rep"
   | "failed"
   | "would-send";
 
@@ -56,6 +63,7 @@ export interface RunVisitOutcome {
   channel?: string;
   actions?: number;
   detail?: string;
+  feed?: string;       // "<Client> feed" when the visit came from a per-client Perigee feed
 }
 
 // Human-readable reason per outcome status — used for the run summary breakdown
@@ -70,6 +78,7 @@ export const OUTCOME_LABELS: Record<RunVisitStatus, string> = {
   "skipped-no-email": "Rep has no email",
   "skipped-channel": "Channel switched off (not in allow-list)",
   "skipped-rep-no-clients": "Rep limited to own clients, none usable",
+  "skipped-feed-not-client-rep": "Client feed: not that client's rep",
   "failed": "Failed",
 };
 
@@ -146,15 +155,45 @@ export async function runStoreReportSync(opts: RunOptions): Promise<RunResult> {
     return { ...base, ok: false, outcomes, message: msg };
   }
 
+  // 3b. Per-client Perigee feeds (a customer's own reps). The main feed goes
+  //     FIRST, so an iRam rep who also appears on a customer's feed is handled
+  //     by the main feed as before; the store×rep dedup then skips the repeat.
+  //     A feed that fails is recorded on the feed and never stops the run.
+  const queue: { v: NormalisedVisit; feedClientId?: string; feedLabel?: string }[] =
+    visits.map((raw) => ({ v: normaliseVisit(raw) }));
+  const feedRuns = new Map<string, PerigeeFeedRun>();
+  const feeds = (await getPerigeeFeeds()).filter((f) => f.enabled && f.token);
+  if (feeds.length) {
+    const names = new Map((await getClients()).map((c) => [c.id, c.name]));
+    const results = await Promise.allSettled(feeds.map((f) => fetchPerigeeVisits(f.token, dedupKey, dedupKey)));
+    results.forEach((res, i) => {
+      const f = feeds[i];
+      const label = `${names.get(f.clientId) ?? f.clientId} feed`;
+      if (res.status === "rejected") {
+        const e = res.reason;
+        const error = e instanceof PerigeeFetchError ? `Perigee ${e.status}: ${e.detail.slice(0, 150)}` : (e instanceof Error ? e.message : "fetch failed");
+        feedRuns.set(f.clientId, { at: new Date().toISOString(), ok: false, visits: 0, error });
+        return;
+      }
+      feedRuns.set(f.clientId, { at: new Date().toISOString(), ok: true, visits: res.value.rows.length });
+      for (const raw of res.value.rows) {
+        const v = normalisePerigeeApiVisit(raw);
+        // Its own id space: never let a feed GUID collide with a main-feed one.
+        if (v.visitGuid) v.visitGuid = `feed:${f.clientId}:${v.visitGuid}`;
+        queue.push({ v, feedClientId: f.clientId, feedLabel: label });
+      }
+    });
+  }
+  base.visitsSeen = queue.length;
+
   const allow = new Set(settings.channels.map(normCh));
   let sent = 0, skipped = 0, failed = 0;
 
   // 4. Per visit.
-  for (const raw of visits) {
-    const v = normaliseVisit(raw);
+  for (const { v, feedClientId, feedLabel } of queue) {
     // Default identity fields on every outcome so the audit ledger always knows
     // WHO (rep) and WHERE (store/channel) a drop happened, not just why.
-    const who = { repName: v.repName, channel: v.channel };
+    const who = { repName: v.repName, channel: v.channel, feed: feedLabel };
     if (!v.siteCode) { skipped++; outcomes.push({ ...who, siteCode: "", repEmail: v.repEmail, store: "", status: "skipped-no-sitecode", detail: "no site code on visit" }); continue; }
 
     // Channel allow-list (separator-insensitive). Empty channel = let through.
@@ -175,11 +214,22 @@ export async function runStoreReportSync(opts: RunOptions): Promise<RunResult> {
 
     // Limited to their own clients? Blocked sends NOTHING and is kept out of the
     // dedup ledger, so ticking their clients later in the day still lets it send.
-    const scope = scopeForEmail(scopes, v.repEmail);
+    // A visit from a client's own feed goes ONLY to someone set up as that
+    // client's rep, never "all" (see scopeForFeedVisit).
+    const scope = feedClientId
+      ? scopeForFeedVisit(scopes, v.repEmail, feedClientId)
+      : scopeForEmail(scopes, v.repEmail);
     if (scope.kind === "blocked") {
       skipped++; outcomes.push({ ...who, siteCode: v.siteCode, repEmail: v.repEmail, store: "", status: "skipped-rep-no-clients", detail: scope.reason }); continue;
     }
+    if (scope.kind === "not-client-rep") {
+      skipped++; outcomes.push({ ...who, siteCode: v.siteCode, repEmail: v.repEmail, store: "", status: "skipped-feed-not-client-rep", detail: scope.reason }); continue;
+    }
     const clientIds = scope.kind === "clients" ? scope.clientIds : undefined;
+    if (feedClientId && !clientIds) {
+      // Unreachable by construction; if it ever happens, send nothing.
+      failed++; outcomes.push({ ...who, siteCode: v.siteCode, repEmail: v.repEmail, store: "", status: "failed", detail: "feed visit had no client list" }); continue;
+    }
 
     // Live-render the store's report: consolidated (every opted-in client), or
     // only this rep's clients.
@@ -206,7 +256,10 @@ export async function runStoreReportSync(opts: RunOptions): Promise<RunResult> {
         // A limited rep whose clients have no data here stays OUT of the dedup
         // ledger: if an admin ticked the wrong client, fixing it later today
         // must still let this visit send. Costs one re-render per poll.
-        if (!opts.dryRun && !(noMapping && clientIds)) {
+        // Not for a per-client FEED visit: a customer's reps also visit stores
+        // we hold no data for (other retailers), and re-rendering each of those
+        // every 3 minutes all day is waste. The feed's client can't be mis-ticked.
+        if (!opts.dryRun && !(noMapping && clientIds && !feedClientId)) {
           await addSend({
             periodKey: dedupKey, siteCode: v.siteCode, storeName: store, repEmail: v.repEmail,
             visitGuid: v.visitGuid, sentAt: new Date().toISOString(), status: "skipped_no_data",
@@ -266,17 +319,23 @@ export async function runStoreReportSync(opts: RunOptions): Promise<RunResult> {
 
   const run: SyncLastRun = {
     at: new Date().toISOString(), ok: failed === 0,
-    visitsSeen: visits.length, sent, skipped: skippedCount, failed,
+    visitsSeen: queue.length, sent, skipped: skippedCount, failed,
     reasons: summariseReasons(outcomes),
-    message: opts.dryRun ? "Dry run" : undefined,
+    message: [
+      opts.dryRun ? "Dry run" : "",
+      // A failing client feed is invisible in the counts (just fewer visits),
+      // so name it in the run message.
+      ...[...feedRuns.entries()].filter(([, r]) => !r.ok).map(([id, r]) => `Feed ${id} failed: ${r.error}`),
+    ].filter(Boolean).join(" · ") || undefined,
   };
   if (!opts.dryRun) {
     await recordLastRun(run);
+    await recordPerigeeFeedRuns(feedRuns).catch(() => {});
     // Durable per-rep audit of every outcome (incl. all skip reasons + failures),
     // so "why didn't rep X get their report?" is answerable after the fact.
     // Best-effort: an audit-write failure must never fail the run itself.
     await recordAuditOutcomes(dedupKey, outcomes).catch(() => {});
   }
 
-  return { ...base, ok: failed === 0, sent, skipped: skippedCount, failed, outcomes };
+  return { ...base, ok: failed === 0, sent, skipped: skippedCount, failed, outcomes, message: run.message };
 }
