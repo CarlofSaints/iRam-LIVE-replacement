@@ -1,5 +1,5 @@
 import type { User } from "./types";
-import { readJson, writeJson } from "./blob";
+import { readJson, readJsonStrict, writeJson } from "./blob";
 import { v4 as uuid } from "uuid";
 import bcrypt from "bcryptjs";
 
@@ -7,6 +7,16 @@ const USERS_KEY = "users.json";
 
 export async function getUsers(): Promise<User[]> {
   return readJson<User[]>(USERS_KEY, []);
+}
+
+/** For decisions that must FAIL CLOSED (who may see which client's data).
+ *  getUsers() turns a failed read into [] — for the store-report poller that
+ *  would read as "nobody is restricted" and send every client's data to a
+ *  customer's rep. This throws instead, on a failed read AND on a missing file. */
+export async function getUsersStrict(): Promise<User[]> {
+  const users = await readJsonStrict<User[] | null>(USERS_KEY, null);
+  if (!Array.isArray(users)) throw new Error("users.json could not be read");
+  return users;
 }
 
 export async function getUserById(userId: string): Promise<User | null> {
@@ -42,6 +52,26 @@ export function pickNotifyFlags(src: Record<string, unknown>): Partial<Pick<User
   return out;
 }
 
+/** Every notification flag switched off. A Rep only ever gets store reports:
+ *  the other mails (Portfolio Stock Health, digests, action report) scope on
+ *  the PORTAL client list, where empty means every client. */
+export function allNotifyFlagsOff(): Pick<User, NotifyFlag> {
+  return Object.fromEntries(NOTIFY_FLAGS.map((f) => [f, false])) as Pick<User, NotifyFlag>;
+}
+
+type StoreReportScopeFields = "storeReportOwnClientsOnly" | "storeReportClientIds";
+
+/** Picks the store-report client restriction out of a request body, shared by
+ *  create and edit so neither can silently drop it. */
+export function pickStoreReportScope(src: Record<string, unknown>): Partial<Pick<User, StoreReportScopeFields>> {
+  const out: Partial<Pick<User, StoreReportScopeFields>> = {};
+  if (typeof src.storeReportOwnClientsOnly === "boolean") out.storeReportOwnClientsOnly = src.storeReportOwnClientsOnly;
+  if (Array.isArray(src.storeReportClientIds)) {
+    out.storeReportClientIds = [...new Set(src.storeReportClientIds.filter((c): c is string => typeof c === "string" && c !== ""))];
+  }
+  return out;
+}
+
 export async function createUser(data: {
   name: string;
   email: string;
@@ -49,7 +79,7 @@ export async function createUser(data: {
   role: User["role"];
   forcePasswordChange: boolean;
   clientIds?: string[];
-} & Partial<Pick<User, NotifyFlag>>): Promise<User> {
+} & Partial<Pick<User, NotifyFlag | StoreReportScopeFields>>): Promise<User> {
   const users = await getUsers();
   if (users.some((u) => u.email.toLowerCase() === data.email.toLowerCase())) {
     throw new Error(`User with email "${data.email}" already exists`);
@@ -66,6 +96,7 @@ export async function createUser(data: {
     createdAt: new Date().toISOString(),
     clientIds: data.clientIds && data.clientIds.length > 0 ? data.clientIds : undefined,
     ...pickNotifyFlags(data as Record<string, unknown>),
+    ...pickStoreReportScope(data as Record<string, unknown>),
   };
   users.push(user);
   await writeJson(USERS_KEY, users);
@@ -85,6 +116,7 @@ export async function updateUser(
       | "lastLoginAt"
       | "profilePicUrl"
       | NotifyFlag
+      | StoreReportScopeFields
       | "clientIds"
     >
   >

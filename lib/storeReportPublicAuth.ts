@@ -17,12 +17,13 @@
    The body is trusted for one thing only: the counts the rep typed.
    ────────────────────────────────────────────────────────────── */
 
-import { verifyReportLink } from "./reportLink";
+import { verifyReportLink, linkClientIds } from "./reportLink";
 import { getTrackingDay, type TrackRecord } from "./storeReportTracking";
 
 export interface PublicReportContext {
   site: string;
-  clientId?: string;
+  // The clients the link is limited to; undefined = every participating client.
+  clientIds?: string[];
   year?: number;
   month?: number;
   week?: number;
@@ -66,7 +67,7 @@ export async function resolvePublicContext(body: Record<string, unknown>): Promi
     ok: true,
     ctx: {
       site: link.payload.site,
-      clientId: link.payload.clientId,
+      clientIds: linkClientIds(link.payload),
       year: link.payload.year,
       month: link.payload.month,
       week: link.payload.week,

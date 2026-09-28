@@ -61,6 +61,11 @@ const STATUS_META: Record<string, { label: string; help: string; tone: "good" | 
     help: "This Perigee channel is not in the Channel allow-list under Auto-send (check-in trigger), so no report is sent. Deliberate (e.g. no DISPO loaded for it yet): add it back there to switch it on.",
     tone: "muted",
   },
+  "skipped-rep-no-clients": {
+    label: "Rep has no clients ticked",
+    help: "This person's user account is limited to their own clients, but none are ticked (or the account is deactivated, or two accounts share the email). Nothing was sent, on purpose. Fix it under Users and today's check-in sends on the next run.",
+    tone: "bad",
+  },
   "failed": { label: "Failed", help: "The report could not be built or sent. See the detail.", tone: "bad" },
 };
 

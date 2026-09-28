@@ -63,7 +63,12 @@ export function latestLoadPerVendor<T extends Record<string, unknown>>(rows: T[]
 
 export interface LoadStoreReportOpts {
   siteCode: string;
-  clientIds?: string[];        // omit → all clients with sendConsolidatedStoreReports
+  // omit → all clients with sendConsolidatedStoreReports. An EMPTY list means
+  // no clients, never "all": a scoped rep with nothing ticked gets nothing.
+  clientIds?: string[];
+  // With clientIds: also drop any of them that has NOT opted in to store
+  // reports. The check-in sends need this; a preview of one client does not.
+  onlyOptedIn?: boolean;
   year?: number;
   month?: number;
   week?: number;
@@ -84,8 +89,8 @@ export async function loadStoreReport(opts: LoadStoreReportOpts): Promise<Loaded
   const mapped = await resolveDispoCode(opts.siteCode);
   const site = norm(mapped ?? opts.siteCode);
   const allClients = await getActiveClients();
-  const clients = opts.clientIds && opts.clientIds.length
-    ? allClients.filter((c) => opts.clientIds!.includes(c.id))
+  const clients = opts.clientIds
+    ? allClients.filter((c) => opts.clientIds!.includes(c.id) && (!opts.onlyOptedIn || c.sendConsolidatedStoreReports))
     : allClients.filter((c) => c.sendConsolidatedStoreReports);
 
   const [statusDefs, allScenarios] = await Promise.all([

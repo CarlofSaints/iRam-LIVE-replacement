@@ -31,6 +31,9 @@ export interface TrackRecord {
   month?: number;
   week?: number;
   test?: boolean;           // test sends are excluded from the manager digest
+  // The clients this send was limited to (a rep limited to their own clients).
+  // Absent = the consolidated report. Claims and the manager's link obey it.
+  clientIds?: string[];
   opens: number;
   pageViews: number;
   cardClicks: number;
@@ -56,7 +59,7 @@ export async function getTrackingDay(day: string): Promise<TrackRecord[]> {
 export async function addTrackingSend(rec: {
   token: string; day: string; periodKey: string; siteCode: string; store: string;
   channel: string; repEmail: string; repName: string; sentAt: string;
-  year?: number; month?: number; week?: number; test?: boolean;
+  year?: number; month?: number; week?: number; test?: boolean; clientIds?: string[];
 }): Promise<void> {
   const records = await getTrackingDay(rec.day);
   if (records.some((r) => r.token === rec.token)) return; // idempotent

@@ -1,8 +1,8 @@
 import { NextRequest } from "next/server";
 import { loadStoreReport, formatGeneratedAt, storeReportLogos } from "@/lib/storeReportLoad";
 import { renderStoreReportPage } from "@/lib/storeReportPage";
-import { verifyReportLink, signReportLink, legacyLinksAllowed, ReportLinkPayload } from "@/lib/reportLink";
-import { getPhantomCounts } from "@/lib/phantomCounts";
+import { verifyReportLink, signReportLink, legacyLinksAllowed, linkClientIds, ReportLinkPayload } from "@/lib/reportLink";
+import { getPhantomCounts, countsForLines } from "@/lib/phantomCounts";
 
 // PUBLIC hosted action-list page — reps open this from the email link, so it is
 // intentionally not behind a login (any rep may view any store's report). The
@@ -88,9 +88,10 @@ export async function GET(req: NextRequest) {
   }
 
   try {
+    const clientIds = linkClientIds(target);
     const loaded = await loadStoreReport({
       siteCode: target.site,
-      clientIds: target.clientId ? [target.clientId] : undefined,
+      clientIds,
       year: target.year,
       month: target.month,
       week: target.week,
@@ -106,7 +107,7 @@ export async function GET(req: NextRequest) {
     // against a different period from the one on screen.
     const apiToken = signReportLink({
       site: target.site,
-      clientId: target.clientId,
+      clientIds,
       year: loaded.year,
       month: loaded.month,
       week: loaded.week,
@@ -119,7 +120,10 @@ export async function GET(req: NextRequest) {
       const file = await getPhantomCounts({
         siteCode: target.site, year: loaded.year, month: loaded.month, week: loaded.week,
       });
-      for (const [key, c] of Object.entries(file.lines)) savedCounts[key] = c.found;
+      // Only the lines on THIS report. The file holds every client's counts for
+      // the store; the page embeds these in its source, where a rep scoped to one
+      // client would otherwise see the others' articles.
+      savedCounts = countsForLines(file, loaded.report.lines);
     } catch (err) {
       // Never let a counts read stop the report rendering — the rep can re-enter.
       console.error("store-report: phantom counts read failed", err);

@@ -41,6 +41,7 @@ const STATUS_LABELS: Record<string, string> = {
   "skipped-no-sitecode": "Visit had no site code",
   "skipped-no-email": "Rep has no email",
   "skipped-channel": "Channel switched off (not in allow-list)",
+  "skipped-rep-no-clients": "Rep limited to own clients, none usable",
   "failed": "Failed",
 };
 

@@ -26,6 +26,8 @@ export async function GET(req: NextRequest) {
       // Signed, self-expiring token (same scheme reps get) — no guessable params.
       const token = signReportLink({
         site: r.siteCode,
+        // The same clients the rep was sent, so the manager sees what they saw.
+        clientIds: r.clientIds,
         year: r.year != null ? r.year : undefined,
         month: r.month != null ? r.month : undefined,
         week: r.week != null ? r.week : undefined,

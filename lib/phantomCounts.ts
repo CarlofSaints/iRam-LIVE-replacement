@@ -56,6 +56,22 @@ export function phantomLineKey(clientId: string, article: string): string {
   return `${clientId}|${article}`;
 }
 
+/** The saved counts for the lines a report actually shows, and nothing else.
+ *  The counts file holds EVERY client's counts for the store, so handing it out
+ *  whole puts other clients' articles into a scoped rep's page source. Anything
+ *  that sends counts to a browser or into a file goes through this. */
+export function countsForLines(
+  file: Pick<PhantomCountFile, "lines">,
+  lines: { clientId: string; article: string }[],
+): Record<string, number> {
+  const wanted = new Set(lines.map((l) => phantomLineKey(l.clientId, l.article)));
+  const out: Record<string, number> = {};
+  for (const [key, c] of Object.entries(file.lines)) {
+    if (wanted.has(key)) out[key] = c.found;
+  }
+  return out;
+}
+
 export function phantomPeriodKey(year: number, month: number, week: number): string {
   return `${year}-${month}-${week}`;
 }

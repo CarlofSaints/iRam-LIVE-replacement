@@ -9,6 +9,7 @@ import {
   sendPasswordResetEmail,
 } from "@/lib/email";
 import { createResetToken } from "@/lib/passwordReset";
+import { NO_LOGIN_ROLES } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -55,6 +56,13 @@ export async function POST(req: NextRequest) {
       return Response.json(
         { error: "User not found" },
         { status: 404, headers: noCacheHeaders() },
+      );
+    }
+    // A Rep cannot sign in, so emailing them a password or invite only confuses them.
+    if (NO_LOGIN_ROLES.includes(user.role)) {
+      return Response.json(
+        { error: "This account only receives store reports and cannot sign in, so it has no login details to send." },
+        { status: 400, headers: noCacheHeaders() },
       );
     }
 

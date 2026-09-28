@@ -32,11 +32,14 @@ export async function POST(req: NextRequest) {
 
     const raw = Array.isArray(body.counts) ? body.counts : [];
     const now = new Date().toISOString();
+    // A link limited to certain clients may only write counts for those clients.
+    const allowedClients = ctx.clientIds ? new Set(ctx.clientIds) : null;
     const incoming = raw
       .map((e: Record<string, unknown>) => {
         const article = String(e.article ?? "").trim();
         const clientId = String(e.clientId ?? "").trim();
         if (!article || !clientId) return null;
+        if (allowedClients && !allowedClients.has(clientId)) return null;
         // `found` is a genuine decimal (metres of rope, kg, part-packs). Only a
         // real, finite, non-negative number counts; null is an explicit clear.
         let found: number | null = null;
@@ -68,7 +71,14 @@ export async function POST(req: NextRequest) {
     );
 
     return Response.json(
-      { saved: incoming.length, held: Object.keys(file.lines).length, updatedAt: file.updatedAt },
+      // `held` counts only the link's own clients: the file holds every client's
+      // counts for the store, and the total would tell a limited rep how many
+      // lines the others have.
+      {
+        saved: incoming.length,
+        held: Object.values(file.lines).filter((c) => !allowedClients || allowedClients.has(c.clientId)).length,
+        updatedAt: file.updatedAt,
+      },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (err) {

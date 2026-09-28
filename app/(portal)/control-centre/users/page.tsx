@@ -15,7 +15,7 @@ export default function UsersPage() {
   const [clients, setClients] = useState<{ id: string; name: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ name: "", email: "", password: "", role: "cam", forcePasswordChange: true, receiveStoreAlerts: false, receiveProductAlerts: false, receiveStoreReportDigest: false, receiveActionReport: false, receiveLoadStatus: false, receivePortfolioHealth: false, clientIds: [] as string[] });
+  const [form, setForm] = useState({ name: "", email: "", password: "", role: "cam", forcePasswordChange: true, receiveStoreAlerts: false, receiveProductAlerts: false, receiveStoreReportDigest: false, receiveActionReport: false, receiveLoadStatus: false, receivePortfolioHealth: false, clientIds: [] as string[], storeReportOwnClientsOnly: false, storeReportClientIds: [] as string[] });
   const [error, setError] = useState("");
   const [editId, setEditId] = useState<string | null>(null);
 
@@ -149,9 +149,15 @@ export default function UsersPage() {
     })();
   }, []);
 
-  const blankForm = { name: "", email: "", password: "", role: "cam", forcePasswordChange: true, receiveStoreAlerts: false, receiveProductAlerts: false, receiveStoreReportDigest: false, receiveActionReport: false, receiveLoadStatus: false, receivePortfolioHealth: false, clientIds: [] as string[] };
+  const blankForm = { name: "", email: "", password: "", role: "cam", forcePasswordChange: true, receiveStoreAlerts: false, receiveProductAlerts: false, receiveStoreReportDigest: false, receiveActionReport: false, receiveLoadStatus: false, receivePortfolioHealth: false, clientIds: [] as string[], storeReportOwnClientsOnly: false, storeReportClientIds: [] as string[] };
   const toggleFormClient = (id: string) =>
     setForm((f) => ({ ...f, clientIds: f.clientIds.includes(id) ? f.clientIds.filter((c) => c !== id) : [...f.clientIds, id] }));
+  const toggleReportClient = (id: string) =>
+    setForm((f) => ({ ...f, storeReportClientIds: f.storeReportClientIds.includes(id) ? f.storeReportClientIds.filter((c) => c !== id) : [...f.storeReportClientIds, id] }));
+  // A Rep only ever receives emails: no password, no portal access. Limiting
+  // their reports to their own clients is still a manual tick, like anyone's.
+  const isRep = form.role === "rep";
+  const reportsLimited = form.storeReportOwnClientsOnly;
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -173,7 +179,7 @@ export default function UsersPage() {
 
   function startEdit(u: UserSafe) {
     setEditId(u.id);
-    setForm({ name: u.name, email: u.email, password: "", role: u.role, forcePasswordChange: u.forcePasswordChange, receiveStoreAlerts: u.receiveStoreAlerts ?? false, receiveProductAlerts: u.receiveProductAlerts ?? false, receiveStoreReportDigest: u.receiveStoreReportDigest ?? false, receiveActionReport: u.receiveActionReport ?? false, receiveLoadStatus: u.receiveLoadStatus ?? false, receivePortfolioHealth: u.receivePortfolioHealth ?? false, clientIds: u.clientIds ?? [] });
+    setForm({ name: u.name, email: u.email, password: "", role: u.role, forcePasswordChange: u.forcePasswordChange, receiveStoreAlerts: u.receiveStoreAlerts ?? false, receiveProductAlerts: u.receiveProductAlerts ?? false, receiveStoreReportDigest: u.receiveStoreReportDigest ?? false, receiveActionReport: u.receiveActionReport ?? false, receiveLoadStatus: u.receiveLoadStatus ?? false, receivePortfolioHealth: u.receivePortfolioHealth ?? false, clientIds: u.clientIds ?? [], storeReportOwnClientsOnly: u.storeReportOwnClientsOnly ?? false, storeReportClientIds: u.storeReportClientIds ?? [] });
     setShowForm(true);
     setError("");
   }
@@ -224,16 +230,26 @@ export default function UsersPage() {
             {error && <div className="col-span-2 rounded-lg bg-red-50 px-4 py-2 text-sm text-red-700">{error}</div>}
             <input placeholder="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm" />
             <input placeholder="Email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm" />
-            {!editId && <input placeholder="Password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm" />}
+            {!editId && !isRep && <input placeholder="Password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm" />}
+            {!editId && isRep && (
+              <div className="flex items-center rounded-lg bg-zinc-50 px-3 py-2 text-xs text-[var(--color-text-muted)]">
+                No password needed. A Rep cannot sign in; they only receive store reports.
+              </div>
+            )}
             <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm">
               {ROLE_DEFINITIONS.map((rd) => (
                 <option key={rd.role} value={rd.role}>{rd.label}</option>
               ))}
             </select>
-            <label className="col-span-2 flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={form.forcePasswordChange} onChange={(e) => setForm({ ...form, forcePasswordChange: e.target.checked })} />
-              Force password change on first login
-            </label>
+            {!isRep && (
+              <label className="col-span-2 flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={form.forcePasswordChange} onChange={(e) => setForm({ ...form, forcePasswordChange: e.target.checked })} />
+                Force password change on first login
+              </label>
+            )}
+            {/* A Rep only gets store reports. These other mails are scoped by
+                Client access (hidden for a Rep, so empty = every client). */}
+            {!isRep && <>
             <label className="col-span-2 flex items-center gap-2 text-sm">
               <input type="checkbox" checked={form.receiveStoreAlerts} onChange={(e) => setForm({ ...form, receiveStoreAlerts: e.target.checked })} />
               Receive missing store alerts
@@ -258,9 +274,10 @@ export default function UsersPage() {
               <input type="checkbox" checked={form.receivePortfolioHealth} onChange={(e) => setForm({ ...form, receivePortfolioHealth: e.target.checked })} />
               Receive weekly Portfolio Stock Health summary (one mail per channel, Thursdays)
             </label>
+            </>}
 
             {/* Client scoping — restrict this account to specific clients */}
-            <div className="col-span-2">
+            {!isRep && <div className="col-span-2">
               <div className="mb-1 text-sm font-medium text-[var(--color-text)]">Client access</div>
               <p className="mb-2 text-xs text-[var(--color-text-muted)]">
                 Leave empty for internal staff (sees all clients). Select one or more clients to restrict this account — a
@@ -277,6 +294,44 @@ export default function UsersPage() {
               </div>
               {form.role === "client" && form.clientIds.length === 0 && (
                 <p className="mt-1 text-xs text-amber-600">A Client account with no clients selected will see nothing — select at least one.</p>
+              )}
+            </div>}
+
+            {/* Store reports on check-in. Separate from Client access above:
+                that controls the portal, this controls the emailed report. */}
+            <div className="col-span-2 rounded-lg border border-[var(--color-border)] p-3">
+              <div className="mb-1 text-sm font-medium text-[var(--color-text)]">Store reports on check-in</div>
+              <p className="mb-2 text-xs text-[var(--color-text-muted)]">
+                Matched on the email Perigee has for this person. Without the tick below they get the full store report
+                (every opted-in client), like iRam&apos;s own reps.
+              </p>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={reportsLimited}
+                  onChange={(e) => setForm({ ...form, storeReportOwnClientsOnly: e.target.checked })}
+                />
+                Only receives their own clients&apos; data
+              </label>
+              {reportsLimited && (
+                <>
+                  <div className="mt-2 flex max-h-40 flex-wrap gap-x-4 gap-y-1 overflow-y-auto rounded-lg border border-[var(--color-border)] p-3">
+                    {clients.length === 0 && <span className="text-xs text-[var(--color-text-muted)]">No clients available.</span>}
+                    {clients.map((c) => (
+                      <label key={c.id} className="flex items-center gap-2 text-sm">
+                        <input type="checkbox" checked={form.storeReportClientIds.includes(c.id)} onChange={() => toggleReportClient(c.id)} />
+                        {c.name}
+                      </label>
+                    ))}
+                  </div>
+                  {form.storeReportClientIds.length === 0 ? (
+                    <p className="mt-1 text-xs font-medium text-red-600">No client ticked: this person will receive NO store reports until you tick at least one.</p>
+                  ) : (
+                    <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                      Their reports will show only: {clients.filter((c) => form.storeReportClientIds.includes(c.id)).map((c) => c.name).join(", ")}.
+                    </p>
+                  )}
+                </>
               )}
             </div>
 
@@ -446,6 +501,20 @@ export default function UsersPage() {
                             Stock Health
                           </span>
                         )}
+                        {u.storeReportOwnClientsOnly && (
+                          (u.storeReportClientIds?.length ?? 0) > 0 ? (
+                            <span
+                              title={clients.filter((c) => u.storeReportClientIds!.includes(c.id)).map((c) => c.name).join(", ")}
+                              className="rounded-full bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700"
+                            >
+                              Reports: {u.storeReportClientIds!.length} client{u.storeReportClientIds!.length === 1 ? "" : "s"}
+                            </span>
+                          ) : (
+                            <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700">
+                              Reports: no client ticked
+                            </span>
+                          )
+                        )}
                       </div>
                     </td>
                     <td className="px-6 py-3">
@@ -456,7 +525,7 @@ export default function UsersPage() {
                             {u.active ? "Deactivate" : "Activate"}
                           </button>
                         )}
-                        {isSuperAdmin && (
+                        {isSuperAdmin && u.role !== "rep" && (
                           <>
                             <button onClick={() => openPwModal(u)} className="text-xs text-[var(--color-primary)] hover:underline">Reset PW</button>
                             <button onClick={() => quickAction(u, "reinvite")} disabled={busy === u.id + "reinvite"} className="text-xs text-[var(--color-primary)] hover:underline disabled:opacity-50">

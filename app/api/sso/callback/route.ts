@@ -3,7 +3,7 @@ import { verifySSOToken } from "@/lib/sso";
 import { getUsers, getUserByEmail, updateUser } from "@/lib/userData";
 import { writeJson } from "@/lib/blob";
 import { encodeSession, sessionCookieOptions, noCacheHeaders } from "@/lib/auth";
-import type { SessionPayload, User } from "@/lib/types";
+import { NO_LOGIN_ROLES, type SessionPayload, type User } from "@/lib/types";
 import { v4 as uuid } from "uuid";
 
 const MODULE_SLUG = "iram-live";
@@ -23,6 +23,15 @@ export async function POST(req: NextRequest) {
   }
 
   let user = await getUserByEmail(payload.email);
+
+  // Same refusals as the password login: a deactivated account, and an account
+  // that exists only to receive store reports.
+  if (user && !user.active) {
+    return NextResponse.json({ error: "This account has been deactivated" }, { status: 403, headers: noCacheHeaders() });
+  }
+  if (user && NO_LOGIN_ROLES.includes(user.role)) {
+    return NextResponse.json({ error: "This account only receives store reports by email and cannot sign in." }, { status: 403, headers: noCacheHeaders() });
+  }
 
   if (!user) {
     const users = await getUsers();
