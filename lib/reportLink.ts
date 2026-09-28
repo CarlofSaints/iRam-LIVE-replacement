@@ -18,6 +18,9 @@ import crypto from "crypto";
 export interface ReportLinkPayload {
   site: string;
   clientId?: string;
+  // Several clients (a rep limited to their own clients). Signed like every
+  // other field, so a rep can't widen their own report by editing the link.
+  clientIds?: string[];
   year?: number;
   month?: number;
   week?: number;
@@ -59,6 +62,7 @@ export function signReportLink(payload: ReportLinkPayload, now: Date = new Date(
   const exp = Math.floor(now.getTime() / 1000) + ttlDays() * 86400;
   const data: Record<string, unknown> = { s: payload.site, e: exp };
   if (payload.clientId) data.c = payload.clientId;
+  if (payload.clientIds && payload.clientIds.length) data.cs = payload.clientIds;
   if (payload.year != null) data.y = payload.year;
   if (payload.month != null) data.m = payload.month;
   if (payload.week != null) data.w = payload.week;
@@ -100,16 +104,36 @@ export function verifyReportLink(token: string, now: Date = new Date()): VerifyR
   const site = typeof data.s === "string" ? data.s : "";
   if (!site) return { ok: false, reason: "malformed" };
 
+  // A client list that is present but unreadable must not decode as "no list"
+  // (= every client) — refuse the link instead.
+  let clientIds: string[] | undefined;
+  if (data.cs !== undefined) {
+    if (!Array.isArray(data.cs) || !data.cs.length || !data.cs.every((c) => typeof c === "string" && c)) {
+      return { ok: false, reason: "malformed" };
+    }
+    clientIds = data.cs as string[];
+  }
+
   return {
     ok: true,
     payload: {
       site,
       clientId: typeof data.c === "string" ? data.c : undefined,
+      clientIds,
       year: typeof data.y === "number" ? data.y : undefined,
       month: typeof data.m === "number" ? data.m : undefined,
       week: typeof data.w === "number" ? data.w : undefined,
     },
   };
+}
+
+// The clients a link is limited to, or undefined for an unscoped (all-client)
+// link. Every reader of a verified link goes through this so the single-client
+// and multi-client forms can never be read differently.
+export function linkClientIds(payload: ReportLinkPayload): string[] | undefined {
+  if (payload.clientIds && payload.clientIds.length) return payload.clientIds;
+  if (payload.clientId) return [payload.clientId];
+  return undefined;
 }
 
 // Whether to still honour legacy plain-param links (?site=…) that reps already

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getUserByEmail, verifyPassword, updateUser } from "@/lib/userData";
 import { encodeSession, sessionCookieOptions, noCacheHeaders, handleAuthError } from "@/lib/auth";
 import { addLog } from "@/lib/activityLog";
-import type { SessionPayload } from "@/lib/types";
+import { NO_LOGIN_ROLES, type SessionPayload } from "@/lib/types";
 
 export async function POST(req: NextRequest) {
   try {
@@ -17,6 +17,9 @@ export async function POST(req: NextRequest) {
     const valid = await verifyPassword(user, password);
     if (!valid) {
       return Response.json({ error: "Invalid credentials" }, { status: 401, headers: noCacheHeaders() });
+    }
+    if (NO_LOGIN_ROLES.includes(user.role)) {
+      return Response.json({ error: "This account only receives store reports by email and cannot sign in." }, { status: 403, headers: noCacheHeaders() });
     }
     await updateUser(user.id, { lastLoginAt: new Date().toISOString() });
     const session: SessionPayload = {

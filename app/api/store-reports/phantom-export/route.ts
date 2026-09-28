@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { resolvePublicContext } from "@/lib/storeReportPublicAuth";
 import { loadStoreReport, formatGeneratedAt } from "@/lib/storeReportLoad";
-import { getPhantomCounts, phantomLineKey } from "@/lib/phantomCounts";
+import { getPhantomCounts, countsForLines } from "@/lib/phantomCounts";
 import { buildPhantomCountWorkbook, phantomSheetFileName, vendorLabelFor, type CountMode } from "@/lib/phantomCountSheet";
 import { getClients } from "@/lib/clientData";
 import { getCamById } from "@/lib/camData";
@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
     // Rebuild the report server-side — same call the /r page is rendered from.
     const loaded = await loadStoreReport({
       siteCode: ctx.site,
-      clientIds: ctx.clientId ? [ctx.clientId] : undefined,
+      clientIds: ctx.clientIds,
       year: ctx.year,
       month: ctx.month,
       week: ctx.week,
@@ -61,10 +61,8 @@ export async function POST(req: NextRequest) {
         siteCode: ctx.site,
         year: loaded.year, month: loaded.month, week: loaded.week,
       });
-      for (const [key, c] of Object.entries(file.lines)) counts[key] = c.found;
       // Keep only counts for lines actually in this sheet.
-      const wanted = new Set(lines.map((l) => phantomLineKey(l.clientId, l.article)));
-      counts = Object.fromEntries(Object.entries(counts).filter(([k]) => wanted.has(k)));
+      counts = countsForLines(file, lines);
     }
 
     const meta = {

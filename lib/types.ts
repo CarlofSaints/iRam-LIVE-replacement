@@ -99,7 +99,16 @@ export const ROLE_DEFINITIONS: RoleDefinition[] = [
     description: "External client — charts for their assigned client(s) only",
     permissions: ["view_charts"],
   },
+  {
+    role: "rep",
+    label: "Rep",
+    description: "Receives store reports on check-in, for their assigned client(s) only. Cannot log in.",
+    permissions: [],
+  },
 ];
+
+// Accounts that exist only to receive emails. Login and SSO refuse them.
+export const NO_LOGIN_ROLES = ["rep"];
 
 export interface RolePermissions {
   role: string;
@@ -128,6 +137,13 @@ export interface User {
   // Client scoping — when non-empty, this user may only see data for these
   // client IDs (external "client" accounts). Empty/undefined = all clients.
   clientIds?: string[];
+  // Store reports sent to this person on check-in carry ONLY these clients.
+  // Kept apart from clientIds on purpose: that list governs what an account
+  // sees in the portal and treats empty as "all"; this one governs an email and
+  // treats empty as "nothing". An admin can be unrestricted in the portal and
+  // still get single-client store reports. Always on for the "rep" role.
+  storeReportOwnClientsOnly?: boolean;
+  storeReportClientIds?: string[];
 }
 
 export interface SessionPayload {

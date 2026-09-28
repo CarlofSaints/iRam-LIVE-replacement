@@ -23,6 +23,8 @@ import { renderStoreReportEmail } from "./storeReportEmail";
 import { sendStoreReportEmail } from "./email";
 import { addTrackingSend, trackingDay } from "./storeReportTracking";
 import { recordAuditOutcomes } from "./storeReportAudit";
+import { getUsersStrict } from "./userData";
+import { buildScopeIndex, scopeForEmail, type ScopeIndex } from "./storeReportScope";
 import { v4 as uuid } from "uuid";
 
 const normCh = normChannel;
@@ -41,6 +43,7 @@ export type RunVisitStatus =
   | "skipped-no-sitecode"
   | "skipped-no-email"
   | "skipped-channel"
+  | "skipped-rep-no-clients"
   | "failed"
   | "would-send";
 
@@ -66,6 +69,7 @@ export const OUTCOME_LABELS: Record<RunVisitStatus, string> = {
   "skipped-no-sitecode": "Visit had no site code",
   "skipped-no-email": "Rep has no email",
   "skipped-channel": "Channel switched off (not in allow-list)",
+  "skipped-rep-no-clients": "Rep limited to own clients, none usable",
   "failed": "Failed",
 };
 
@@ -130,6 +134,18 @@ export async function runStoreReportSync(opts: RunOptions): Promise<RunResult> {
   }
   base.visitsSeen = visits.length;
 
+  // Who is limited to their own clients. Read STRICTLY: a failed read must stop
+  // the run, not come back empty and send a customer's rep every client's data.
+  let scopes: ScopeIndex;
+  try {
+    scopes = buildScopeIndex(await getUsersStrict());
+  } catch (e) {
+    const msg = `Could not read users, nothing sent: ${e instanceof Error ? e.message : "read failed"}`;
+    const run: SyncLastRun = { at: new Date().toISOString(), ok: false, visitsSeen: visits.length, sent: 0, skipped: 0, failed: 0, message: msg };
+    if (!opts.dryRun) await recordLastRun(run);
+    return { ...base, ok: false, outcomes, message: msg };
+  }
+
   const allow = new Set(settings.channels.map(normCh));
   let sent = 0, skipped = 0, failed = 0;
 
@@ -157,9 +173,18 @@ export async function runStoreReportSync(opts: RunOptions): Promise<RunResult> {
       skipped++; outcomes.push({ ...who, siteCode: v.siteCode, repEmail: "", store: "", status: "skipped-no-email", detail: `rep "${v.repName}" has no email` }); continue;
     }
 
-    // Live-render the store's consolidated report (each client's latest data).
+    // Limited to their own clients? Blocked sends NOTHING and is kept out of the
+    // dedup ledger, so ticking their clients later in the day still lets it send.
+    const scope = scopeForEmail(scopes, v.repEmail);
+    if (scope.kind === "blocked") {
+      skipped++; outcomes.push({ ...who, siteCode: v.siteCode, repEmail: v.repEmail, store: "", status: "skipped-rep-no-clients", detail: scope.reason }); continue;
+    }
+    const clientIds = scope.kind === "clients" ? scope.clientIds : undefined;
+
+    // Live-render the store's report: consolidated (every opted-in client), or
+    // only this rep's clients.
     try {
-      const loaded = await loadStoreReport({ siteCode: v.siteCode });
+      const loaded = await loadStoreReport({ siteCode: v.siteCode, clientIds });
       const report = loaded.report;
       const store = report.storeName || v.siteCode;
 
@@ -167,13 +192,16 @@ export async function runStoreReportSync(opts: RunOptions): Promise<RunResult> {
         skipped++;
         // No participating client had data for this site → the site code isn't in
         // any loaded DISPO (unmapped / not loaded). If clients matched but there's
-        // nothing to action, it's genuinely a clean store this period.
+        // nothing to action, it's genuinely a clean store this period. For a
+        // limited rep, "no client" usually just means theirs isn't in this store.
         const noMapping = report.clients.length === 0;
         outcomes.push({
           ...who, siteCode: v.siteCode, repEmail: v.repEmail, store,
-          status: noMapping ? "skipped-no-mapping" : "skipped-no-data",
+          status: noMapping && !clientIds ? "skipped-no-mapping" : "skipped-no-data",
           actions: 0,
-          detail: noMapping ? "site not in any loaded DISPO (check code mapping / data load)" : "no actions to report this period",
+          detail: noMapping
+            ? (clientIds ? "none of this rep's clients have data at this store" : "site not in any loaded DISPO (check code mapping / data load)")
+            : "no actions to report this period",
         });
         if (!opts.dryRun) {
           await addSend({
@@ -194,7 +222,9 @@ export async function runStoreReportSync(opts: RunOptions): Promise<RunResult> {
       const day = trackingDay();
       const base = reportBaseUrl(opts.origin);  // clean prod domain if configured
       // Signed, self-expiring token replaces the guessable site/period params.
-      const r = signReportLink({ site: v.siteCode, year: loaded.year, month: loaded.month, week: loaded.week });
+      // The client list is signed INTO the link, so the page, the count sheet and
+      // its email all stay limited to the same clients as this email.
+      const r = signReportLink({ site: v.siteCode, clientIds, year: loaded.year, month: loaded.month, week: loaded.week });
       const params = new URLSearchParams({ r, t: token, d: day });
       const reportUrl = `${base}/r?${params.toString()}`;
       const trackingPixelUrl = `${base}/api/store-reports/track?t=${token}&d=${day}&e=open`;
