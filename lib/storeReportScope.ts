@@ -63,6 +63,33 @@ function scopeForUser(u: User): StoreReportScope {
   return { kind: "clients", clientIds: ids.sort() };
 }
 
+export type FeedVisitScope =
+  | { kind: "clients"; clientIds: string[] }
+  | { kind: "blocked"; reason: string }
+  | { kind: "not-client-rep"; reason: string };
+
+/** A visit that arrived on CLIENT X's own Perigee feed (lib/perigeeFeeds.ts).
+ *  It is only ever sent to someone set up as X's rep: box ticked AND X ticked.
+ *  Never "all", and never to an unknown or unlimited account. That holds even if
+ *  the wrong token (one that sees every customer) is pasted under X: the
+ *  feed alone can never make anyone receive X's data, let alone everyone's.
+ *  iRam's own reps, who also show up on a customer's feed, fall under
+ *  not-client-rep and keep getting their report from the main feed. */
+export function scopeForFeedVisit(index: ScopeIndex, email: string, feedClientId: string): FeedVisitScope {
+  const s = scopeForEmail(index, email);
+  if (s.kind === "blocked") return s;
+  // Only the FEED's client, even for a rep ticked for several: this visit is
+  // evidence for client X alone, and a too-wide token under X must not be
+  // able to carry the rep's other clients into a report.
+  if (s.kind === "clients" && s.clientIds.includes(feedClientId)) return { kind: "clients", clientIds: [feedClientId] };
+  return {
+    kind: "not-client-rep",
+    reason: s.kind === "all"
+      ? "not set up as a rep limited to this client"
+      : "limited to other clients, not this feed's client",
+  };
+}
+
 export function scopeForEmail(index: ScopeIndex, email: string): StoreReportScope {
   const matches = index.get(normReportEmail(email)) ?? [];
   if (!matches.length) return { kind: "all" };

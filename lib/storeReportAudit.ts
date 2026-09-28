@@ -95,7 +95,8 @@ export async function recordAuditOutcomes(
       repName: o.repName ?? "",
       status: o.status,
       actions: o.actions,
-      detail: o.detail,
+      // Which source the visit came from, when it was a per-client feed.
+      detail: o.feed ? `[${o.feed}] ${o.detail ?? ""}`.trim() : o.detail,
     });
   }
 

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { authFetch, useAuth, usePermissions } from "@/lib/useAuth";
 import SearchSelect from "@/components/SearchSelect";
 import StoreReportAuditPanel from "@/components/StoreReportAuditPanel";
+import PerigeeFeedsPanel from "@/components/PerigeeFeedsPanel";
 import DataTable from "@/components/DataTable";
 
 // Loose code compare (mirrors the server) + light name-similarity ranking
@@ -42,6 +43,7 @@ const STATUS_LABELS: Record<string, string> = {
   "skipped-no-email": "Rep has no email",
   "skipped-channel": "Channel switched off (not in allow-list)",
   "skipped-rep-no-clients": "Rep limited to own clients, none usable",
+  "skipped-feed-not-client-rep": "Client feed: not that client's rep",
   "failed": "Failed",
 };
 
@@ -1347,6 +1349,11 @@ export default function StoreReportsTestPage() {
           enabled toggle immediately above it. */}
       <div className="mt-10">
         <StoreReportAuditPanel />
+      </div>
+
+      {/* ── Per-client Perigee feeds: a customer's own reps ── */}
+      <div className="mt-10">
+        <PerigeeFeedsPanel />
       </div>
 
       {/* ── Engagement / detail log ── */}

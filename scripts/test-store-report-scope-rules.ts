@@ -4,7 +4,7 @@
    Run: npx tsx scripts/test-store-report-scope-rules.ts                      */
 
 import type { User } from "../lib/types";
-import { buildScopeIndex, scopeForEmail, normReportEmail } from "../lib/storeReportScope";
+import { buildScopeIndex, scopeForEmail, scopeForFeedVisit, normReportEmail } from "../lib/storeReportScope";
 
 let failures = 0;
 let passes = 0;
@@ -49,6 +49,29 @@ async function main() {
   check("admin with the box ticked → limited too", mgr.kind === "clients" && mgr.clientIds.join(",") === "alpha,alpha2");
   check("box unticked → the client list is ignored (all)", s("manager-unticked@iram.co.za").kind === "all");
   check("two accounts on one email, one limited → blocked", s("dup@x.co.za").kind === "blocked");
+
+  console.log("\nVisits from a client's own feed");
+  const f = (e: string, c: string) => scopeForFeedVisit(idx, e, c).kind;
+  check("that client's rep → their clients", f("rep@alpha.co.za", "alpha") === "clients");
+  check("no account → not-client-rep (NEVER all)", f("merch@iram.co.za", "alpha") === "not-client-rep");
+  check("unlimited admin → not-client-rep", f("admin@iram.co.za", "alpha") === "not-client-rep");
+  check("rep without the tick → not-client-rep", f("rep-unticked@alpha.co.za", "alpha") === "not-client-rep");
+  check("rep limited to OTHER clients → not-client-rep", f("rep@alpha.co.za", "bravo") === "not-client-rep");
+  check("rep with nothing ticked → blocked", f("rep-empty@alpha.co.za", "alpha") === "blocked");
+  const multi = scopeForFeedVisit(idx, "manager@alpha.co.za", "alpha2");
+  check("rep ticked for 2 clients → ONLY the feed's client", multi.kind === "clients" && multi.clientIds.join(",") === "alpha2",
+    JSON.stringify(multi));
+
+  console.log("\nPerigee API row → visit");
+  const { normalisePerigeeApiVisit } = await import("../lib/perigeeApi");
+  const n1 = normalisePerigeeApiVisit({ store: "MAKRO WOODMEAD - M27", email: "A@x.co.za", username: "someone", displayName: "A", id: 5 });
+  check("store code from 'NAME - CODE'", n1.siteCode === "M27");
+  check("email preferred over username", n1.repEmail === "A@x.co.za");
+  check("id becomes the visit GUID", n1.visitGuid === "5");
+  const n2 = normalisePerigeeApiVisit({ placeId: "48213", username: "u@x.co.za" });
+  check("Perigee's internal placeId is NEVER used as a site code", n2.siteCode === "");
+  check("username used as the email when it is one", n2.repEmail === "u@x.co.za");
+  check("a non-email username is not an email", normalisePerigeeApiVisit({ username: "jsmith" }).repEmail === "");
 
   console.log("\nEmail matching");
   check("case + spaces", s("  REP@Alpha.co.za ").kind === "clients");
