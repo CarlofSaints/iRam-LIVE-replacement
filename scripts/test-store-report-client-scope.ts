@@ -190,6 +190,55 @@ async function main() {
     check("save accepted", saveRes.status === 200, String(saveRes.status));
     check("ALPHA count updated", after.lines[`${ALPHA.id}|100111`]?.found === 6);
     check("BRAVO count untouched by an ALPHA link", after.lines[`${BRAVO.id}|900111`]?.found === 9, String(after.lines[`${BRAVO.id}|900111`]?.found));
+    const saveBody = await saveRes.json();
+    check("'held' counts only ALPHA's lines (file holds 2)", saveBody.held === 1 && Object.keys(after.lines).length === 2, JSON.stringify(saveBody));
+
+    console.log("\nLegacy plain link (?site=) cannot bypass the signed client list");
+    delete process.env.ALLOW_LEGACY_REPORT_LINKS;
+    const legacyRes: Response = await rRoute.GET(new Request(`https://example.test/r?site=${SITE}`));
+    const legacy = await legacyRes.text();
+    check("refused when the flag is unset (default OFF)", legacyRes.status === 410 && leaks(legacy).length === 0, String(legacyRes.status));
+
+    console.log("\nA client that opted OUT of store reports");
+    const { writeFileSync: wf, readFileSync: rf } = await import("fs");
+    const clientsPath = join(dir, "data", "clients.json");
+    const clients = JSON.parse(rf(clientsPath, "utf8"));
+    clients[0].sendConsolidatedStoreReports = false;   // ALPHA opts out
+    wf(clientsPath, JSON.stringify(clients));        // local mode has no read cache
+    const optedOut = await loadStoreReport({ siteCode: SITE, clientIds: [ALPHA.id], onlyOptedIn: true });
+    check("check-in send (onlyOptedIn) drops the opted-out client", optedOut.report.clients.length === 0);
+    const preview = await loadStoreReport({ siteCode: SITE, clientIds: [ALPHA.id] });
+    check("a one-client preview still shows it", preview.report.clients.length === 1);
+
+    console.log("\nClaims + manager link obey the send's client list");
+    const { addTrackingSend } = await imp("lib/storeReportTracking.ts");
+    const claimRoute = await imp("app/api/store-reports/claim/route.ts");
+    await addTrackingSend({
+      token: "tok-alpha", day: "2026-09-28", periodKey: "2026-09-28", siteCode: SITE, store: "MAKRO WOODMEAD",
+      channel: "MAKRO", repEmail: "rep@alpha.co.za", repName: "Alpha Rep", sentAt: "2026-09-28T09:00:00.000Z",
+      year: 2026, month: 9, week: 3, clientIds: [ALPHA.id],
+    });
+    const claim = (clientId: string, article: string) => claimRoute.POST(new Request("https://example.test/api/store-reports/claim", {
+      method: "POST", body: JSON.stringify({ t: "tok-alpha", d: "2026-09-28", on: true, line: { clientId, article, description: "x" } }),
+    }));
+    await claim(BRAVO.id, "900111");
+    await claim(ALPHA.id, "100111");
+    const { readdirSync } = await import("fs");
+    const walk = (p: string): string[] => readdirSync(p, { withFileTypes: true }).flatMap((e) => e.isDirectory() ? walk(join(p, e.name)) : [join(p, e.name)]);
+    const claimFiles = walk(join(dir, "data")).filter((f) => /claim/i.test(f));
+    const claimText = claimFiles.map((f) => rf(f, "utf8")).join("\n");
+    check("ALPHA claim recorded", claimText.includes("100111"), claimFiles.join(","));
+    check("BRAVO claim through an ALPHA send refused", !claimText.includes("900111"));
+
+    // The engagement route needs a logged-in session, so this checks the link
+    // it builds (same inputs: the tracking record) rather than calling it.
+    const { verifyReportLink, linkClientIds } = await imp("lib/reportLink.ts");
+    const { getTrackingDay } = await imp("lib/storeReportTracking.ts");
+    const rec = (await getTrackingDay("2026-09-28")).find((x: { token: string }) => x.token === "tok-alpha");
+    check("tracking record keeps the send's clients", rec?.clientIds?.join(",") === ALPHA.id);
+    const mgrTok = signReportLink({ site: rec.siteCode, clientIds: rec.clientIds, year: rec.year, month: rec.month, week: rec.week });
+    const mv = verifyReportLink(mgrTok);
+    check("manager link built the engagement way is limited too", mv.ok && linkClientIds(mv.payload)?.join(",") === ALPHA.id);
   } finally {
     process.chdir(projectRoot);
     rmSync(dir, { recursive: true, force: true });

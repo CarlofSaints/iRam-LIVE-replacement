@@ -136,10 +136,12 @@ export function linkClientIds(payload: ReportLinkPayload): string[] | undefined 
   return undefined;
 }
 
-// Whether to still honour legacy plain-param links (?site=…) that reps already
-// have in their inboxes. Default ON (a grace window); set ALLOW_LEGACY_REPORT_LINKS
-// to "0"/"false" once the old links have aged out to fully close enumeration.
+// Whether to still honour legacy plain-param links (?site=…). Default OFF (it
+// was a grace window from July 2026, and production already sets it to "0").
+// A plain link carries no signed client list, so honouring it lets a rep limited
+// to their own clients edit the URL and see every client. Only "1"/"true"/"yes"
+// turns it back on.
 export function legacyLinksAllowed(): boolean {
   const v = (process.env.ALLOW_LEGACY_REPORT_LINKS || "").trim().toLowerCase();
-  return v !== "0" && v !== "false" && v !== "no";
+  return v === "1" || v === "true" || v === "yes";
 }

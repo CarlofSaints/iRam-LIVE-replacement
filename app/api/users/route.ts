@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { randomBytes } from "crypto";
-import { getUsers, createUser, updateUser, deleteUser, pickNotifyFlags, pickStoreReportScope } from "@/lib/userData";
+import { getUsers, getUserById, createUser, updateUser, deleteUser, pickNotifyFlags, pickStoreReportScope, allNotifyFlagsOff } from "@/lib/userData";
 import { requirePermission, noCacheHeaders, handleAuthError } from "@/lib/auth";
 import { addLog } from "@/lib/activityLog";
 import { NO_LOGIN_ROLES, type User } from "@/lib/types";
@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
       name, email, password, role,
       forcePasswordChange: noLogin ? false : (forcePasswordChange ?? true),
       clientIds: Array.isArray(clientIds) ? clientIds : undefined,
-      ...pickNotifyFlags(body),
+      ...(noLogin ? allNotifyFlagsOff() : pickNotifyFlags(body)),
       ...pickStoreReportScope(body),
     });
     await addLog({ userId: session.userId, userName: session.name, action: "create_user", details: `Created user ${email} (${role})${scopeNote(user)}`, status: "success" });
@@ -58,9 +58,19 @@ export async function POST(req: NextRequest) {
 export async function PUT(req: NextRequest) {
   try {
     const session = await requirePermission(req, "manage_users");
-    const { id, password: _pw, storeReportOwnClientsOnly: _o, storeReportClientIds: _c, ...rest } = await req.json();
+    const body = await req.json();
+    const { id, password: _pw, storeReportOwnClientsOnly: _o, storeReportClientIds: _c, ...rest } = body;
     if (!id) return Response.json({ error: "ID required" }, { status: 400, headers: noCacheHeaders() });
-    const updates = { ...rest, ...pickStoreReportScope({ storeReportOwnClientsOnly: _o, storeReportClientIds: _c }) };
+    const existing = await getUserById(id);
+    if (!existing) return Response.json({ error: "User not found" }, { status: 404, headers: noCacheHeaders() });
+    // The role this user ends up with, whether or not this edit changes it
+    // (an Activate/Deactivate click sends no role).
+    const role = typeof rest.role === "string" ? rest.role : existing.role;
+    const updates = {
+      ...rest,
+      ...pickStoreReportScope(body),
+      ...(NO_LOGIN_ROLES.includes(role) ? allNotifyFlagsOff() : {}),
+    };
     const user = await updateUser(id, updates);
     await addLog({ userId: session.userId, userName: session.name, action: "update_user", details: `Updated user ${user.email}${scopeNote(user)}`, status: "success" });
     const { password: _, ...safe } = user;

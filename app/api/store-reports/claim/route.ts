@@ -33,6 +33,8 @@ export async function POST(req: NextRequest) {
     const records = await getTrackingDay(day);
     const track = records.find((r) => r.token === token);
     if (!track) return new Response(null, { status: 204 }); // unknown token — ignore
+    // A send limited to certain clients may only claim lines of those clients.
+    if (track.clientIds && !track.clientIds.includes(clientId)) return new Response(null, { status: 204 });
 
     const categories: string[] = Array.isArray(line.categories)
       ? line.categories.map((c: unknown) => String(c)).filter(Boolean)

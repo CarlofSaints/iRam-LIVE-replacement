@@ -184,7 +184,7 @@ export async function runStoreReportSync(opts: RunOptions): Promise<RunResult> {
     // Live-render the store's report: consolidated (every opted-in client), or
     // only this rep's clients.
     try {
-      const loaded = await loadStoreReport({ siteCode: v.siteCode, clientIds });
+      const loaded = await loadStoreReport({ siteCode: v.siteCode, clientIds, onlyOptedIn: true });
       const report = loaded.report;
       const store = report.storeName || v.siteCode;
 
@@ -203,7 +203,10 @@ export async function runStoreReportSync(opts: RunOptions): Promise<RunResult> {
             ? (clientIds ? "none of this rep's clients have data at this store" : "site not in any loaded DISPO (check code mapping / data load)")
             : "no actions to report this period",
         });
-        if (!opts.dryRun) {
+        // A limited rep whose clients have no data here stays OUT of the dedup
+        // ledger: if an admin ticked the wrong client, fixing it later today
+        // must still let this visit send. Costs one re-render per poll.
+        if (!opts.dryRun && !(noMapping && clientIds)) {
           await addSend({
             periodKey: dedupKey, siteCode: v.siteCode, storeName: store, repEmail: v.repEmail,
             visitGuid: v.visitGuid, sentAt: new Date().toISOString(), status: "skipped_no_data",
@@ -243,6 +246,7 @@ export async function runStoreReportSync(opts: RunOptions): Promise<RunResult> {
         token, day, periodKey: dedupKey, siteCode: v.siteCode, store,
         channel: report.subChannel, repEmail: v.repEmail, repName: v.repName, sentAt: new Date().toISOString(),
         year: loaded.year, month: loaded.month, week: loaded.week,
+        clientIds,
       });
       await addSend({
         periodKey: dedupKey, siteCode: v.siteCode, storeName: store, repEmail: v.repEmail,

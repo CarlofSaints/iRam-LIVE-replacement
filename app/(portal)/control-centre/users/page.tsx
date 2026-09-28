@@ -247,6 +247,9 @@ export default function UsersPage() {
                 Force password change on first login
               </label>
             )}
+            {/* A Rep only gets store reports. These other mails are scoped by
+                Client access (hidden for a Rep, so empty = every client). */}
+            {!isRep && <>
             <label className="col-span-2 flex items-center gap-2 text-sm">
               <input type="checkbox" checked={form.receiveStoreAlerts} onChange={(e) => setForm({ ...form, receiveStoreAlerts: e.target.checked })} />
               Receive missing store alerts
@@ -271,6 +274,7 @@ export default function UsersPage() {
               <input type="checkbox" checked={form.receivePortfolioHealth} onChange={(e) => setForm({ ...form, receivePortfolioHealth: e.target.checked })} />
               Receive weekly Portfolio Stock Health summary (one mail per channel, Thursdays)
             </label>
+            </>}
 
             {/* Client scoping — restrict this account to specific clients */}
             {!isRep && <div className="col-span-2">

@@ -52,6 +52,13 @@ export function pickNotifyFlags(src: Record<string, unknown>): Partial<Pick<User
   return out;
 }
 
+/** Every notification flag switched off. A Rep only ever gets store reports:
+ *  the other mails (Portfolio Stock Health, digests, action report) scope on
+ *  the PORTAL client list, where empty means every client. */
+export function allNotifyFlagsOff(): Pick<User, NotifyFlag> {
+  return Object.fromEntries(NOTIFY_FLAGS.map((f) => [f, false])) as Pick<User, NotifyFlag>;
+}
+
 type StoreReportScopeFields = "storeReportOwnClientsOnly" | "storeReportClientIds";
 
 /** Picks the store-report client restriction out of a request body, shared by
