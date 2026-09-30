@@ -49,7 +49,8 @@ export function enrichLedgerRow(
   linksLookup: Map<string, string>,      // article → clientProductId
   productLookup: Map<string, ProductMaster>,
   storeLookup: Map<string, StoreRecord>,
-  rangingLookup?: Set<string>             // set of article keys that exist in ranging file
+  rangingLookup?: Set<string>,            // set of article keys that exist in ranging file
+  siteRanging?: SiteRanging               // per-store range (site × article / product)
 ): EnrichedRow {
   const enriched: EnrichedRow = { ...row };
 
@@ -127,7 +128,52 @@ export function enrichLedgerRow(
     enriched._rangingStatus = false;
   }
 
+  // ── Ranging AT THIS STORE (Site × Article, or Site × Client Product ID) ──
+  // `_rangingStatus` above only says "this article is in the range file for SOME
+  // store". This answers for the row's own site:
+  //   true      — ranged TRUE for this site and product
+  //   false     — the site IS in the range file, but this product isn't ranged TRUE there
+  //   undefined — no range file, or the site isn't in it at all (can't judge)
+  if (siteRanging) {
+    const siteKey = normalizeSiteKey(row["Site"] ?? row["site"] ?? row["SITE"]);
+    if (siteKey && siteRanging.sites.has(siteKey)) {
+      const art = normalizeArticle(row["Article"] ?? row["article"] ?? row["ARTICLE"]);
+      const cpid = String(enriched._clientProductId ?? "").toLowerCase().trim();
+      enriched._rangedAtSite =
+        (!!art && siteRanging.ranged.has(`${siteKey}|a:${art}`)) ||
+        (!!cpid && siteRanging.ranged.has(`${siteKey}|p:${cpid}`));
+    }
+  }
+
   return enriched;
+}
+
+/** Per-store range, built from the range control file (long format: one row per product × site). */
+export interface SiteRanging {
+  sites: Set<string>;    // every site key in the range file, TRUE or FALSE
+  ranged: Set<string>;   // "<site>|a:<article>" and "<site>|p:<product id>" ranged TRUE
+}
+
+// Same TRUE spellings Month-End's Numerical Distribution accepts (isTrueRange there).
+function isTrueRange(v: string): boolean {
+  const s = v.trim().toUpperCase();
+  return s === "TRUE" || s === "T" || s === "1" || s === "Y" || s === "YES";
+}
+
+export function buildSiteRanging(rangingRows: RawRow[]): SiteRanging | undefined {
+  const sites = new Set<string>();
+  const ranged = new Set<string>();
+  for (const r of rangingRows) {
+    const site = normalizeSiteKey(resolveRangingField(r, ["sitecode", "site"]));
+    if (!site) continue;
+    sites.add(site);
+    if (!isTrueRange(resolveRangingField(r, ["rangeindicator", "range"]))) continue;
+    const art = normalizeArticle(resolveRangingField(r, ["articlechannelcode", "article"]));
+    const cpid = resolveRangingField(r, ["productid"]).toLowerCase().trim();
+    if (art) ranged.add(`${site}|a:${art}`);
+    if (cpid) ranged.add(`${site}|p:${cpid}`);
+  }
+  return sites.size ? { sites, ranged } : undefined;
 }
 
 /**
@@ -165,8 +211,10 @@ export async function enrichLedger(
     }
   }
 
+  const siteRanging = buildSiteRanging(rangingRows);
+
   const enrichedRows = rows.map((row) =>
-    enrichLedgerRow(row, linksLookup, productLookup, storeLookup, rangingLookup)
+    enrichLedgerRow(row, linksLookup, productLookup, storeLookup, rangingLookup, siteRanging)
   );
 
   return {
