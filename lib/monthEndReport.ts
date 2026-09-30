@@ -16,6 +16,7 @@
 import type { StatusDefinition, StatusScenario, StatusClassification, StoreRecord, ProductMaster } from "./types";
 import { evaluateScenarios } from "./statusScenarioData";
 import { calcOpenToOrder } from "./vitalSigns";
+import { rangingField, rangeRowArticle, RANGE_SITE_KEYS } from "./rangingFields";
 
 type Row = Record<string, unknown>;
 
@@ -1477,15 +1478,6 @@ export interface NDAnalysis {
   falseDetail: NDFalseRow[];
 }
 
-// Resolve a ranging-file field, tolerating Helper/Mandatory prefixes + spacing.
-function rangingField(row: Row, targets: string[]): string {
-  for (const [k, v] of Object.entries(row)) {
-    let nk = k.trim().toLowerCase().replace(/^helper/, "").replace(/^mandatory/, "");
-    nk = nk.replace(/[\s_]+/g, "");
-    if (targets.includes(nk)) return v == null ? "" : String(v).trim();
-  }
-  return "";
-}
 
 function isTrueRange(v: string): boolean {
   const s = v.trim().toUpperCase();
@@ -1583,8 +1575,8 @@ export function buildNumericalDistribution(opts: {
       if (!isTrueRange(indicator)) continue;
 
       const cpid = rangingField(rr, ["productid"]).toLowerCase();
-      const article = rangingField(rr, ["articlechannelcode", "article"]).toLowerCase();
-      const site = rangingField(rr, ["sitecode", "site"]).toLowerCase();
+      const article = rangeRowArticle(rr).toLowerCase();
+      const site = rangingField(rr, RANGE_SITE_KEYS).toLowerCase();
       const subCh = rangingField(rr, ["subchannel"]) || "Unknown";
       const prov = rangingField(rr, ["province"]) || "Unknown";
       const siteName = rangingField(rr, ["storename"]);
@@ -1751,8 +1743,8 @@ export function buildOpenToOrder(opts: {
     for (const rr of rangingRows) {
       if (!isTrueRange(rangingField(rr, ["rangeindicator", "range"]))) continue;
       const cpid = rangingField(rr, ["productid"]).toLowerCase();
-      const article = rangingField(rr, ["articlechannelcode", "article"]).toLowerCase();
-      const site = rangingField(rr, ["sitecode", "site"]).toLowerCase();
+      const article = rangeRowArticle(rr).toLowerCase();
+      const site = rangingField(rr, RANGE_SITE_KEYS).toLowerCase();
       if (!site) continue;
       if (article) rangedKeys.add(`${site}|${article}`);
       if (cpid) rangedKeys.add(`${site}|${cpid}`);

@@ -4,6 +4,8 @@
    lib/storeReport.ts. */
 import { buildSiteRanging, enrichLedgerRow } from "../lib/enrichment";
 import { buildStoreReport } from "../lib/storeReport";
+import { rangeArticleCode } from "../lib/rangingFields";
+import type { StoreRecord } from "../lib/types";
 
 let failures = 0;
 function check(name: string, got: unknown, want: unknown) {
@@ -32,8 +34,38 @@ check("FALSE here even though TRUE at another store", enrich({ Site: "M28", Arti
 check("TRUE at the other store", enrich({ Site: "M29", Article: "222" })._rangedAtSite, true);
 check("absent for a store in the file → not ranged", enrich({ Site: "M28", Article: "999" })._rangedAtSite, false);
 check("matched via product id when the article is blank in the range file", enrich({ Site: "M28", Article: "444" })._rangedAtSite, true);
-check("store not in the range file → can't judge", enrich({ Site: "G016", Article: "111" })._rangedAtSite, undefined);
+check("store not in a TRUE-only file (no channel columns) → not ranged", enrich({ Site: "G016", Article: "111" })._rangedAtSite, false);
 check("site code case / spacing tolerated", enrich({ Site: " m28 ", Article: "111" })._rangedAtSite, true);
+
+// Second layout (PROGRESSIVE IMPRESSIONS): Site Num + Channel Article wrapped as
+// <CHANNEL>-<article>-<unit>, Range Indicator a real boolean. Matched NO store before.
+const sr2 = buildSiteRanging([
+  { "Product ID": "IRAM_0054", "Channel Article": "MASSBUILD-171220-EA", "Site Num": "B28", "Range Indicator": true },
+  { "Product ID": "IRAM_0099", "Channel Article": "MASSBUILD-555-EA", "Site Num": "B02", "Range Indicator": true },
+])!;
+const enrich2 = (r: Row) => enrichLedgerRow(r, new Map(), new Map(), new Map(), undefined, sr2);
+check("Site Num layout: store found", sr2?.sites.has("b28"), true);
+check("Channel Article unwrapped → ranged at B28", enrich2({ Site: "B28", Article: "171220" })._rangedAtSite, true);
+check("…and not ranged at B28 when only B02 has it", enrich2({ Site: "B28", Article: "555" })._rangedAtSite, false);
+check("plain code untouched by the unwrap", rangeArticleCode("171220"), "171220");
+
+// TRUE-only file WITH channel columns: a missing store in a covered channel is
+// FALSE; a store in another channel is left alone.
+const sr3 = buildSiteRanging([
+  { "Product ID": "P1", "Channel Article": "MASSBUILD-171220-EA", "Site Num": "B28", Channel: "MASSBUILD", Sub_Channel: "BWH", "Range Indicator": true },
+])!;
+const stores3 = new Map<string, StoreRecord>([
+  ["b99", { siteNum: "B99", channel: "MASSBUILD", subChannel: "BWH" } as StoreRecord],
+  ["m28", { siteNum: "M28", channel: "MAKRO", subChannel: "MAKRO" } as StoreRecord],
+  ["b28", { siteNum: "B28", channel: "MASSBUILD", subChannel: "BWH" } as StoreRecord],
+]);
+const enrich3 = (r: Row) => enrichLedgerRow(r, new Map(), new Map(), stores3, undefined, sr3);
+check("missing BWH store → not ranged", enrich3({ Site: "B99", Article: "171220" })._rangedAtSite, false);
+check("…and flagged as not listed", enrich3({ Site: "B99", Article: "171220" })._rangeSiteListed, false);
+check("Makro store (channel not in file) → can't judge", enrich3({ Site: "M28", Article: "171220" })._rangedAtSite, undefined);
+check("store not in the store master (no channel) → can't judge", enrich3({ Site: "B77", Article: "171220" })._rangedAtSite, undefined);
+check("listed store still TRUE", enrich3({ Site: "B28", Article: "171220" })._rangedAtSite, true);
+check("unwrap keeps the middle", rangeArticleCode("MASSBUILD-171220-EA"), "171220");
 
 // ── The report ──
 const REF = new Date(Date.UTC(2026, 8, 30));
@@ -70,11 +102,19 @@ check("Ranging shown per store", [line("RANGED_OOS").ranging, line("UNRANGED_OOS
 
 // Guard: nothing at this store matched TRUE → codes disagree, hide nothing.
 const g = report([
-  row({ Article: "X1", SOH: 0, _rangedAtSite: false }),
-  row({ Article: "X2", SOH: 0, _rangedAtSite: false }),
+  row({ Article: "X1", SOH: 0, _rangedAtSite: false, _rangeSiteListed: true }),
+  row({ Article: "X2", SOH: 0, _rangedAtSite: false, _rangeSiteListed: true }),
 ]);
-check("no TRUE match at all → OOS kept (mismatch guard)", g.counts.oos, 2);
+check("store listed but no TRUE match → OOS kept (mismatch guard)", g.counts.oos, 2);
 check("and Ranging left blank rather than a misleading FALSE", g.lines[0].ranging, "");
+
+// Store not in the TRUE-only file at all → everything is not ranged → hidden.
+const nl = report([
+  row({ Article: "W1", SOH: 0, _rangedAtSite: false, _rangeSiteListed: false }),
+  row({ Article: "W2", SOH: 1, _rangedAtSite: false, _rangeSiteListed: false }),
+]);
+check("unlisted store → OOS + low cover hidden", [nl.counts.oos, nl.counts.lowCover, nl.notRangedHidden], [0, 0, 2]);
+check("unlisted store → Ranging FALSE", nl.lines[0].ranging, "FALSE");
 
 // No range file for the client → unchanged behaviour.
 const n = report([row({ Article: "Y1", SOH: 0 })], false);
