@@ -278,11 +278,14 @@ export function buildStoreReport(
     const labelByCode = new Map<string, string>();
     for (const d of client.statusDefs) labelByCode.set(d.code, d.description || "");
 
-    // Per-store range (`_rangedAtSite`, lib/enrichment.ts). Only trusted when at
-    // least ONE of this client's lines here is ranged TRUE: if the store is in the
-    // range file but nothing matches, the codes disagree (article/site format) and
-    // hiding on that would silently wipe every out-of-stock at the store.
-    const rangingUsable = client.hasRanging && client.rows.some((r) => r["_rangedAtSite"] === true);
+    // Per-store range (`_rangedAtSite`, lib/enrichment.ts). If the store IS listed
+    // in the range file but not one of this client's lines here matches TRUE, the
+    // article codes disagree, and hiding on that would silently wipe every
+    // out-of-stock at the store — so it isn't trusted. A store the file doesn't
+    // list at all is simply not ranged (TRUE-only files), and is trusted.
+    const listedHere = client.rows.some((r) => r["_rangeSiteListed"] === true);
+    const rangingUsable = client.hasRanging &&
+      (client.rows.some((r) => r["_rangedAtSite"] === true) || !listedHere);
 
     for (const row of client.rows) {
       // Include every listed SKU at this store — don't hide SOH=0 lines that have

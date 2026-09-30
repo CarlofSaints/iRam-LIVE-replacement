@@ -14,6 +14,8 @@ export const RANGE_SITE_KEYS = ["sitecode", "sitenum", "sitenumber", "site"];
 export const RANGE_ARTICLE_KEYS = ["articlechannelcode", "channelarticle", "article"];
 export const RANGE_PRODUCT_KEYS = ["productid"];
 export const RANGE_INDICATOR_KEYS = ["rangeindicator", "range"];
+export const RANGE_CHANNEL_KEYS = ["channel"];
+export const RANGE_SUBCHANNEL_KEYS = ["subchannel"];
 
 /** Resolve a range-file field, tolerating Helper/Mandatory prefixes + spacing/underscores. */
 export function rangingField(row: Record<string, unknown>, targets: string[]): string {

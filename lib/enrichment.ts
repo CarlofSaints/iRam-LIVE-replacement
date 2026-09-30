@@ -16,6 +16,7 @@ import { getControlFileData } from "./controlFileData";
 import {
   rangingField, rangeRowArticle,
   RANGE_SITE_KEYS, RANGE_PRODUCT_KEYS, RANGE_INDICATOR_KEYS,
+  RANGE_CHANNEL_KEYS, RANGE_SUBCHANNEL_KEYS,
 } from "./rangingFields";
 import type { ProductMaster, StoreRecord } from "./types";
 
@@ -122,16 +123,30 @@ export function enrichLedgerRow(
   // `_rangingStatus` above only says "this article is in the range file for SOME
   // store". This answers for the row's own site:
   //   true      — ranged TRUE for this site and product
-  //   false     — the site IS in the range file, but this product isn't ranged TRUE there
-  //   undefined — no range file, or the site isn't in it at all (can't judge)
+  //   false     — anything else in a channel the range file covers. Range files
+  //               are often loaded TRUE-ONLY, so a missing row — or a whole
+  //               missing store — means not ranged (Carl's call, 30 Sep 2026).
+  //   undefined — no range file, or the store is in a channel the file doesn't
+  //               cover (a MASSBUILD-only file says nothing about Makro stores)
+  // `_rangeSiteListed` says whether the store itself appears in the file; the
+  // store report's code-mismatch guard needs to tell the two FALSEs apart.
   if (siteRanging) {
     const siteKey = normalizeSiteKey(row["Site"] ?? row["site"] ?? row["SITE"]);
-    if (siteKey && siteRanging.sites.has(siteKey)) {
+    const listed = !!siteKey && siteRanging.sites.has(siteKey);
+    const ch = String(enriched._storeChannel ?? "").trim().toLowerCase();
+    const sub = String(enriched._storeSubChannel ?? "").trim().toLowerCase();
+    const channelCovered =
+      siteRanging.channels.size === 0 ||
+      (!!ch && siteRanging.channels.has(ch)) ||
+      (!!sub && siteRanging.channels.has(sub));
+    if (siteKey && (listed || channelCovered)) {
       const art = normalizeArticle(row["Article"] ?? row["article"] ?? row["ARTICLE"]);
       const cpid = String(enriched._clientProductId ?? "").toLowerCase().trim();
       enriched._rangedAtSite =
-        (!!art && siteRanging.ranged.has(`${siteKey}|a:${art}`)) ||
-        (!!cpid && siteRanging.ranged.has(`${siteKey}|p:${cpid}`));
+        listed &&
+        ((!!art && siteRanging.ranged.has(`${siteKey}|a:${art}`)) ||
+          (!!cpid && siteRanging.ranged.has(`${siteKey}|p:${cpid}`)));
+      enriched._rangeSiteListed = listed;
     }
   }
 
@@ -142,6 +157,7 @@ export function enrichLedgerRow(
 export interface SiteRanging {
   sites: Set<string>;    // every site key in the range file, TRUE or FALSE
   ranged: Set<string>;   // "<site>|a:<article>" and "<site>|p:<product id>" ranged TRUE
+  channels: Set<string>; // Channel + Sub_Channel values in the file (lowercase); empty = no such columns
 }
 
 // Same TRUE spellings Month-End's Numerical Distribution accepts (isTrueRange there).
@@ -153,17 +169,21 @@ function isTrueRange(v: string): boolean {
 export function buildSiteRanging(rangingRows: RawRow[]): SiteRanging | undefined {
   const sites = new Set<string>();
   const ranged = new Set<string>();
+  const channels = new Set<string>();
   for (const r of rangingRows) {
     const site = normalizeSiteKey(rangingField(r, RANGE_SITE_KEYS));
     if (!site) continue;
     sites.add(site);
+    for (const c of [rangingField(r, RANGE_CHANNEL_KEYS), rangingField(r, RANGE_SUBCHANNEL_KEYS)]) {
+      if (c) channels.add(c.toLowerCase());
+    }
     if (!isTrueRange(rangingField(r, RANGE_INDICATOR_KEYS))) continue;
     const art = normalizeArticle(rangeRowArticle(r));
     const cpid = rangingField(r, RANGE_PRODUCT_KEYS).toLowerCase().trim();
     if (art) ranged.add(`${site}|a:${art}`);
     if (cpid) ranged.add(`${site}|p:${cpid}`);
   }
-  return sites.size ? { sites, ranged } : undefined;
+  return sites.size ? { sites, ranged, channels } : undefined;
 }
 
 /**
