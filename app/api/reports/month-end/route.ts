@@ -254,7 +254,7 @@ export async function GET(req: NextRequest) {
 
     // Status classification inputs (Status Reference logic)
     enter("reading the status reference");
-    const [statusDefs, allStatusScenarios] = await Promise.all([
+    const [allStatusDefs, allStatusScenarios] = await Promise.all([
       getStatusDefinitions(),
       getStatusScenarios(),
     ]);
@@ -262,6 +262,9 @@ export async function GET(req: NextRequest) {
     const statusScenarios = allStatusScenarios.filter((s) =>
       channelIds.includes(s.channelId)
     );
+    // Definitions are per-channel too — scope them the same way Vital Signs does,
+    // so a code defined differently on another channel can't be picked up here.
+    const statusDefs = allStatusDefs.filter((s) => channelIds.includes(s.channelId));
 
     // 6. Build all report data (from the filtered row set)
     enter("building the Sales, OOS, Status, Margin and DSC analyses");

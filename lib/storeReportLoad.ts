@@ -15,6 +15,7 @@ import { join } from "path";
 import { getActiveClients } from "./clientData";
 import { getAllSalesLedgers, getSalesLedger } from "./salesData";
 import { enrichLedger } from "./enrichment";
+import { isClosedStore } from "./reportExclusions";
 import { getStatusDefinitions } from "./statusData";
 import { getStatusScenarios } from "./statusScenarioData";
 import { getMergedStores } from "./storeFileData";
@@ -144,12 +145,16 @@ export async function loadStoreReport(opts: LoadStoreReportOpts): Promise<Loaded
     if (cBest) freshness.set(client.id, { ...cBest, loadedAt: cLoadedAt });
 
     const enriched = await enrichLedger(rows, client.id);
+    // Closed stores get no report (lib/reportExclusions.ts). Discontinued lines
+    // stay: Carl wants their SOH visible to the rep.
+    const openRows = enriched.rows.filter((r) => !isClosedStore(r["_storeStatus"], r["_storeName"] || r["Site Name"]));
+    if (!openRows.length) continue;
     const scenarios = allScenarios.filter((s) => channelIds.includes(s.channelId));
 
     inputs.push({
       clientId: client.id,
       clientName: client.name,
-      rows: enriched.rows,
+      rows: openRows,
       dateColumns: Array.from(dateCols),
       statusDefs,
       scenarios,
