@@ -4,7 +4,7 @@
    lib/storeReport.ts. */
 import { buildSiteRanging, enrichLedgerRow } from "../lib/enrichment";
 import { buildStoreReport } from "../lib/storeReport";
-import { rangeArticleCode } from "../lib/rangingFields";
+import { rangeArticleCode, rangeRowSite } from "../lib/rangingFields";
 import type { StoreRecord } from "../lib/types";
 
 let failures = 0;
@@ -24,7 +24,7 @@ const RANGE: Row[] = [
   { HelperProductID: "P-2", HelperArticleChannelCode: "222", HelperSiteCode: "M29", MandatoryRangeIndicator: "TRUE" },
   { HelperProductID: "P-4", HelperArticleChannelCode: "", HelperSiteCode: "M28", MandatoryRangeIndicator: "Y" },
 ];
-const sr = buildSiteRanging(RANGE)!;
+const sr = buildSiteRanging(RANGE, ["M28", "G016"])!;
 const links = new Map<string, string>([["444", "P-4"]]);
 const enrich = (r: Row) => enrichLedgerRow(r, links, new Map(), new Map(), undefined, sr);
 
@@ -42,7 +42,7 @@ check("site code case / spacing tolerated", enrich({ Site: " m28 ", Article: "11
 const sr2 = buildSiteRanging([
   { "Product ID": "IRAM_0054", "Channel Article": "MASSBUILD-171220-EA", "Site Num": "B28", "Range Indicator": true },
   { "Product ID": "IRAM_0099", "Channel Article": "MASSBUILD-555-EA", "Site Num": "B02", "Range Indicator": true },
-])!;
+], ["B28", "B99"])!;
 const enrich2 = (r: Row) => enrichLedgerRow(r, new Map(), new Map(), new Map(), undefined, sr2);
 check("Site Num layout: store found", sr2?.sites.has("b28"), true);
 check("Channel Article unwrapped → ranged at B28", enrich2({ Site: "B28", Article: "171220" })._rangedAtSite, true);
@@ -53,7 +53,7 @@ check("plain code untouched by the unwrap", rangeArticleCode("171220"), "171220"
 // FALSE; a store in another channel is left alone.
 const sr3 = buildSiteRanging([
   { "Product ID": "P1", "Channel Article": "MASSBUILD-171220-EA", "Site Num": "B28", Channel: "MASSBUILD", Sub_Channel: "BWH", "Range Indicator": true },
-])!;
+], ["B28", "B99"])!;
 const stores3 = new Map<string, StoreRecord>([
   ["b99", { siteNum: "B99", channel: "MASSBUILD", subChannel: "BWH" } as StoreRecord],
   ["m28", { siteNum: "M28", channel: "MAKRO", subChannel: "MAKRO" } as StoreRecord],
@@ -66,6 +66,23 @@ check("Makro store (channel not in file) → can't judge", enrich3({ Site: "M28"
 check("store not in the store master (no channel) → can't judge", enrich3({ Site: "B77", Article: "171220" })._rangedAtSite, undefined);
 check("listed store still TRUE", enrich3({ Site: "B28", Article: "171220" })._rangedAtSite, true);
 check("unwrap keeps the middle", rangeArticleCode("MASSBUILD-171220-EA"), "171220");
+
+// The file actually loaded for PROGRESSIVE IMPRESSIONS writes "MASSBUILD-B28".
+// Unwrapped, it must match; and a file whose sites match NO store-master code
+// must never read an unlisted store as all-FALSE (that hid every Builders OOS).
+const PREFIXED: Row[] = [
+  { "Product ID": "IRAM_0054", "Channel Article": "MASSBUILD-171220-EA", "Site Num": "MASSBUILD-B28", Channel: "MASSBUILD", Sub_Channel: "BWH", "Range Indicator": true },
+];
+const sr4 = buildSiteRanging(PREFIXED, ["B28", "B99"])!;
+const enrich4 = (r: Row) => enrichLedgerRow(r, new Map(), new Map(), stores3, undefined, sr4);
+check("MASSBUILD-B28 unwrapped → B28 listed", sr4.sites.has("b28"), true);
+check("MASSBUILD-B28 → blind ranged TRUE at B28", enrich4({ Site: "B28", Article: "171220" })._rangedAtSite, true);
+check("channel prefix only stripped when it IS the row's channel", rangeRowSite({ "Site Num": "S-12", Channel: "MASSBUILD" }), "S-12");
+const sr5 = buildSiteRanging(PREFIXED, ["X1", "X2"])!;
+check("no store-master site matches the file → don't trust unlisted", sr5.trustUnlisted, false);
+const enrich5 = (r: Row) => enrichLedgerRow(r, new Map(), new Map(), stores3, undefined, sr5);
+check("…so an unlisted BWH store is left unjudged, not FALSE", enrich5({ Site: "B99", Article: "171220" })._rangedAtSite, undefined);
+check("no known sites passed → don't trust unlisted", buildSiteRanging(PREFIXED)!.trustUnlisted, false);
 
 // ── The report ──
 const REF = new Date(Date.UTC(2026, 8, 30));

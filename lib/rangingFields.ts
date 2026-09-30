@@ -42,6 +42,18 @@ export function rangeArticleCode(raw: string): string {
   return m ? m[1].trim() : s;
 }
 
+/**
+ * The site from a range row. Some files prefix it with the channel
+ * ("MASSBUILD-B28" → "B28"); only that row's own Channel is stripped, so a
+ * genuine dashed site code is left alone.
+ */
+export function rangeRowSite(row: Record<string, unknown>): string {
+  const site = rangingField(row, RANGE_SITE_KEYS);
+  const ch = rangingField(row, RANGE_CHANNEL_KEYS);
+  if (ch && site.toUpperCase().startsWith(ch.toUpperCase() + "-")) return site.slice(ch.length + 1).trim();
+  return site;
+}
+
 /** The article from a range row, unwrapped. */
 export function rangeRowArticle(row: Record<string, unknown>): string {
   return rangeArticleCode(rangingField(row, RANGE_ARTICLE_KEYS));
