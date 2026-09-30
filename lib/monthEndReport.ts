@@ -16,7 +16,7 @@
 import type { StatusDefinition, StatusScenario, StatusClassification, StoreRecord, ProductMaster } from "./types";
 import { evaluateScenarios } from "./statusScenarioData";
 import { calcOpenToOrder } from "./vitalSigns";
-import { rangingField, rangeRowArticle, RANGE_SITE_KEYS } from "./rangingFields";
+import { rangingField, rangeRowArticle, rangeRowSite } from "./rangingFields";
 
 type Row = Record<string, unknown>;
 
@@ -1576,7 +1576,7 @@ export function buildNumericalDistribution(opts: {
 
       const cpid = rangingField(rr, ["productid"]).toLowerCase();
       const article = rangeRowArticle(rr).toLowerCase();
-      const site = rangingField(rr, RANGE_SITE_KEYS).toLowerCase();
+      const site = rangeRowSite(rr).toLowerCase();
       const subCh = rangingField(rr, ["subchannel"]) || "Unknown";
       const prov = rangingField(rr, ["province"]) || "Unknown";
       const siteName = rangingField(rr, ["storename"]);
@@ -1744,7 +1744,7 @@ export function buildOpenToOrder(opts: {
       if (!isTrueRange(rangingField(rr, ["rangeindicator", "range"]))) continue;
       const cpid = rangingField(rr, ["productid"]).toLowerCase();
       const article = rangeRowArticle(rr).toLowerCase();
-      const site = rangingField(rr, RANGE_SITE_KEYS).toLowerCase();
+      const site = rangeRowSite(rr).toLowerCase();
       if (!site) continue;
       if (article) rangedKeys.add(`${site}|${article}`);
       if (cpid) rangedKeys.add(`${site}|${cpid}`);

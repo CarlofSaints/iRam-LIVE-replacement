@@ -14,8 +14,8 @@ import { getStoreLookup } from "./storeLookup";
 import { normalizeSiteKey } from "./siteCode";
 import { getControlFileData } from "./controlFileData";
 import {
-  rangingField, rangeRowArticle,
-  RANGE_SITE_KEYS, RANGE_PRODUCT_KEYS, RANGE_INDICATOR_KEYS,
+  rangingField, rangeRowArticle, rangeRowSite,
+  RANGE_PRODUCT_KEYS, RANGE_INDICATOR_KEYS,
   RANGE_CHANNEL_KEYS, RANGE_SUBCHANNEL_KEYS,
 } from "./rangingFields";
 import type { ProductMaster, StoreRecord } from "./types";
@@ -135,10 +135,10 @@ export function enrichLedgerRow(
     const listed = !!siteKey && siteRanging.sites.has(siteKey);
     const ch = String(enriched._storeChannel ?? "").trim().toLowerCase();
     const sub = String(enriched._storeSubChannel ?? "").trim().toLowerCase();
-    const channelCovered =
+    const channelCovered = siteRanging.trustUnlisted && (
       siteRanging.channels.size === 0 ||
       (!!ch && siteRanging.channels.has(ch)) ||
-      (!!sub && siteRanging.channels.has(sub));
+      (!!sub && siteRanging.channels.has(sub)));
     if (siteKey && (listed || channelCovered)) {
       const art = normalizeArticle(row["Article"] ?? row["article"] ?? row["ARTICLE"]);
       const cpid = String(enriched._clientProductId ?? "").toLowerCase().trim();
@@ -158,6 +158,11 @@ export interface SiteRanging {
   sites: Set<string>;    // every site key in the range file, TRUE or FALSE
   ranged: Set<string>;   // "<site>|a:<article>" and "<site>|p:<product id>" ranged TRUE
   channels: Set<string>; // Channel + Sub_Channel values in the file (lowercase); empty = no such columns
+  // May a store MISSING from the file be read as "nothing ranged there"? Only
+  // when at least one store-master site matches the file's site codes. If none
+  // do, the codes are in a different format ("MASSBUILD-B28" once hid every OOS
+  // at every Builders store) and an unlisted store is left unjudged instead.
+  trustUnlisted: boolean;
 }
 
 // Same TRUE spellings Month-End's Numerical Distribution accepts (isTrueRange there).
@@ -166,12 +171,15 @@ function isTrueRange(v: string): boolean {
   return s === "TRUE" || s === "T" || s === "1" || s === "Y" || s === "YES";
 }
 
-export function buildSiteRanging(rangingRows: RawRow[]): SiteRanging | undefined {
+export function buildSiteRanging(
+  rangingRows: RawRow[],
+  knownSites: Iterable<string> = [],   // store-master site codes, for the trustUnlisted check
+): SiteRanging | undefined {
   const sites = new Set<string>();
   const ranged = new Set<string>();
   const channels = new Set<string>();
   for (const r of rangingRows) {
-    const site = normalizeSiteKey(rangingField(r, RANGE_SITE_KEYS));
+    const site = normalizeSiteKey(rangeRowSite(r));
     if (!site) continue;
     sites.add(site);
     for (const c of [rangingField(r, RANGE_CHANNEL_KEYS), rangingField(r, RANGE_SUBCHANNEL_KEYS)]) {
@@ -183,7 +191,12 @@ export function buildSiteRanging(rangingRows: RawRow[]): SiteRanging | undefined
     if (art) ranged.add(`${site}|a:${art}`);
     if (cpid) ranged.add(`${site}|p:${cpid}`);
   }
-  return sites.size ? { sites, ranged, channels } : undefined;
+  if (!sites.size) return undefined;
+  let trustUnlisted = false;
+  for (const k of knownSites) {
+    if (sites.has(normalizeSiteKey(k))) { trustUnlisted = true; break; }
+  }
+  return { sites, ranged, channels, trustUnlisted };
 }
 
 /**
@@ -217,7 +230,7 @@ export async function enrichLedger(
     }
   }
 
-  const siteRanging = buildSiteRanging(rangingRows);
+  const siteRanging = buildSiteRanging(rangingRows, storeLookup.keys());
 
   const enrichedRows = rows.map((row) =>
     enrichLedgerRow(row, linksLookup, productLookup, storeLookup, rangingLookup, siteRanging)
