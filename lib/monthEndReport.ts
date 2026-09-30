@@ -15,8 +15,10 @@
 
 import type { StatusDefinition, StatusScenario, StatusClassification, StoreRecord, ProductMaster } from "./types";
 import { evaluateScenarios } from "./statusScenarioData";
-import { calcOpenToOrder } from "./vitalSigns";
+import { calcOpenToOrder, openToOrderBlock, otoBaseUnits } from "./vitalSigns";
 import { rangingField, rangeRowArticle, rangeRowSite } from "./rangingFields";
+import { notRangedHere, rangeFlag, rangeLabel, rangeStateOf, type RangeMode } from "./rangeState";
+import { isClosedStore } from "./reportExclusions";
 
 type Row = Record<string, unknown>;
 
@@ -422,6 +424,23 @@ export function buildSalesSummary(
     valueTotal: computeGrandTotal(vendValue, tStores),
   });
 
+  /* Range: sales split by whether the product is ranged at the store it sold
+     in (lib/rangeState.ts). Only when the client's range file could judge at
+     least one line — otherwise it would be one "No range data" row. Sales
+     totals are unchanged; this only splits them. */
+  if (rows.some((r) => rangeStateOf(r) !== "")) {
+    const rangeKey = (r: Row) => rangeLabel(r) || "No range data";
+    const rngVolume = aggregateRows(rows, ctx, rangeKey, grandYtdUnits, "volume");
+    const rngValue = aggregateRows(rows, ctx, rangeKey, grandYtdValue, "value");
+    levels.push({
+      level: "Range",
+      volumeRows: rngVolume,
+      volumeTotal: computeGrandTotal(rngVolume, tStores),
+      valueRows: rngValue,
+      valueTotal: computeGrandTotal(rngValue, tStores),
+    });
+  }
+
   // Level 1: Sub-Channel
   const subChVolume = aggregateRows(rows, ctx, (r) => String(r["_storeSubChannel"] || r["_storeChannel"] || "Unknown"), grandYtdUnits, "volume");
   const subChValue = aggregateRows(rows, ctx, (r) => String(r["_storeSubChannel"] || r["_storeChannel"] || "Unknown"), grandYtdValue, "value");
@@ -523,7 +542,11 @@ function parseNum(v: unknown, blankAs: number): number {
 
 // A SKUÃ—store is "in base" if it has stock on hand and/or any sales (across the
 // ledger's date columns). It is OOS when, being in base, its SOH is 0 or below.
-function classifyOOS(row: Row, dateColumns: string[]): { inBase: boolean; isOOS: boolean } {
+// Range (lib/rangeState.ts): a line NOT ranged at its store with no stock is not
+// expected on the shelf at all, so it is neither OOS nor part of the base the OOS
+// % is measured against. With stock it stays in base (and is never OOS anyway).
+// The Status sheets pass respectRange=false - a PR ST code is reported regardless.
+function classifyOOS(row: Row, dateColumns: string[], respectRange = true): { inBase: boolean; isOOS: boolean } {
   const soh = parseNum(row["SOH"], 0);
   const hasStock = !isNaN(soh) && soh > 0;
 
@@ -533,6 +556,8 @@ function classifyOOS(row: Row, dateColumns: string[]): { inBase: boolean; isOOS:
     if (!isNaN(v)) salesUnits += v;
   }
   const hasSales = salesUnits > 0;
+
+  if (respectRange && !hasStock && notRangedHere(row)) return { inBase: false, isOOS: false };
 
   const inBase = hasStock || hasSales;
   const isOOS = inBase && !isNaN(soh) && soh <= 0;
@@ -663,6 +688,7 @@ export interface OOSDetailRow {
   description: string;
   site: string;
   siteName: string;
+  range: string;       // TRUE / FALSE at this store, blank = can't judge (lib/rangeState.ts)
   soh: number;
   soo: number;
   sit: number;
@@ -692,6 +718,7 @@ export function buildOOSDetail(rows: Row[], dateColumns: string[]): OOSDetailRow
       description: String(row["Article Desc"] ?? ""),
       site: String(row["Site"] ?? ""),
       siteName: String(row["_storeName"] || row["Site Name"] || ""),
+      range: rangeFlag(row),
       soh: isNaN(soh) ? 0 : soh,
       soo: parseNum(row["SOO"], 0) || 0,
       sit: parseNum(row["SIT"], 0) || 0,
@@ -884,6 +911,7 @@ export interface DscDetailRow {
   vendor: string;
   description: string;
   site: string;
+  range: string;       // TRUE / FALSE at this store, blank = can't judge (lib/rangeState.ts)
   siteName: string;
   soh: number;
   soo: number;
@@ -911,6 +939,7 @@ export function buildDscDetail(rows: Row[], dateColumns: string[]): DscDetailRow
       description: String(row["Article Desc"] ?? ""),
       site: String(row["Site"] ?? ""),
       siteName: String(row["_storeName"] || row["Site Name"] || ""),
+      range: rangeFlag(row),
       soh: isNaN(soh) ? 0 : soh,
       soo: parseNum(row["SOO"], 0) || 0,
       sit: parseNum(row["SIT"], 0) || 0,
@@ -986,7 +1015,7 @@ export function buildStatusSummary(
   const comboMap = new Map<string, { pmf: string; prst: string; count: number; pos: number; neg: number; unc: number }>();
 
   for (const row of rows) {
-    const { inBase } = classifyOOS(row, dateColumns);
+    const { inBase } = classifyOOS(row, dateColumns, false);
     if (!inBase) continue; // same SKUÃ—store base as OOS
     baseCount++;
 
@@ -1062,7 +1091,7 @@ export function buildStatusDetail(
   const detail: StatusDetailRow[] = [];
 
   for (const row of rows) {
-    const { inBase } = classifyOOS(row, dateColumns);
+    const { inBase } = classifyOOS(row, dateColumns, false);
     if (!inBase) continue;
     if (classifyRowStatus(row, statusDefs, scenarios) !== "NEGATIVE") continue;
 
@@ -1078,7 +1107,7 @@ export function buildStatusDetail(
       siteName: String(row["_storeName"] || row["Site Name"] || ""),
       prst: prstDisplay(row),
       productStatus: pmfStatusDisplay(row),
-      ranging: row["_rangingStatus"] === true ? "Yes" : "No",
+      ranging: rangeFlag(row),   // per store (lib/rangeState.ts), not "anywhere in the file"
     });
   }
 
@@ -1103,6 +1132,7 @@ export function buildStatusDetail(
 // Product Margin (not in DISPO) = ((Incl SP / 1.15) âˆ’ Nett Cost) / (Incl SP / 1.15)
 
 export interface MarginRow {
+  range: string;       // TRUE / FALSE at this store, blank = can't judge (lib/rangeState.ts)
   site: string;
   siteName: string;
   productCode: string;
@@ -1234,6 +1264,7 @@ export function buildMarginAnalysis(rows: Row[]): MarginAnalysis {
       vendor: rowVendor(row),
       site: String(row["Site"] ?? ""),
       siteName: String(row["_storeName"] || row["Site Name"] || ""),
+      range: rangeFlag(row),
       productCode: String(row["_clientProductId"] || ""),
       article: String(row["Article"] ?? ""),
       productStatus: String(row["_productStatus"] || ""),
@@ -1327,6 +1358,7 @@ export interface PhantomStatusRow {
 }
 
 export interface PhantomDetailRow {
+  range: string;       // TRUE / FALSE at this store, blank = can't judge (lib/rangeState.ts)
   site: string;
   siteName: string;
   productCode: string;
@@ -1385,6 +1417,7 @@ export function buildPhantomAnalysis(
       vendor: rowVendor(row),
       site: String(row["Site"] ?? ""),
       siteName: String(row["_storeName"] || row["Site Name"] || ""),
+      range: rangeFlag(row),
       productCode: String(row["_clientProductId"] || ""),
       article: String(row["Article"] ?? ""),
       // Same source and same order as Store Reports: the DISPO's own wording
@@ -1453,6 +1486,7 @@ export interface NDDetailRow {
 }
 
 export interface NDFalseRow {
+  range: string;       // TRUE / FALSE at this store, blank = can't judge (lib/rangeState.ts)
   subChannel: string;
   province: string;
   site: string;
@@ -1570,6 +1604,10 @@ export function buildNumericalDistribution(opts: {
 
   if (hasRanging && rangingRows.length > 0) {
     const rangedKeys = new Set<string>();
+    // Closed stores (lib/reportExclusions.ts), per the store master.
+    const closedSites = new Set(
+      stores.filter((st) => isClosedStore(st.status, st.storeName)).map((st) => String(st.siteNum ?? "").trim().toLowerCase()),
+    );
     for (const rr of rangingRows) {
       const indicator = rangingField(rr, ["rangeindicator", "range"]);
       if (!isTrueRange(indicator)) continue;
@@ -1587,6 +1625,11 @@ export function buildNumericalDistribution(opts: {
       if (cpid) rangedKeys.add(`${site}|${cpid}`);
 
       const p = (article && bySiteArticle.get(`${site}|${article}`)) || (cpid && bySiteCpid.get(`${site}|${cpid}`)) || null;
+      // Not part of the base: a closed store (the range row's own Store Status or
+      // name, or the store master), or a DISCONTINUED product with no live DISPO
+      // line here (dead lines were already dropped by applyReportExclusions).
+      if (closedSites.has(site) || isClosedStore(rangingField(rr, ["storestatus"]), siteName)) continue;
+      if (!p && String(products.get(cpid)?.status ?? "").trim().toUpperCase() === "DISCONTINUED") continue;
       const nd = p && p.present ? 1 : 0;
       const pmf = products.get(cpid)?.status ?? "";
 
@@ -1613,7 +1656,7 @@ export function buildNumericalDistribution(opts: {
       falseDetail.push({
         vendor: s.vendor,
         subChannel: store?.subChannel || "", province: store?.province || "",
-        site: s.site.toUpperCase(), siteName: store?.storeName || "",
+        site: s.site.toUpperCase(), siteName: store?.storeName || "", range: "FALSE",
         productCode: s.cpid.toUpperCase(), article: s.article.toUpperCase(),
         description: prod?.description || "", prst: s.prst, pmfStatus: prod?.status || "", soh: s.soh,
       });
@@ -1689,7 +1732,7 @@ export function buildNumericalDistribution(opts: {
 // Suggested replenishment for SKU/site lines that are out of stock AND
 // orderable. A line qualifies only when SOH = 0, nothing is on order or in
 // transit (SOO = SIT = 0), the DISPO status classifies POSITIVE, and the PMF
-// product status is ACTIVE. OTO Units = category multiplier Ã— R. Profile;
+// product status is ACTIVE. OTO Units = category multiplier x (R. Profile, else Order Unit, else 2);
 // OTO Value = OTO Units Ã— Nett Cost. (Logic shared with the Vital Signs report
 // via calcOpenToOrder.) Because every qualifying line meets the same
 // conditions, the detail sheet omits SOH/SOO/SIT/Status columns.
@@ -1724,6 +1767,10 @@ export interface OTOAnalysis {
   bySku: OTOSummaryRow[];
   bySite: OTOSummaryRow[];
   detail: OTODetailRow[];
+  /* Out-of-stock lines that got NO suggested order, by the rule that stopped
+     them (openToOrderBlock in lib/vitalSigns.ts) — so an empty OTO sheet says
+     why instead of just being blank. `examples` = most common failing values. */
+  skipped: { reason: string; lines: number; examples: string }[];
 }
 
 export function buildOpenToOrder(opts: {
@@ -1734,22 +1781,7 @@ export function buildOpenToOrder(opts: {
   hasRanging: boolean;
   rangingRows: Row[];
 }): OTOAnalysis {
-  const { rows, statusDefs, statusScenarios, otoMultipliers, hasRanging, rangingRows } = opts;
-
-  // Ranged set (site|article and site|cpid) â€” only used to label the detail
-  // rows' Range Indicator when a ranging file exists.
-  const rangedKeys = new Set<string>();
-  if (hasRanging) {
-    for (const rr of rangingRows) {
-      if (!isTrueRange(rangingField(rr, ["rangeindicator", "range"]))) continue;
-      const cpid = rangingField(rr, ["productid"]).toLowerCase();
-      const article = rangeRowArticle(rr).toLowerCase();
-      const site = rangeRowSite(rr).toLowerCase();
-      if (!site) continue;
-      if (article) rangedKeys.add(`${site}|${article}`);
-      if (cpid) rangedKeys.add(`${site}|${cpid}`);
-    }
-  }
+  const { rows, statusDefs, statusScenarios, otoMultipliers, hasRanging } = opts;
 
   const detail: OTODetailRow[] = [];
   const mk = () => new Map<string, { units: number; value: number; lines: number; label: string }>();
@@ -1762,10 +1794,18 @@ export function buildOpenToOrder(opts: {
   };
 
   let totalUnits = 0, totalValue = 0;
+  const skipAcc = new Map<string, { lines: number; values: Map<string, number> }>();
 
   for (const row of rows) {
     const category = String(row["_category"] ?? "").trim().toLowerCase();
     const multiplier = (category && otoMultipliers[category]) || 1;
+    const block = openToOrderBlock(row, statusDefs, statusScenarios);
+    if (block && block.block !== "In stock") {
+      let e = skipAcc.get(block.block);
+      if (!e) { e = { lines: 0, values: new Map() }; skipAcc.set(block.block, e); }
+      e.lines++;
+      if (block.detail) e.values.set(block.detail, (e.values.get(block.detail) ?? 0) + 1);
+    }
     const { oto, otoValue } = calcOpenToOrder(row, statusDefs, multiplier, statusScenarios);
     if (oto <= 0) continue; // only qualifying lines with a positive suggested order
 
@@ -1774,11 +1814,8 @@ export function buildOpenToOrder(opts: {
     const cpid = String(row["_clientProductId"] ?? "").trim();
     const siteKey = site.toLowerCase(), artKey = article.toLowerCase(), cpidKey = cpid.toLowerCase();
 
-    const rangeIndicator = !hasRanging
-      ? "N/A"
-      : (artKey && rangedKeys.has(`${siteKey}|${artKey}`)) || (cpidKey && rangedKeys.has(`${siteKey}|${cpidKey}`))
-        ? "TRUE"
-        : "FALSE";
+    // Per store, the same value every other sheet shows (lib/rangeState.ts).
+    const rangeIndicator = !hasRanging ? "N/A" : rangeFlag(row) || "";
 
     const subCh = String(row["_storeSubChannel"] || row["_storeChannel"] || "Unknown");
     const catName = String(row["_category"] || "Unknown");
@@ -1821,6 +1858,14 @@ export function buildOpenToOrder(opts: {
     bySku: toRows(skuAcc),
     bySite: toRows(siteAcc),
     detail,
+    skipped: [...skipAcc.entries()]
+      .map(([reason, e]) => ({
+        reason,
+        lines: e.lines,
+        examples: [...e.values.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5)
+          .map(([v, n]) => `${v} (${n.toLocaleString("en-ZA")})`).join(", "),
+      }))
+      .sort((a, b) => b.lines - a.lines),
   };
 }
 
@@ -1830,7 +1875,7 @@ export function buildOpenToOrder(opts: {
 //   OTO       â€” total OTO Value (suggested replenishment for orderable OOS).
 //   ND        â€” 1 unit Ã— Nett Cost for every active SKU/site combo NOT
 //               distributed (ND = 0); uses the ranging universe when present.
-//   OOS       â€” OTO-default order (category multiplier Ã— R. Profile) Ã— Nett
+//   OOS       â€” OTO-default order (category multiplier x otoBaseUnits) Ã— Nett
 //               Cost for every out-of-stock line.
 //   Phantom   â€” OTO-default order Ã— Nett Cost for every phantom line with
 //               SOH < 5 (treated as written off and reordered).
@@ -1950,8 +1995,8 @@ export function buildChartsData(opts: {
 
     const category = String(row["_category"] ?? "").toLowerCase().trim();
     const mult = (category && otoMultipliers[category]) || 1;
-    const rp = parseNum(row["R. Profile"], 0);
-    const otoUnits = mult * (isNaN(rp) ? 0 : rp);
+    // Same quantity rule as Open to Order: R. Profile, else Order Unit, else 2.
+    const otoUnits = mult * otoBaseUnits(row).units;
     if (otoUnits <= 0 || ncost <= 0) continue;
 
     // OOS opportunity â€” order the OTO default for every out-of-stock line
@@ -2015,4 +2060,59 @@ export function buildChartsData(opts: {
     subChannelSeries,
     categorySeries,
   };
+}
+
+// ── Range Exceptions ─────────────────────────────────────────────
+/* A properly loaded range file states TRUE or FALSE for every product × store.
+   Any DISPO line the file says NOTHING about (no row, or a blank indicator) is
+   then a gap in the file, listed here so it can be fixed. Only for a "full"
+   file: in a TRUE-only file every non-TRUE line is unstated by design, so this
+   would just be a list of everything (lib/rangeState.ts). */
+export interface RangeExceptionRow {
+  vendor: string;
+  subChannel: string;
+  province: string;
+  site: string;
+  siteName: string;
+  productCode: string;
+  article: string;
+  description: string;
+  productStatus: string;
+  soh: number;
+  soo: number;
+  sit: number;
+}
+
+export function buildRangeExceptions(rows: Row[], mode: RangeMode): RangeExceptionRow[] {
+  if (mode !== "full") return [];
+  const out: RangeExceptionRow[] = [];
+  for (const row of rows) {
+    if (rangeStateOf(row) !== "MISSING") continue;
+    const n = (v: unknown) => { const x = parseNum(v, 0); return isNaN(x) ? 0 : x; };
+    out.push({
+      vendor: rowVendor(row),
+      subChannel: String(row["_storeSubChannel"] || row["_storeChannel"] || ""),
+      province: String(row["_province"] || ""),
+      site: String(row["Site"] ?? ""),
+      siteName: String(row["_storeName"] || row["Site Name"] || ""),
+      productCode: String(row["_clientProductId"] || ""),
+      article: String(row["Article"] ?? ""),
+      description: String(row["Article Desc"] || row["_productDescription"] || ""),
+      productStatus: String(row["_productStatus"] || ""),
+      soh: n(row["SOH"]),
+      soo: n(row["SOO"]),
+      sit: n(row["SIT"]),
+    });
+  }
+  out.sort((a, b) => a.site.localeCompare(b.site) || a.article.localeCompare(b.article, undefined, { numeric: true }));
+  return out;
+}
+
+/** One line for the report's Menu: how the range file was read. */
+export function rangeModeLabel(mode: RangeMode): string {
+  switch (mode) {
+    case "full": return "Loaded with TRUE and FALSE. Lines it doesn't state are treated as not ranged and listed on Range Exceptions.";
+    case "true-only": return "TRUE values only. Every product/store it doesn't list is treated as NOT ranged: no OOS or Open to Order is reported for those.";
+    default: return "";
+  }
 }

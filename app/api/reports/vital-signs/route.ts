@@ -3,6 +3,7 @@ import * as XLSX from "xlsx";
 import { requirePermission, handleAuthError } from "@/lib/auth";
 import { getSalesLedger, getSalesLedgerMeta } from "@/lib/salesData";
 import { enrichLedger } from "@/lib/enrichment";
+import { applyReportExclusions, exclusionLabel } from "@/lib/reportExclusions";
 import { getReportConfig } from "@/lib/reportConfig";
 import { getClientById } from "@/lib/clientData";
 import { getStatusDefinitions } from "@/lib/statusData";
@@ -149,7 +150,12 @@ export async function GET(req: NextRequest) {
        vendor part is read off the rows in the file, so a scoped report names
        the vendor it actually contains without a second source of truth. */
     const vendorFilter = parseVendorParam(url.searchParams.get("vendors"));
-    const reportRows = filterRowsByVendor(enriched.rows, vendorFilter);
+    // Closed stores and dead discontinued lines are left out (lib/reportExclusions.ts).
+    const excl = applyReportExclusions(enriched.rows, dateColumns, period.year);
+    if (excl.closedStoreLines || excl.deadDiscontinuedLines) {
+      console.log(`[vital-signs] ${clientName}: left out ${exclusionLabel(excl, period.year)}`);
+    }
+    const reportRows = filterRowsByVendor(excl.rows, vendorFilter);
 
     // 3. Load report config, status definitions, and scenarios in parallel
     const [config, allStatusDefs, statusScenarios] = await Promise.all([

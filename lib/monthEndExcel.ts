@@ -23,7 +23,8 @@ import type {
   NDAnalysis,
   OTOAnalysis,
 } from "./monthEndReport";
-import { buildDateContext, dataRowExtras } from "./monthEndReport";
+import { buildDateContext, dataRowExtras, rangeModeLabel, type RangeExceptionRow } from "./monthEndReport";
+import { rangeFlag, type RangeMode } from "./rangeState";
 import { analyzeCoverage, coverageMessageLines, formatMonth } from "./dataCoverage";
 import { applyStreamWriterOrderFix } from "./exceljsStreamOrder";
 
@@ -49,7 +50,7 @@ const MIXED_BG = "FFF2CC";     // amber
 const HEADER_ICONS: Record<string, string> = {
   vendor: "🏢",
   "sub-channel": "🔗", province: "📍", category: "🏷️", "sub-category": "🏷️",
-  site: "🏬", store: "🏬", "site name": "🏬", product: "📦", article: "📦",
+  site: "🏬", store: "🏬", "site name": "🏬", product: "📦", article: "📦", range: "🎯",
   "product code": "#️⃣", description: "📝", brand: "🏷️",
   "pr st": "🔖", status: "🔖", "product status": "✅", "pmf status": "✅",
   soh: "📦", soo: "🚚", sit: "🚛",
@@ -137,6 +138,7 @@ const MENU_SHEET_ORDER: { key: string; name: string }[] = [
   { key: "nd", name: "ND" },
   { key: "ndDetail", name: "ND Detail" },
   { key: "ndFalse", name: "ND False" },
+  { key: "rangeExceptions", name: "Range Exceptions" },
   { key: "data", name: "Data" },
 ];
 
@@ -300,6 +302,11 @@ export async function buildMonthEndWorkbook(
      the test scripts keep working; when it is absent the Data sheet's own
      date context falls back to reading the latest month in the data. */
   period?: { year: number; month: number; excludedMonths?: string[] },
+  /* How the client's range file was read, and (full files only) the lines it
+     says nothing about. Optional for the older callers and test scripts. */
+  range?: { mode: RangeMode; exceptions: RangeExceptionRow[] },
+  // "N lines at closed stores; M discontinued lines …" — see lib/reportExclusions.ts.
+  leftOutLabel = "",
 ): Promise<Buffer> {
   // Collect the streamed output into a Buffer — the caller needs bytes for
   // both the download response and the SharePoint save.
@@ -351,6 +358,7 @@ export async function buildMonthEndWorkbook(
     nd: !!ndAnalysis && want("nd"),
     ndDetail: !!ndAnalysis && want("ndDetail"),
     ndFalse: !!ndAnalysis && ndAnalysis.hasRanging && ndAnalysis.falseDetail.length > 0 && want("ndFalse"),
+    rangeExceptions: range?.mode === "full" && range.exceptions.length > 0 && want("rangeExceptions"),
     data: dataRows.length > 0 && want("data"),
   };
 
@@ -377,6 +385,8 @@ export async function buildMonthEndWorkbook(
     excludedLabel: period?.excludedMonths?.length
       ? `${period.excludedMonths.map(formatMonth).join(", ")} — later than this report`
       : "",
+    rangeLine: range ? rangeModeLabel(range.mode) : "",
+    leftOutLabel,
     sheetNames: MENU_SHEET_ORDER.filter((s) => has[s.key]).map((s) => s.name),
   });
   await commitSheet(menuSheet, false);   // the Menu needs no 🏠 button
@@ -437,6 +447,7 @@ export async function buildMonthEndWorkbook(
   if (has.nd) await buildNdSheet(wb, ndAnalysis!, clientName, channelLabel, periodLabel);
   if (has.ndDetail) await buildNdDetailSheet(wb, ndAnalysis!);
   if (has.ndFalse) await buildNdFalseSheet(wb, ndAnalysis!);
+  if (has.rangeExceptions) await buildRangeExceptionsSheet(wb, range!.exceptions);
   if (has.data) await buildDataSheet(wb, dataRows, dateColumns, period);
 
   await wb.commit();
@@ -597,6 +608,7 @@ async function buildOosDetailSheet(
     { header: "Description", width: 30, key: "description" as const },
     { header: "Site", width: 10, key: "site" as const },
     { header: "Site Name", width: 22, key: "siteName" as const },
+    { header: "Range", width: 10, key: "range" as const },
     { header: "SOH", width: 8, key: "soh" as const },
     { header: "SOO", width: 8, key: "soo" as const },
     { header: "SIT", width: 8, key: "sit" as const },
@@ -686,6 +698,7 @@ async function buildDataSheet(
     { header: "Description", width: 30, get: (r) => String(r["Article Desc"] ?? "") },
     { header: "Site", width: 10, get: (r) => String(r["Site"] ?? "") },
     { header: "Site Name", width: 22, get: (r) => String(r["_storeName"] || r["Site Name"] || "") },
+    { header: "Range", width: 10, get: (r) => rangeFlag(r) },
     { header: "Status", width: 10, get: (r) => String(r["Status"] ?? r["PR ST"] ?? "") },
     { header: "Product Status", width: 14, get: (r) => String(r["_productStatus"] || "") },
     { header: "SOH", width: 8, get: (r) => toNum(r["SOH"]) },
@@ -976,6 +989,7 @@ async function buildDscDetailSheet(wb: ExcelJS.Workbook, rows: DscDetailRow[]): 
     { header: "Description", width: 30, key: "description" },
     { header: "Site", width: 10, key: "site" },
     { header: "Site Name", width: 22, key: "siteName" },
+    { header: "Range", width: 10, key: "range" },
     { header: "SOH", width: 8, key: "soh", num: true },
     { header: "SOO", width: 8, key: "soo", num: true },
     { header: "SIT", width: 8, key: "sit", num: true },
@@ -1122,7 +1136,7 @@ async function buildStatusDetailSheet(wb: ExcelJS.Workbook, rows: StatusDetailRo
     { header: "Site Name", width: 22, key: "siteName" },
     { header: "PR ST", width: 10, key: "prst" },
     { header: "Product Status", width: 14, key: "productStatus" },
-    { header: "Ranging", width: 10, key: "ranging" },
+    { header: "Range", width: 10, key: "ranging" },
   ];
 
   cols.forEach((c, i) => {
@@ -1174,8 +1188,10 @@ async function buildMarginDetailSheet(
     "Vendor", "Site", "Site Name", "Product Code", "Article", "Product Status", "PR ST",
     "SOH", "MAC", "Nett Cost", "Incl SP", "Prod. Margin", "STK Margin",
     "MAC vs Nett Cost", "Margin Status", "Margin Support (R)", "Free Stock Units", "Suggested SP (Incl VAT)",
+    // Range LAST: the live formulas above reference columns by letter.
+    "Range",
   ];
-  const widths = [10, 10, 22, 14, 12, 14, 10, 8, 10, 10, 10, 12, 11, 15, 14, 16, 14, 18];
+  const widths = [10, 10, 22, 14, 12, 14, 10, 8, 10, 10, 10, 12, 11, 15, 14, 16, 14, 18, 10];
 
   let cur = 1;
   // Title
@@ -1276,6 +1292,7 @@ async function buildMarginDetailSheet(
     formula(17, `IF(AND(O${r}="RISK",J${r}<>0),P${r}/J${r},"")`, dr.freeStockUnits === null ? "" : dr.freeStockUnits, "#,##0.00");
     // Suggested SP (Incl VAT) = OPPORTUNITY: MAC / (1 − Prod. Margin) × 1.15
     formula(18, `IF(AND(O${r}="OPPORTUNITY",(1-L${r})<>0),I${r}/(1-L${r})*1.15,"")`, dr.suggestedSP === null ? "" : dr.suggestedSP, RAND_FMT);
+    text(19, dr.range);
     r++;
   }
 
@@ -1442,8 +1459,9 @@ async function buildPhantomSheet(
      it has on OOS Detail, DSC Detail and Status Detail — a phantom line names
      a product someone has to go and find on a shelf, so the code alone is not
      enough to act on. */
-  const detailHeaders =["Vendor", "Site", "Site Name", "Product Code", "Article", "Description", "PR ST", "Product Status", "SOH", "Date Last Sold", "Date Last Received"];
-  const detailWidths = [10, 14, 22, 14, 12, 30, 10, 14, 8, 15, 17];
+  // Range LAST: the grid below is written by column position.
+  const detailHeaders =["Vendor", "Site", "Site Name", "Product Code", "Article", "Description", "PR ST", "Product Status", "SOH", "Date Last Sold", "Date Last Received", "Range"];
+  const detailWidths = [10, 14, 22, 14, 12, 30, 10, 14, 8, 15, 17, 10];
 
   let cur = 1;
   // Title
@@ -1526,6 +1544,7 @@ async function buildPhantomSheet(
     const lr = sheet.getCell(r, 11);
     if (d.lastReceived) { lr.value = d.lastReceived; lr.numFmt = "dd/mm/yyyy"; } else { lr.value = d.lastReceivedRaw; }
     lr.font = bodyFont(); lr.border = thinBorder(); lr.alignment = { horizontal: "center" };
+    text(12, d.range);
     r++;
   }
 
@@ -1625,7 +1644,7 @@ async function buildNdDetailSheet(wb: ExcelJS.Workbook, nd: NDAnalysis): Promise
     { header: "Description", width: 30, key: "description" },
     { header: "PR ST", width: 9, key: "prst" },
     { header: "PMF Status", width: 13, key: "pmfStatus" },
-    { header: "Ranging", width: 10, key: "ranging" },
+    { header: "Range", width: 10, key: "ranging" },
   ];
   cols.forEach((c, i) => {
     const cell = sheet.getCell(1, i + 1);
@@ -1670,6 +1689,7 @@ async function buildNdFalseSheet(wb: ExcelJS.Workbook, nd: NDAnalysis): Promise<
     { header: "Province", width: 14, key: "province" },
     { header: "Site", width: 10, key: "site" },
     { header: "Site Name", width: 22, key: "siteName" },
+    { header: "Range", width: 10, key: "range" },
     { header: "Product Code", width: 14, key: "productCode" },
     { header: "Article", width: 12, key: "article" },
     { header: "Description", width: 30, key: "description" },
@@ -1708,15 +1728,60 @@ async function buildNdFalseSheet(wb: ExcelJS.Workbook, nd: NDAnalysis): Promise<
   await commitSheet(sheet);
 }
 
+// Range Exceptions — DISPO lines a full (TRUE/FALSE) range file says nothing
+// about. See buildRangeExceptions() in lib/monthEndReport.ts.
+async function buildRangeExceptionsSheet(wb: ExcelJS.Workbook, rows: RangeExceptionRow[]): Promise<void> {
+  const sheet = wb.addWorksheet("Range Exceptions", sheetOpts({ state: "frozen", ySplit: 2 }));
+  const cols: { header: string; width: number; key: keyof RangeExceptionRow; num?: boolean }[] = [
+    { header: "Vendor", width: 10, key: "vendor" },
+    { header: "Sub-Channel", width: 14, key: "subChannel" },
+    { header: "Province", width: 14, key: "province" },
+    { header: "Site", width: 10, key: "site" },
+    { header: "Site Name", width: 22, key: "siteName" },
+    { header: "Product Code", width: 14, key: "productCode" },
+    { header: "Article", width: 12, key: "article" },
+    { header: "Description", width: 30, key: "description" },
+    { header: "Product Status", width: 14, key: "productStatus" },
+    { header: "SOH", width: 9, key: "soh", num: true },
+    { header: "SOO", width: 9, key: "soo", num: true },
+    { header: "SIT", width: 9, key: "sit", num: true },
+  ];
+  const note = sheet.getCell(1, 1);
+  note.value =
+    "Product/store lines in the DISPO that the range file does not state as TRUE or FALSE. " +
+    "They are treated as NOT ranged (no OOS or Open to Order). Add them to the range file with the right value.";
+  note.font = { name: "Calibri", size: 10, italic: true };
+  sheet.mergeCells(1, 1, 1, cols.length);
+  cols.forEach((c, i) => {
+    const cell = sheet.getCell(2, i + 1);
+    cell.value = c.header; cell.font = headerFont();
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_BG } };
+    cell.border = thinBorder(); cell.alignment = { horizontal: "center", wrapText: true };
+    sheet.getColumn(i + 1).width = c.width;
+  });
+  let r = 3;
+  for (const row of rows) {
+    cols.forEach((c, i) => {
+      const cell = sheet.getCell(r, i + 1);
+      cell.value = row[c.key];
+      cell.font = bodyFont(); cell.border = thinBorder();
+      if (c.num) { cell.numFmt = "#,##0.##"; cell.alignment = { horizontal: "right" }; }
+    });
+    r++;
+  }
+  sheet.autoFilter = { from: { row: 2, column: 1 }, to: { row: rows.length + 2, column: cols.length } };
+  await commitSheet(sheet);
+}
+
 // Helper alias types for keyof access (string-valued columns only)
 type NDDetailRowLite = { vendor: string; subChannel: string; province: string; site: string; siteName: string; productCode: string; article: string; description: string; prst: string; pmfStatus: string; ranging: string };
-type NDFalseRowLite = { vendor: string; subChannel: string; province: string; site: string; siteName: string; productCode: string; article: string; description: string; prst: string; pmfStatus: string };
+type NDFalseRowLite = { vendor: string; subChannel: string; province: string; site: string; siteName: string; range: string; productCode: string; article: string; description: string; prst: string; pmfStatus: string };
 
 // ── Open to Order (OTO) sheets ──────────────────────────────────
 const OTO_NOTE =
   "Open to Order (OTO) = suggested replenishment for SKU/site lines that are out of stock and orderable. " +
   "A line qualifies only when SOH = 0, nothing is on order or in transit (SOO = SIT = 0), the DISPO status classifies as POSITIVE, " +
-  "and the PMF product status is ACTIVE. OTO Units = category multiplier × R. Profile; OTO Value = OTO Units × Nett Cost. " +
+  "and the PMF product status is ACTIVE. OTO Units = category multiplier × the DISPO's R. Profile (else its Order Unit, else 2 units); OTO Value = OTO Units × Nett Cost. " +
   "Because every line below meets these same conditions, the SOH / SOO / SIT / Status / Product Status columns are omitted — they would be identical on every row.";
 
 // OTO Summary — cascading rollups by Sub-Channel, Category, SKU, then Site.
@@ -1760,6 +1825,32 @@ async function buildOtoSummarySheet(
   stat("Total OTO Units", oto.totalUnits, "#,##0");
   stat("Total OTO Value", oto.totalValue, RAND_FMT);
   cur += 1;
+
+  /* Out-of-stock lines that got no suggested order, and which rule stopped
+     them. Without this an empty OTO sheet is just blank, and the only way to
+     find out why is to go line by line through the DISPO. */
+  if (oto.skipped.length > 0) {
+    const h = sheet.getCell(cur, 1);
+    h.value = "Out-of-stock lines with NO suggested order — why";
+    h.font = { name: "Calibri", size: 12, bold: true, color: { argb: HEADER_BG } };
+    cur++;
+    ["Reason", "Lines", "Most common values"].forEach((t, i) => {
+      const c = sheet.getCell(cur, i + 1);
+      c.value = t; c.font = headerFont(); c.border = thinBorder();
+      c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_BG } };
+    });
+    sheet.mergeCells(cur, 3, cur, 5);
+    cur++;
+    for (const s of oto.skipped) {
+      const a = sheet.getCell(cur, 1); a.value = s.reason; a.font = bodyFont(); a.border = thinBorder();
+      const b = sheet.getCell(cur, 2); b.value = s.lines; b.numFmt = "#,##0"; b.font = bodyFont(); b.border = thinBorder();
+      const c = sheet.getCell(cur, 3); c.value = s.examples; c.font = bodyFont(); c.border = thinBorder();
+      c.alignment = { wrapText: true, vertical: "top" };
+      sheet.mergeCells(cur, 3, cur, 5);
+      cur++;
+    }
+    cur += 1;
+  }
 
   const writeTable = (dimLabel: string, rows: OTOAnalysis["bySubChannel"]) => {
     const sub = sheet.getCell(cur, 1);
@@ -1838,7 +1929,7 @@ async function buildOtoDetailSheet(
     { header: "Site Name", width: 24, key: "siteName" },
     { header: "Product Code", width: 14, key: "productCode" },
     { header: "Article", width: 12, key: "article" },
-    { header: "Range Indicator", width: 14, key: "rangeIndicator" },
+    { header: "Range", width: 10, key: "rangeIndicator" },
     { header: "Product Description", width: 32, key: "description" },
     { header: "OTO Units", width: 12, key: "units", fmt: "#,##0", align: "right" },
     { header: "OTO Value", width: 14, key: "value", fmt: RAND_FMT, align: "right" },
@@ -1906,6 +1997,8 @@ function buildMenuSheet(
     dataGapLines?: string[];
     coverageSpan?: string;
     excludedLabel?: string;
+    rangeLine?: string;
+    leftOutLabel?: string;
     // Tab names in order. Passed in rather than read off wb.worksheets, because
     // this sheet is now written before any of the others exist.
     sheetNames: string[];
@@ -1938,6 +2031,8 @@ function buildMenuSheet(
   meanLine("Period", meta.periodLabel);
   if (meta.coverageSpan) meanLine("Data present", meta.coverageSpan);
   if (meta.excludedLabel) meanLine("Months excluded", meta.excludedLabel);
+  if (meta.rangeLine) meanLine("Range file", meta.rangeLine);
+  if (meta.leftOutLabel) meanLine("Left out", meta.leftOutLabel);
   row += 2;
 
   // Data-coverage warning block (only when the monthly series has gaps).
