@@ -4,6 +4,7 @@
    lib/storeReport.ts. */
 import { buildSiteRanging, enrichLedgerRow } from "../lib/enrichment";
 import { buildStoreReport } from "../lib/storeReport";
+import { rangeArticleCode } from "../lib/rangingFields";
 
 let failures = 0;
 function check(name: string, got: unknown, want: unknown) {
@@ -34,6 +35,19 @@ check("absent for a store in the file → not ranged", enrich({ Site: "M28", Art
 check("matched via product id when the article is blank in the range file", enrich({ Site: "M28", Article: "444" })._rangedAtSite, true);
 check("store not in the range file → can't judge", enrich({ Site: "G016", Article: "111" })._rangedAtSite, undefined);
 check("site code case / spacing tolerated", enrich({ Site: " m28 ", Article: "111" })._rangedAtSite, true);
+
+// Second layout (PROGRESSIVE IMPRESSIONS): Site Num + Channel Article wrapped as
+// <CHANNEL>-<article>-<unit>, Range Indicator a real boolean. Matched NO store before.
+const sr2 = buildSiteRanging([
+  { "Product ID": "IRAM_0054", "Channel Article": "MASSBUILD-171220-EA", "Site Num": "B28", "Range Indicator": true },
+  { "Product ID": "IRAM_0099", "Channel Article": "MASSBUILD-555-EA", "Site Num": "B02", "Range Indicator": true },
+])!;
+const enrich2 = (r: Row) => enrichLedgerRow(r, new Map(), new Map(), new Map(), undefined, sr2);
+check("Site Num layout: store found", sr2?.sites.has("b28"), true);
+check("Channel Article unwrapped → ranged at B28", enrich2({ Site: "B28", Article: "171220" })._rangedAtSite, true);
+check("…and not ranged at B28 when only B02 has it", enrich2({ Site: "B28", Article: "555" })._rangedAtSite, false);
+check("plain code untouched by the unwrap", rangeArticleCode("171220"), "171220");
+check("unwrap keeps the middle", rangeArticleCode("MASSBUILD-171220-EA"), "171220");
 
 // ── The report ──
 const REF = new Date(Date.UTC(2026, 8, 30));

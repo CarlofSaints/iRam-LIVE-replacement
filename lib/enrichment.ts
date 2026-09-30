@@ -13,24 +13,14 @@ import { getLinksLookup, normalizeArticle } from "./linksLookup";
 import { getStoreLookup } from "./storeLookup";
 import { normalizeSiteKey } from "./siteCode";
 import { getControlFileData } from "./controlFileData";
+import {
+  rangingField, rangeRowArticle,
+  RANGE_SITE_KEYS, RANGE_PRODUCT_KEYS, RANGE_INDICATOR_KEYS,
+} from "./rangingFields";
 import type { ProductMaster, StoreRecord } from "./types";
 
 type RawRow = Record<string, unknown>;
 type EnrichedRow = Record<string, unknown>;
-
-/** Resolve a ranging-file field, tolerating Helper/Mandatory prefixes + spacing/underscores. */
-function resolveRangingField(row: RawRow, targets: string[]): string {
-  for (const [k, v] of Object.entries(row)) {
-    const nk = k
-      .trim()
-      .toLowerCase()
-      .replace(/^helper/, "")
-      .replace(/^mandatory/, "")
-      .replace(/[\s_]+/g, "");
-    if (targets.includes(nk)) return v == null ? "" : String(v).trim();
-  }
-  return "";
-}
 
 /**
  * Enrich a single row with product + store dimensions.
@@ -164,12 +154,12 @@ export function buildSiteRanging(rangingRows: RawRow[]): SiteRanging | undefined
   const sites = new Set<string>();
   const ranged = new Set<string>();
   for (const r of rangingRows) {
-    const site = normalizeSiteKey(resolveRangingField(r, ["sitecode", "site"]));
+    const site = normalizeSiteKey(rangingField(r, RANGE_SITE_KEYS));
     if (!site) continue;
     sites.add(site);
-    if (!isTrueRange(resolveRangingField(r, ["rangeindicator", "range"]))) continue;
-    const art = normalizeArticle(resolveRangingField(r, ["articlechannelcode", "article"]));
-    const cpid = resolveRangingField(r, ["productid"]).toLowerCase().trim();
+    if (!isTrueRange(rangingField(r, RANGE_INDICATOR_KEYS))) continue;
+    const art = normalizeArticle(rangeRowArticle(r));
+    const cpid = rangingField(r, RANGE_PRODUCT_KEYS).toLowerCase().trim();
     if (art) ranged.add(`${site}|a:${art}`);
     if (cpid) ranged.add(`${site}|p:${cpid}`);
   }
@@ -197,16 +187,12 @@ export async function enrichLedger(
   ]);
 
   // Build ranging lookup — set of article keys present in ranging file.
-  // Ranging headers carry Helper/Mandatory prefixes and the channel-specific
-  // article column is "ArticleChannelCode" (matches the DISPO "Article"), so
-  // resolve tolerantly — see rangingField() in lib/monthEndReport.ts.
+  // Column names vary by file layout — see lib/rangingFields.ts.
   let rangingLookup: Set<string> | undefined;
   if (rangingRows.length > 0) {
     rangingLookup = new Set<string>();
     for (const r of rangingRows) {
-      const article = resolveRangingField(r, ["articlechannelcode", "article"])
-        .toLowerCase()
-        .trim();
+      const article = rangeRowArticle(r).toLowerCase().trim();
       if (article) rangingLookup.add(article);
     }
   }
