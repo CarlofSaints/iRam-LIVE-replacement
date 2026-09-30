@@ -22,6 +22,7 @@ import {
   buildDscDetail,
   capDateColumns,
 } from "@/lib/monthEndReport";
+import { applyReportExclusions, exclusionLabel } from "@/lib/reportExclusions";
 import { buildMonthEndWorkbook } from "@/lib/monthEndExcel";
 import { calcMonthLastSold } from "@/lib/vitalSigns";
 import { getStatusDefinitions } from "@/lib/statusData";
@@ -224,12 +225,15 @@ export async function GET(req: NextRequest) {
       };
     });
 
+    // 4a. Leave out closed stores and dead discontinued lines (lib/reportExclusions.ts)
+    const excl = applyReportExclusions(enrichedRows, dateColumns, rYear);
+
     // 4b. Apply optional sub-channel / category / vendor filters (every sheet)
     const subSet = new Set(subChFilter);
     const catSet = new Set(catFilter);
     const vendorSet = new Set(vendorFilter);
     const reportRows = (subSet.size || catSet.size || vendorSet.size)
-      ? enrichedRows.filter((row) => {
+      ? excl.rows.filter((row) => {
           const sub = String(row["_storeSubChannel"] || row["_storeChannel"] || "");
           const cat = String(row["_category"] || "");
           if (subSet.size && !subSet.has(sub)) return false;
@@ -239,7 +243,7 @@ export async function GET(req: NextRequest) {
           if (vendorSet.size && !vendorSet.has(rowVendor(row))) return false;
           return true;
         })
-      : enrichedRows;
+      : excl.rows;
 
     /* 5. Build date context, pinned to the report period. Without the ref it
        reads "current month" off the data, which is the same bug one step
@@ -379,6 +383,7 @@ export async function GET(req: NextRequest) {
       dscDetail,
       { year: rYear, month: rMonth, excludedMonths },
       { mode: enriched.rangeMode, exceptions: buildRangeExceptions(reportRows, enriched.rangeMode) },
+      exclusionLabel(excl, rYear),
     );
 
     // 9. Log activity

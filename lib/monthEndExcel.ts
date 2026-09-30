@@ -305,6 +305,8 @@ export async function buildMonthEndWorkbook(
   /* How the client's range file was read, and (full files only) the lines it
      says nothing about. Optional for the older callers and test scripts. */
   range?: { mode: RangeMode; exceptions: RangeExceptionRow[] },
+  // "N lines at closed stores; M discontinued lines …" — see lib/reportExclusions.ts.
+  leftOutLabel = "",
 ): Promise<Buffer> {
   // Collect the streamed output into a Buffer — the caller needs bytes for
   // both the download response and the SharePoint save.
@@ -384,6 +386,7 @@ export async function buildMonthEndWorkbook(
       ? `${period.excludedMonths.map(formatMonth).join(", ")} — later than this report`
       : "",
     rangeLine: range ? rangeModeLabel(range.mode) : "",
+    leftOutLabel,
     sheetNames: MENU_SHEET_ORDER.filter((s) => has[s.key]).map((s) => s.name),
   });
   await commitSheet(menuSheet, false);   // the Menu needs no 🏠 button
@@ -1815,6 +1818,32 @@ async function buildOtoSummarySheet(
   stat("Total OTO Value", oto.totalValue, RAND_FMT);
   cur += 1;
 
+  /* Out-of-stock lines that got no suggested order, and which rule stopped
+     them. Without this an empty OTO sheet is just blank, and the only way to
+     find out why is to go line by line through the DISPO. */
+  if (oto.skipped.length > 0) {
+    const h = sheet.getCell(cur, 1);
+    h.value = "Out-of-stock lines with NO suggested order — why";
+    h.font = { name: "Calibri", size: 12, bold: true, color: { argb: HEADER_BG } };
+    cur++;
+    ["Reason", "Lines", "Most common values"].forEach((t, i) => {
+      const c = sheet.getCell(cur, i + 1);
+      c.value = t; c.font = headerFont(); c.border = thinBorder();
+      c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_BG } };
+    });
+    sheet.mergeCells(cur, 3, cur, 5);
+    cur++;
+    for (const s of oto.skipped) {
+      const a = sheet.getCell(cur, 1); a.value = s.reason; a.font = bodyFont(); a.border = thinBorder();
+      const b = sheet.getCell(cur, 2); b.value = s.lines; b.numFmt = "#,##0"; b.font = bodyFont(); b.border = thinBorder();
+      const c = sheet.getCell(cur, 3); c.value = s.examples; c.font = bodyFont(); c.border = thinBorder();
+      c.alignment = { wrapText: true, vertical: "top" };
+      sheet.mergeCells(cur, 3, cur, 5);
+      cur++;
+    }
+    cur += 1;
+  }
+
   const writeTable = (dimLabel: string, rows: OTOAnalysis["bySubChannel"]) => {
     const sub = sheet.getCell(cur, 1);
     sub.value = `${dimLabel} — Open to Order`;
@@ -1961,6 +1990,7 @@ function buildMenuSheet(
     coverageSpan?: string;
     excludedLabel?: string;
     rangeLine?: string;
+    leftOutLabel?: string;
     // Tab names in order. Passed in rather than read off wb.worksheets, because
     // this sheet is now written before any of the others exist.
     sheetNames: string[];
@@ -1994,6 +2024,7 @@ function buildMenuSheet(
   if (meta.coverageSpan) meanLine("Data present", meta.coverageSpan);
   if (meta.excludedLabel) meanLine("Months excluded", meta.excludedLabel);
   if (meta.rangeLine) meanLine("Range file", meta.rangeLine);
+  if (meta.leftOutLabel) meanLine("Left out", meta.leftOutLabel);
   row += 2;
 
   // Data-coverage warning block (only when the monthly series has gaps).

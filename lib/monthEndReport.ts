@@ -15,9 +15,10 @@
 
 import type { StatusDefinition, StatusScenario, StatusClassification, StoreRecord, ProductMaster } from "./types";
 import { evaluateScenarios } from "./statusScenarioData";
-import { calcOpenToOrder } from "./vitalSigns";
+import { calcOpenToOrder, openToOrderBlock } from "./vitalSigns";
 import { rangingField, rangeRowArticle, rangeRowSite } from "./rangingFields";
 import { notRangedHere, rangeLabel, rangeStateOf, type RangeMode } from "./rangeState";
+import { isClosedStore } from "./reportExclusions";
 
 type Row = Record<string, unknown>;
 
@@ -1594,6 +1595,10 @@ export function buildNumericalDistribution(opts: {
 
   if (hasRanging && rangingRows.length > 0) {
     const rangedKeys = new Set<string>();
+    // Closed stores (lib/reportExclusions.ts), per the store master.
+    const closedSites = new Set(
+      stores.filter((st) => isClosedStore(st.status, st.storeName)).map((st) => String(st.siteNum ?? "").trim().toLowerCase()),
+    );
     for (const rr of rangingRows) {
       const indicator = rangingField(rr, ["rangeindicator", "range"]);
       if (!isTrueRange(indicator)) continue;
@@ -1611,6 +1616,11 @@ export function buildNumericalDistribution(opts: {
       if (cpid) rangedKeys.add(`${site}|${cpid}`);
 
       const p = (article && bySiteArticle.get(`${site}|${article}`)) || (cpid && bySiteCpid.get(`${site}|${cpid}`)) || null;
+      // Not part of the base: a closed store (the range row's own Store Status or
+      // name, or the store master), or a DISCONTINUED product with no live DISPO
+      // line here (dead lines were already dropped by applyReportExclusions).
+      if (closedSites.has(site) || isClosedStore(rangingField(rr, ["storestatus"]), siteName)) continue;
+      if (!p && String(products.get(cpid)?.status ?? "").trim().toUpperCase() === "DISCONTINUED") continue;
       const nd = p && p.present ? 1 : 0;
       const pmf = products.get(cpid)?.status ?? "";
 
@@ -1748,6 +1758,10 @@ export interface OTOAnalysis {
   bySku: OTOSummaryRow[];
   bySite: OTOSummaryRow[];
   detail: OTODetailRow[];
+  /* Out-of-stock lines that got NO suggested order, by the rule that stopped
+     them (openToOrderBlock in lib/vitalSigns.ts) — so an empty OTO sheet says
+     why instead of just being blank. `examples` = most common failing values. */
+  skipped: { reason: string; lines: number; examples: string }[];
 }
 
 export function buildOpenToOrder(opts: {
@@ -1786,10 +1800,18 @@ export function buildOpenToOrder(opts: {
   };
 
   let totalUnits = 0, totalValue = 0;
+  const skipAcc = new Map<string, { lines: number; values: Map<string, number> }>();
 
   for (const row of rows) {
     const category = String(row["_category"] ?? "").trim().toLowerCase();
     const multiplier = (category && otoMultipliers[category]) || 1;
+    const block = openToOrderBlock(row, statusDefs, statusScenarios);
+    if (block && block.block !== "In stock") {
+      let e = skipAcc.get(block.block);
+      if (!e) { e = { lines: 0, values: new Map() }; skipAcc.set(block.block, e); }
+      e.lines++;
+      if (block.detail) e.values.set(block.detail, (e.values.get(block.detail) ?? 0) + 1);
+    }
     const { oto, otoValue } = calcOpenToOrder(row, statusDefs, multiplier, statusScenarios);
     if (oto <= 0) continue; // only qualifying lines with a positive suggested order
 
@@ -1845,6 +1867,14 @@ export function buildOpenToOrder(opts: {
     bySku: toRows(skuAcc),
     bySite: toRows(siteAcc),
     detail,
+    skipped: [...skipAcc.entries()]
+      .map(([reason, e]) => ({
+        reason,
+        lines: e.lines,
+        examples: [...e.values.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5)
+          .map(([v, n]) => `${v} (${n.toLocaleString("en-ZA")})`).join(", "),
+      }))
+      .sort((a, b) => b.lines - a.lines),
   };
 }
 

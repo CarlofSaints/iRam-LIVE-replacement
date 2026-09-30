@@ -150,16 +150,26 @@ export function calcArticleRankings(
 
 // ── Open to Order ─────────────────────────────────────────────
 
-export function calcOpenToOrder(
+/**
+ * Why a line gets NO Open to Order, or null when it qualifies. The rules, in
+ * order, are the ones calcOpenToOrder applies — kept as one function so the
+ * Month-End OTO sheet can say which rule emptied it rather than just being
+ * blank. `detail` names the value that failed (the status code, PMF status).
+ */
+export type OtoBlock =
+  | "In stock" | "Not ranged at this store" | "Status not POSITIVE"
+  | "Status code has no definition" | "On order / in transit"
+  | "PMF status not ACTIVE" | "No R. Profile";
+
+export function openToOrderBlock(
   row: Row,
   statusDefs: StatusDefinition[],
-  categoryMultiplier: number,
-  statusScenarios: StatusScenario[] = []
-): { oto: number; otoValue: number } {
+  statusScenarios: StatusScenario[] = [],
+): { block: OtoBlock; detail: string } | null {
   const soh = Number(row["SOH"] ?? 0);
-  if (soh > 0) return { oto: 0, otoValue: 0 };
+  if (soh > 0) return { block: "In stock", detail: "" };
   // Not ranged at this store (lib/rangeState.ts) → nothing to re-order.
-  if (notRangedHere(row)) return { oto: 0, otoValue: 0 };
+  if (notRangedHere(row)) return { block: "Not ranged at this store", detail: "" };
 
   const statusRaw = String(row["Status"] ?? row["PR ST"] ?? "").trim();
   if (statusRaw !== "" && statusRaw !== "0") {
@@ -168,24 +178,37 @@ export function calcOpenToOrder(
     // Try scenario-based classification first (most specific)
     const scenarioResult = evaluateScenarios(statusUpper, row, statusScenarios);
     if (scenarioResult !== null) {
-      if (scenarioResult !== "POSITIVE") return { oto: 0, otoValue: 0 };
+      if (scenarioResult !== "POSITIVE") return { block: "Status not POSITIVE", detail: `${statusUpper} (scenario: ${scenarioResult})` };
     } else {
       // Fall back to channel-level status definitions
       const def = statusDefs.find((s) => s.code === statusUpper);
-      if (def && def.classification !== "POSITIVE") return { oto: 0, otoValue: 0 };
-      if (!def) return { oto: 0, otoValue: 0 };
+      if (!def) return { block: "Status code has no definition", detail: statusUpper };
+      if (def.classification !== "POSITIVE") return { block: "Status not POSITIVE", detail: `${statusUpper} (${def.classification})` };
     }
   }
 
   const soo = Number(row["SOO"] ?? 0);
   const sit = Number(row["SIT"] ?? 0);
-  if (soo + sit !== 0) return { oto: 0, otoValue: 0 };
+  if (soo + sit !== 0) return { block: "On order / in transit", detail: "" };
 
   const productStatus = String(row["_productStatus"] ?? "").trim().toUpperCase();
-  if (productStatus !== "ACTIVE") return { oto: 0, otoValue: 0 };
+  if (productStatus !== "ACTIVE") return { block: "PMF status not ACTIVE", detail: productStatus || "(blank / not in PMF)" };
 
   const rpRaw = Number(row["R. Profile"] ?? 0);
-  const rp = isNaN(rpRaw) ? 0 : rpRaw;
+  if (isNaN(rpRaw) || rpRaw <= 0) {
+    return { block: "No R. Profile", detail: row["R. Profile"] === undefined ? "(column missing)" : String(row["R. Profile"]) || "(blank)" };
+  }
+  return null;
+}
+
+export function calcOpenToOrder(
+  row: Row,
+  statusDefs: StatusDefinition[],
+  categoryMultiplier: number,
+  statusScenarios: StatusScenario[] = []
+): { oto: number; otoValue: number } {
+  if (openToOrderBlock(row, statusDefs, statusScenarios)) return { oto: 0, otoValue: 0 };
+  const rp = Number(row["R. Profile"] ?? 0);
   const nettCost = Number(row["Nett Cost"] ?? 0);
   const nc = isNaN(nettCost) ? 0 : nettCost;
   const oto = categoryMultiplier * rp;          // suggested order units
