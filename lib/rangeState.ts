@@ -31,7 +31,15 @@ export function notRangedHere(row: Row): boolean {
   return s === "FALSE" || s === "MISSING";
 }
 
-/** How the report names each state (Sales "Range" level, Data + Vital Signs column). */
+/** The Range column on every SKU × store sheet: TRUE / FALSE, blank when it
+ *  can't be judged. Not stated counts as FALSE — the Range Exceptions sheet is
+ *  where "not in the file" is called out separately. */
+export function rangeFlag(row: Row): "TRUE" | "FALSE" | "" {
+  const s = rangeStateOf(row);
+  return s === "TRUE" ? "TRUE" : s === "" ? "" : "FALSE";
+}
+
+/** How the Sales "Range" split names each state. */
 export function rangeLabel(row: Row): string {
   switch (rangeStateOf(row)) {
     case "TRUE": return "Ranged";

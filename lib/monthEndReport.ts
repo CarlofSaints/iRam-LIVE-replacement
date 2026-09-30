@@ -17,7 +17,7 @@ import type { StatusDefinition, StatusScenario, StatusClassification, StoreRecor
 import { evaluateScenarios } from "./statusScenarioData";
 import { calcOpenToOrder, openToOrderBlock } from "./vitalSigns";
 import { rangingField, rangeRowArticle, rangeRowSite } from "./rangingFields";
-import { notRangedHere, rangeLabel, rangeStateOf, type RangeMode } from "./rangeState";
+import { notRangedHere, rangeFlag, rangeLabel, rangeStateOf, type RangeMode } from "./rangeState";
 import { isClosedStore } from "./reportExclusions";
 
 type Row = Record<string, unknown>;
@@ -688,6 +688,7 @@ export interface OOSDetailRow {
   description: string;
   site: string;
   siteName: string;
+  range: string;       // TRUE / FALSE at this store, blank = can't judge (lib/rangeState.ts)
   soh: number;
   soo: number;
   sit: number;
@@ -717,6 +718,7 @@ export function buildOOSDetail(rows: Row[], dateColumns: string[]): OOSDetailRow
       description: String(row["Article Desc"] ?? ""),
       site: String(row["Site"] ?? ""),
       siteName: String(row["_storeName"] || row["Site Name"] || ""),
+      range: rangeFlag(row),
       soh: isNaN(soh) ? 0 : soh,
       soo: parseNum(row["SOO"], 0) || 0,
       sit: parseNum(row["SIT"], 0) || 0,
@@ -909,6 +911,7 @@ export interface DscDetailRow {
   vendor: string;
   description: string;
   site: string;
+  range: string;       // TRUE / FALSE at this store, blank = can't judge (lib/rangeState.ts)
   siteName: string;
   soh: number;
   soo: number;
@@ -936,6 +939,7 @@ export function buildDscDetail(rows: Row[], dateColumns: string[]): DscDetailRow
       description: String(row["Article Desc"] ?? ""),
       site: String(row["Site"] ?? ""),
       siteName: String(row["_storeName"] || row["Site Name"] || ""),
+      range: rangeFlag(row),
       soh: isNaN(soh) ? 0 : soh,
       soo: parseNum(row["SOO"], 0) || 0,
       sit: parseNum(row["SIT"], 0) || 0,
@@ -1103,7 +1107,7 @@ export function buildStatusDetail(
       siteName: String(row["_storeName"] || row["Site Name"] || ""),
       prst: prstDisplay(row),
       productStatus: pmfStatusDisplay(row),
-      ranging: row["_rangingStatus"] === true ? "Yes" : "No",
+      ranging: rangeFlag(row),   // per store (lib/rangeState.ts), not "anywhere in the file"
     });
   }
 
@@ -1128,6 +1132,7 @@ export function buildStatusDetail(
 // Product Margin (not in DISPO) = ((Incl SP / 1.15) âˆ’ Nett Cost) / (Incl SP / 1.15)
 
 export interface MarginRow {
+  range: string;       // TRUE / FALSE at this store, blank = can't judge (lib/rangeState.ts)
   site: string;
   siteName: string;
   productCode: string;
@@ -1259,6 +1264,7 @@ export function buildMarginAnalysis(rows: Row[]): MarginAnalysis {
       vendor: rowVendor(row),
       site: String(row["Site"] ?? ""),
       siteName: String(row["_storeName"] || row["Site Name"] || ""),
+      range: rangeFlag(row),
       productCode: String(row["_clientProductId"] || ""),
       article: String(row["Article"] ?? ""),
       productStatus: String(row["_productStatus"] || ""),
@@ -1352,6 +1358,7 @@ export interface PhantomStatusRow {
 }
 
 export interface PhantomDetailRow {
+  range: string;       // TRUE / FALSE at this store, blank = can't judge (lib/rangeState.ts)
   site: string;
   siteName: string;
   productCode: string;
@@ -1410,6 +1417,7 @@ export function buildPhantomAnalysis(
       vendor: rowVendor(row),
       site: String(row["Site"] ?? ""),
       siteName: String(row["_storeName"] || row["Site Name"] || ""),
+      range: rangeFlag(row),
       productCode: String(row["_clientProductId"] || ""),
       article: String(row["Article"] ?? ""),
       // Same source and same order as Store Reports: the DISPO's own wording
@@ -1478,6 +1486,7 @@ export interface NDDetailRow {
 }
 
 export interface NDFalseRow {
+  range: string;       // TRUE / FALSE at this store, blank = can't judge (lib/rangeState.ts)
   subChannel: string;
   province: string;
   site: string;
@@ -1647,7 +1656,7 @@ export function buildNumericalDistribution(opts: {
       falseDetail.push({
         vendor: s.vendor,
         subChannel: store?.subChannel || "", province: store?.province || "",
-        site: s.site.toUpperCase(), siteName: store?.storeName || "",
+        site: s.site.toUpperCase(), siteName: store?.storeName || "", range: "FALSE",
         productCode: s.cpid.toUpperCase(), article: s.article.toUpperCase(),
         description: prod?.description || "", prst: s.prst, pmfStatus: prod?.status || "", soh: s.soh,
       });
@@ -1772,22 +1781,7 @@ export function buildOpenToOrder(opts: {
   hasRanging: boolean;
   rangingRows: Row[];
 }): OTOAnalysis {
-  const { rows, statusDefs, statusScenarios, otoMultipliers, hasRanging, rangingRows } = opts;
-
-  // Ranged set (site|article and site|cpid) â€” only used to label the detail
-  // rows' Range Indicator when a ranging file exists.
-  const rangedKeys = new Set<string>();
-  if (hasRanging) {
-    for (const rr of rangingRows) {
-      if (!isTrueRange(rangingField(rr, ["rangeindicator", "range"]))) continue;
-      const cpid = rangingField(rr, ["productid"]).toLowerCase();
-      const article = rangeRowArticle(rr).toLowerCase();
-      const site = rangeRowSite(rr).toLowerCase();
-      if (!site) continue;
-      if (article) rangedKeys.add(`${site}|${article}`);
-      if (cpid) rangedKeys.add(`${site}|${cpid}`);
-    }
-  }
+  const { rows, statusDefs, statusScenarios, otoMultipliers, hasRanging } = opts;
 
   const detail: OTODetailRow[] = [];
   const mk = () => new Map<string, { units: number; value: number; lines: number; label: string }>();
@@ -1820,11 +1814,8 @@ export function buildOpenToOrder(opts: {
     const cpid = String(row["_clientProductId"] ?? "").trim();
     const siteKey = site.toLowerCase(), artKey = article.toLowerCase(), cpidKey = cpid.toLowerCase();
 
-    const rangeIndicator = !hasRanging
-      ? "N/A"
-      : (artKey && rangedKeys.has(`${siteKey}|${artKey}`)) || (cpidKey && rangedKeys.has(`${siteKey}|${cpidKey}`))
-        ? "TRUE"
-        : "FALSE";
+    // Per store, the same value every other sheet shows (lib/rangeState.ts).
+    const rangeIndicator = !hasRanging ? "N/A" : rangeFlag(row) || "";
 
     const subCh = String(row["_storeSubChannel"] || row["_storeChannel"] || "Unknown");
     const catName = String(row["_category"] || "Unknown");

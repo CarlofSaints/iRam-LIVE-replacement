@@ -12,7 +12,7 @@ import { classifyDSC, type DSCBrackets } from "./reportConfig";
 import { cleanBuyerName } from "./buyerName";
 import type { StatusDefinition, StatusScenario } from "./types";
 import { evaluateScenarios } from "./statusScenarioData";
-import { notRangedHere, rangeLabel } from "./rangeState";
+import { notRangedHere, rangeFlag } from "./rangeState";
 
 type Row = Record<string, unknown>;
 
@@ -496,7 +496,7 @@ export function computeVitalSigns(
       "Buyer": cleanBuyerName(row["Buyer"]),
       "R_Profile": row["R. Profile"] ?? "",
       // Ranged at this store? (lib/rangeState.ts) Last, so the legacy layout above is untouched.
-      "Range": rangeLabel(row),
+      "Range": rangeFlag(row),
     };
 
     return output;

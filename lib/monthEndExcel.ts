@@ -24,7 +24,7 @@ import type {
   OTOAnalysis,
 } from "./monthEndReport";
 import { buildDateContext, dataRowExtras, rangeModeLabel, type RangeExceptionRow } from "./monthEndReport";
-import { rangeLabel, type RangeMode } from "./rangeState";
+import { rangeFlag, type RangeMode } from "./rangeState";
 import { analyzeCoverage, coverageMessageLines, formatMonth } from "./dataCoverage";
 import { applyStreamWriterOrderFix } from "./exceljsStreamOrder";
 
@@ -608,6 +608,7 @@ async function buildOosDetailSheet(
     { header: "Description", width: 30, key: "description" as const },
     { header: "Site", width: 10, key: "site" as const },
     { header: "Site Name", width: 22, key: "siteName" as const },
+    { header: "Range", width: 10, key: "range" as const },
     { header: "SOH", width: 8, key: "soh" as const },
     { header: "SOO", width: 8, key: "soo" as const },
     { header: "SIT", width: 8, key: "sit" as const },
@@ -697,7 +698,7 @@ async function buildDataSheet(
     { header: "Description", width: 30, get: (r) => String(r["Article Desc"] ?? "") },
     { header: "Site", width: 10, get: (r) => String(r["Site"] ?? "") },
     { header: "Site Name", width: 22, get: (r) => String(r["_storeName"] || r["Site Name"] || "") },
-    { header: "Range", width: 16, get: (r) => rangeLabel(r) },
+    { header: "Range", width: 10, get: (r) => rangeFlag(r) },
     { header: "Status", width: 10, get: (r) => String(r["Status"] ?? r["PR ST"] ?? "") },
     { header: "Product Status", width: 14, get: (r) => String(r["_productStatus"] || "") },
     { header: "SOH", width: 8, get: (r) => toNum(r["SOH"]) },
@@ -988,6 +989,7 @@ async function buildDscDetailSheet(wb: ExcelJS.Workbook, rows: DscDetailRow[]): 
     { header: "Description", width: 30, key: "description" },
     { header: "Site", width: 10, key: "site" },
     { header: "Site Name", width: 22, key: "siteName" },
+    { header: "Range", width: 10, key: "range" },
     { header: "SOH", width: 8, key: "soh", num: true },
     { header: "SOO", width: 8, key: "soo", num: true },
     { header: "SIT", width: 8, key: "sit", num: true },
@@ -1134,7 +1136,7 @@ async function buildStatusDetailSheet(wb: ExcelJS.Workbook, rows: StatusDetailRo
     { header: "Site Name", width: 22, key: "siteName" },
     { header: "PR ST", width: 10, key: "prst" },
     { header: "Product Status", width: 14, key: "productStatus" },
-    { header: "Ranging", width: 10, key: "ranging" },
+    { header: "Range", width: 10, key: "ranging" },
   ];
 
   cols.forEach((c, i) => {
@@ -1186,8 +1188,10 @@ async function buildMarginDetailSheet(
     "Vendor", "Site", "Site Name", "Product Code", "Article", "Product Status", "PR ST",
     "SOH", "MAC", "Nett Cost", "Incl SP", "Prod. Margin", "STK Margin",
     "MAC vs Nett Cost", "Margin Status", "Margin Support (R)", "Free Stock Units", "Suggested SP (Incl VAT)",
+    // Range LAST: the live formulas above reference columns by letter.
+    "Range",
   ];
-  const widths = [10, 10, 22, 14, 12, 14, 10, 8, 10, 10, 10, 12, 11, 15, 14, 16, 14, 18];
+  const widths = [10, 10, 22, 14, 12, 14, 10, 8, 10, 10, 10, 12, 11, 15, 14, 16, 14, 18, 10];
 
   let cur = 1;
   // Title
@@ -1288,6 +1292,7 @@ async function buildMarginDetailSheet(
     formula(17, `IF(AND(O${r}="RISK",J${r}<>0),P${r}/J${r},"")`, dr.freeStockUnits === null ? "" : dr.freeStockUnits, "#,##0.00");
     // Suggested SP (Incl VAT) = OPPORTUNITY: MAC / (1 − Prod. Margin) × 1.15
     formula(18, `IF(AND(O${r}="OPPORTUNITY",(1-L${r})<>0),I${r}/(1-L${r})*1.15,"")`, dr.suggestedSP === null ? "" : dr.suggestedSP, RAND_FMT);
+    text(19, dr.range);
     r++;
   }
 
@@ -1454,8 +1459,9 @@ async function buildPhantomSheet(
      it has on OOS Detail, DSC Detail and Status Detail — a phantom line names
      a product someone has to go and find on a shelf, so the code alone is not
      enough to act on. */
-  const detailHeaders =["Vendor", "Site", "Site Name", "Product Code", "Article", "Description", "PR ST", "Product Status", "SOH", "Date Last Sold", "Date Last Received"];
-  const detailWidths = [10, 14, 22, 14, 12, 30, 10, 14, 8, 15, 17];
+  // Range LAST: the grid below is written by column position.
+  const detailHeaders =["Vendor", "Site", "Site Name", "Product Code", "Article", "Description", "PR ST", "Product Status", "SOH", "Date Last Sold", "Date Last Received", "Range"];
+  const detailWidths = [10, 14, 22, 14, 12, 30, 10, 14, 8, 15, 17, 10];
 
   let cur = 1;
   // Title
@@ -1538,6 +1544,7 @@ async function buildPhantomSheet(
     const lr = sheet.getCell(r, 11);
     if (d.lastReceived) { lr.value = d.lastReceived; lr.numFmt = "dd/mm/yyyy"; } else { lr.value = d.lastReceivedRaw; }
     lr.font = bodyFont(); lr.border = thinBorder(); lr.alignment = { horizontal: "center" };
+    text(12, d.range);
     r++;
   }
 
@@ -1637,7 +1644,7 @@ async function buildNdDetailSheet(wb: ExcelJS.Workbook, nd: NDAnalysis): Promise
     { header: "Description", width: 30, key: "description" },
     { header: "PR ST", width: 9, key: "prst" },
     { header: "PMF Status", width: 13, key: "pmfStatus" },
-    { header: "Ranging", width: 10, key: "ranging" },
+    { header: "Range", width: 10, key: "ranging" },
   ];
   cols.forEach((c, i) => {
     const cell = sheet.getCell(1, i + 1);
@@ -1682,6 +1689,7 @@ async function buildNdFalseSheet(wb: ExcelJS.Workbook, nd: NDAnalysis): Promise<
     { header: "Province", width: 14, key: "province" },
     { header: "Site", width: 10, key: "site" },
     { header: "Site Name", width: 22, key: "siteName" },
+    { header: "Range", width: 10, key: "range" },
     { header: "Product Code", width: 14, key: "productCode" },
     { header: "Article", width: 12, key: "article" },
     { header: "Description", width: 30, key: "description" },
@@ -1767,7 +1775,7 @@ async function buildRangeExceptionsSheet(wb: ExcelJS.Workbook, rows: RangeExcept
 
 // Helper alias types for keyof access (string-valued columns only)
 type NDDetailRowLite = { vendor: string; subChannel: string; province: string; site: string; siteName: string; productCode: string; article: string; description: string; prst: string; pmfStatus: string; ranging: string };
-type NDFalseRowLite = { vendor: string; subChannel: string; province: string; site: string; siteName: string; productCode: string; article: string; description: string; prst: string; pmfStatus: string };
+type NDFalseRowLite = { vendor: string; subChannel: string; province: string; site: string; siteName: string; range: string; productCode: string; article: string; description: string; prst: string; pmfStatus: string };
 
 // ── Open to Order (OTO) sheets ──────────────────────────────────
 const OTO_NOTE =
@@ -1921,7 +1929,7 @@ async function buildOtoDetailSheet(
     { header: "Site Name", width: 24, key: "siteName" },
     { header: "Product Code", width: 14, key: "productCode" },
     { header: "Article", width: 12, key: "article" },
-    { header: "Range Indicator", width: 14, key: "rangeIndicator" },
+    { header: "Range", width: 10, key: "rangeIndicator" },
     { header: "Product Description", width: 32, key: "description" },
     { header: "OTO Units", width: 12, key: "units", fmt: "#,##0", align: "right" },
     { header: "OTO Value", width: 14, key: "value", fmt: RAND_FMT, align: "right" },
