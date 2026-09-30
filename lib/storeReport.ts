@@ -90,7 +90,7 @@ export interface StoreLine {
   statusLabel: string;          // status definition description (e.g. "Active") or ""
   statusClass: "POSITIVE" | "NEGATIVE" | "UNCLASSIFIED";  // per-line classification
   vendorStatus: string;         // PMF product status (Active / Discontinued)
-  ranging: "TRUE" | "FALSE" | "";  // "" when no ranging file loaded for the client
+  ranging: "TRUE" | "FALSE" | "";  // ranged at THIS store; "" when the range file can't say
   rpType: string;               // RP replenishment code
 
   mac: number | null;             // Moving Average Cost (store's cost)
@@ -133,6 +133,7 @@ export interface StoreReport {
   totalProducts: number;        // distinct in-base lines = "All products"
   counts: StoreReportCounts;
   totalActions: number;         // distinct lines carrying ≥1 flag
+  notRangedHidden?: number;     // OOS / Low Cover flags dropped because the product isn't ranged here
   lines: StoreLine[];
 }
 
@@ -256,6 +257,7 @@ export function buildStoreReport(
     oos: 0, lowCover: 0, phantom: 0, status: 0, marginRisk: 0, marginOpp: 0,
   };
   const participating: StoreReportClient[] = [];
+  let notRangedHidden = 0;
 
   let storeName = "";
   let storeType = "";
@@ -275,6 +277,12 @@ export function buildStoreReport(
     let clientHasLines = false;
     const labelByCode = new Map<string, string>();
     for (const d of client.statusDefs) labelByCode.set(d.code, d.description || "");
+
+    // Per-store range (`_rangedAtSite`, lib/enrichment.ts). Only trusted when at
+    // least ONE of this client's lines here is ranged TRUE: if the store is in the
+    // range file but nothing matches, the codes disagree (article/site format) and
+    // hiding on that would silently wipe every out-of-stock at the store.
+    const rangingUsable = client.hasRanging && client.rows.some((r) => r["_rangedAtSite"] === true);
 
     for (const row of client.rows) {
       // Include every listed SKU at this store — don't hide SOH=0 lines that have
@@ -311,6 +319,16 @@ export function buildStoreReport(
       flags.oos = metrics.flags.oos;
       flags.lowCover = metrics.flags.lowCover;
       flags.phantom = metrics.flags.phantom;
+
+      // Not ranged at this store → the store isn't meant to carry it, so being
+      // out of stock / low on cover is not something the rep should chase.
+      // Phantom, Status and Margin stay: those are about stock actually sitting there.
+      const rangedHere = rangingUsable ? (row["_rangedAtSite"] as boolean | undefined) : undefined;
+      if (rangedHere === false && (flags.oos || flags.lowCover)) {
+        flags.oos = false;
+        flags.lowCover = false;
+        notRangedHidden++;
+      }
 
       // Status — flag any SKU carrying a (non-blank) PR ST status. The per-line
       // classification (positive/negative) is computed too and shown in the detail
@@ -399,7 +417,7 @@ export function buildStoreReport(
         statusLabel: labelByCode.get(prst) || "",
         statusClass,
         vendorStatus: pmfStatusDisplay(row),
-        ranging: client.hasRanging ? (row["_rangingStatus"] === true ? "TRUE" : "FALSE") : "",
+        ranging: rangedHere === true ? "TRUE" : rangedHere === false ? "FALSE" : "",
         rpType: String(row["RP"] ?? ""),
         mac: isNaN(mac) ? null : round2(mac),
         nett: isNaN(nett) ? null : round2(nett),
@@ -440,6 +458,7 @@ export function buildStoreReport(
     totalProducts: lines.length,
     counts,
     totalActions,
+    notRangedHidden,
     lines,
   };
 }
