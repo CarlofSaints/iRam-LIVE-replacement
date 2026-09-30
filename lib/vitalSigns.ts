@@ -12,6 +12,7 @@ import { classifyDSC, type DSCBrackets } from "./reportConfig";
 import { cleanBuyerName } from "./buyerName";
 import type { StatusDefinition, StatusScenario } from "./types";
 import { evaluateScenarios } from "./statusScenarioData";
+import { notRangedHere, rangeLabel } from "./rangeState";
 
 type Row = Record<string, unknown>;
 
@@ -157,6 +158,8 @@ export function calcOpenToOrder(
 ): { oto: number; otoValue: number } {
   const soh = Number(row["SOH"] ?? 0);
   if (soh > 0) return { oto: 0, otoValue: 0 };
+  // Not ranged at this store (lib/rangeState.ts) → nothing to re-order.
+  if (notRangedHere(row)) return { oto: 0, otoValue: 0 };
 
   const statusRaw = String(row["Status"] ?? row["PR ST"] ?? "").trim();
   if (statusRaw !== "" && statusRaw !== "0") {
@@ -280,6 +283,7 @@ export function getVitalSignsColumnOrder(dateColumns: string[]): string[] {
     "Regions",
     "Buyer",
     "R_Profile",
+    "Range",
   ];
 }
 
@@ -468,6 +472,8 @@ export function computeVitalSigns(
       "Regions": row["_province"] ?? "",
       "Buyer": cleanBuyerName(row["Buyer"]),
       "R_Profile": row["R. Profile"] ?? "",
+      // Ranged at this store? (lib/rangeState.ts) Last, so the legacy layout above is untouched.
+      "Range": rangeLabel(row),
     };
 
     return output;

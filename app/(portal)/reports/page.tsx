@@ -34,6 +34,7 @@ const REPORT_SHEETS = [
   { key: "nd", label: "ND" },
   { key: "ndDetail", label: "ND Detail" },
   { key: "ndFalse", label: "ND False" },
+  { key: "rangeExceptions", label: "Range Exceptions" },
   { key: "data", label: "Data" },
 ];
 

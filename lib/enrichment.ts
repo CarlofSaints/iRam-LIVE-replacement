@@ -18,6 +18,7 @@ import {
   RANGE_PRODUCT_KEYS, RANGE_INDICATOR_KEYS,
   RANGE_CHANNEL_KEYS, RANGE_SUBCHANNEL_KEYS,
 } from "./rangingFields";
+import type { RangeMode } from "./rangeState";
 import type { ProductMaster, StoreRecord } from "./types";
 
 type RawRow = Record<string, unknown>;
@@ -142,11 +143,14 @@ export function enrichLedgerRow(
     if (siteKey && (listed || channelCovered)) {
       const art = normalizeArticle(row["Article"] ?? row["article"] ?? row["ARTICLE"]);
       const cpid = String(enriched._clientProductId ?? "").toLowerCase().trim();
-      enriched._rangedAtSite =
+      const hit = (set: Set<string>) =>
         listed &&
-        ((!!art && siteRanging.ranged.has(`${siteKey}|a:${art}`)) ||
-          (!!cpid && siteRanging.ranged.has(`${siteKey}|p:${cpid}`)));
+        ((!!art && set.has(`${siteKey}|a:${art}`)) || (!!cpid && set.has(`${siteKey}|p:${cpid}`)));
+      const isTrue = hit(siteRanging.ranged);
+      enriched._rangedAtSite = isTrue;
       enriched._rangeSiteListed = listed;
+      // See lib/rangeState.ts — FALSE is what the file SAYS; MISSING is what it doesn't.
+      enriched._rangeState = isTrue ? "TRUE" : hit(siteRanging.unranged) ? "FALSE" : "MISSING";
     }
   }
 
@@ -157,6 +161,7 @@ export function enrichLedgerRow(
 export interface SiteRanging {
   sites: Set<string>;    // every site key in the range file, TRUE or FALSE
   ranged: Set<string>;   // "<site>|a:<article>" and "<site>|p:<product id>" ranged TRUE
+  unranged: Set<string>; // same keys, stated FALSE (empty for a TRUE-only file)
   channels: Set<string>; // Channel + Sub_Channel values in the file (lowercase); empty = no such columns
   // May a store MISSING from the file be read as "nothing ranged there"? Only
   // when at least one store-master site matches the file's site codes. If none
@@ -170,6 +175,11 @@ function isTrueRange(v: string): boolean {
   const s = v.trim().toUpperCase();
   return s === "TRUE" || s === "T" || s === "1" || s === "Y" || s === "YES";
 }
+// A blank indicator is NOT a FALSE — it states nothing, so it reads as MISSING.
+function isFalseRange(v: string): boolean {
+  const s = v.trim().toUpperCase();
+  return s === "FALSE" || s === "F" || s === "0" || s === "N" || s === "NO";
+}
 
 export function buildSiteRanging(
   rangingRows: RawRow[],
@@ -177,6 +187,7 @@ export function buildSiteRanging(
 ): SiteRanging | undefined {
   const sites = new Set<string>();
   const ranged = new Set<string>();
+  const unranged = new Set<string>();
   const channels = new Set<string>();
   for (const r of rangingRows) {
     const site = normalizeSiteKey(rangeRowSite(r));
@@ -185,18 +196,20 @@ export function buildSiteRanging(
     for (const c of [rangingField(r, RANGE_CHANNEL_KEYS), rangingField(r, RANGE_SUBCHANNEL_KEYS)]) {
       if (c) channels.add(c.toLowerCase());
     }
-    if (!isTrueRange(rangingField(r, RANGE_INDICATOR_KEYS))) continue;
+    const indicator = rangingField(r, RANGE_INDICATOR_KEYS);
+    const into = isTrueRange(indicator) ? ranged : isFalseRange(indicator) ? unranged : null;
+    if (!into) continue;
     const art = normalizeArticle(rangeRowArticle(r));
     const cpid = rangingField(r, RANGE_PRODUCT_KEYS).toLowerCase().trim();
-    if (art) ranged.add(`${site}|a:${art}`);
-    if (cpid) ranged.add(`${site}|p:${cpid}`);
+    if (art) into.add(`${site}|a:${art}`);
+    if (cpid) into.add(`${site}|p:${cpid}`);
   }
   if (!sites.size) return undefined;
   let trustUnlisted = false;
   for (const k of knownSites) {
     if (sites.has(normalizeSiteKey(k))) { trustUnlisted = true; break; }
   }
-  return { sites, ranged, channels, trustUnlisted };
+  return { sites, ranged, unranged, channels, trustUnlisted };
 }
 
 /**
@@ -211,6 +224,7 @@ export async function enrichLedger(
   productCount: number;
   storeCount: number;
   linksCount: number;
+  rangeMode: RangeMode;
 }> {
   const [linksLookup, productLookup, storeLookup, rangingRows] = await Promise.all([
     getLinksLookup(clientId),
@@ -235,11 +249,34 @@ export async function enrichLedger(
   const enrichedRows = rows.map((row) =>
     enrichLedgerRow(row, linksLookup, productLookup, storeLookup, rangingLookup, siteRanging)
   );
+  const rangeMode = applyRangeGuard(enrichedRows, siteRanging);
 
   return {
     rows: enrichedRows,
     productCount: productLookup.size,
     storeCount: storeLookup.size,
     linksCount: linksLookup.size,
+    rangeMode,
   };
+}
+
+/**
+ * Code-mismatch guard, over the whole batch of rows: if the range file lists
+ * these rows' stores but NOT ONE line matches TRUE, the article codes disagree
+ * with the DISPO, and trusting it would mark every line not-ranged and hide
+ * every out-of-stock. The per-store verdicts are cleared instead (nothing
+ * hidden). Returns how the file was loaded, for the reports to state.
+ */
+export function applyRangeGuard(rows: EnrichedRow[], siteRanging?: SiteRanging): RangeMode {
+  if (!siteRanging) return "none";
+  const anyTrue = rows.some((r) => r._rangeState === "TRUE");
+  const anyListed = rows.some((r) => r._rangeSiteListed === true);
+  if (anyListed && !anyTrue) {
+    for (const r of rows) {
+      delete r._rangedAtSite;
+      delete r._rangeSiteListed;
+      delete r._rangeState;
+    }
+  }
+  return siteRanging.unranged.size > 0 ? "full" : "true-only";
 }

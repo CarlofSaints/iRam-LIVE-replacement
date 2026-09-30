@@ -17,6 +17,7 @@ import type { StatusDefinition, StatusScenario, StatusClassification, StoreRecor
 import { evaluateScenarios } from "./statusScenarioData";
 import { calcOpenToOrder } from "./vitalSigns";
 import { rangingField, rangeRowArticle, rangeRowSite } from "./rangingFields";
+import { notRangedHere, rangeLabel, rangeStateOf, type RangeMode } from "./rangeState";
 
 type Row = Record<string, unknown>;
 
@@ -422,6 +423,23 @@ export function buildSalesSummary(
     valueTotal: computeGrandTotal(vendValue, tStores),
   });
 
+  /* Range: sales split by whether the product is ranged at the store it sold
+     in (lib/rangeState.ts). Only when the client's range file could judge at
+     least one line — otherwise it would be one "No range data" row. Sales
+     totals are unchanged; this only splits them. */
+  if (rows.some((r) => rangeStateOf(r) !== "")) {
+    const rangeKey = (r: Row) => rangeLabel(r) || "No range data";
+    const rngVolume = aggregateRows(rows, ctx, rangeKey, grandYtdUnits, "volume");
+    const rngValue = aggregateRows(rows, ctx, rangeKey, grandYtdValue, "value");
+    levels.push({
+      level: "Range",
+      volumeRows: rngVolume,
+      volumeTotal: computeGrandTotal(rngVolume, tStores),
+      valueRows: rngValue,
+      valueTotal: computeGrandTotal(rngValue, tStores),
+    });
+  }
+
   // Level 1: Sub-Channel
   const subChVolume = aggregateRows(rows, ctx, (r) => String(r["_storeSubChannel"] || r["_storeChannel"] || "Unknown"), grandYtdUnits, "volume");
   const subChValue = aggregateRows(rows, ctx, (r) => String(r["_storeSubChannel"] || r["_storeChannel"] || "Unknown"), grandYtdValue, "value");
@@ -523,7 +541,11 @@ function parseNum(v: unknown, blankAs: number): number {
 
 // A SKUÃ—store is "in base" if it has stock on hand and/or any sales (across the
 // ledger's date columns). It is OOS when, being in base, its SOH is 0 or below.
-function classifyOOS(row: Row, dateColumns: string[]): { inBase: boolean; isOOS: boolean } {
+// Range (lib/rangeState.ts): a line NOT ranged at its store with no stock is not
+// expected on the shelf at all, so it is neither OOS nor part of the base the OOS
+// % is measured against. With stock it stays in base (and is never OOS anyway).
+// The Status sheets pass respectRange=false - a PR ST code is reported regardless.
+function classifyOOS(row: Row, dateColumns: string[], respectRange = true): { inBase: boolean; isOOS: boolean } {
   const soh = parseNum(row["SOH"], 0);
   const hasStock = !isNaN(soh) && soh > 0;
 
@@ -533,6 +555,8 @@ function classifyOOS(row: Row, dateColumns: string[]): { inBase: boolean; isOOS:
     if (!isNaN(v)) salesUnits += v;
   }
   const hasSales = salesUnits > 0;
+
+  if (respectRange && !hasStock && notRangedHere(row)) return { inBase: false, isOOS: false };
 
   const inBase = hasStock || hasSales;
   const isOOS = inBase && !isNaN(soh) && soh <= 0;
@@ -986,7 +1010,7 @@ export function buildStatusSummary(
   const comboMap = new Map<string, { pmf: string; prst: string; count: number; pos: number; neg: number; unc: number }>();
 
   for (const row of rows) {
-    const { inBase } = classifyOOS(row, dateColumns);
+    const { inBase } = classifyOOS(row, dateColumns, false);
     if (!inBase) continue; // same SKUÃ—store base as OOS
     baseCount++;
 
@@ -1062,7 +1086,7 @@ export function buildStatusDetail(
   const detail: StatusDetailRow[] = [];
 
   for (const row of rows) {
-    const { inBase } = classifyOOS(row, dateColumns);
+    const { inBase } = classifyOOS(row, dateColumns, false);
     if (!inBase) continue;
     if (classifyRowStatus(row, statusDefs, scenarios) !== "NEGATIVE") continue;
 
@@ -2015,4 +2039,59 @@ export function buildChartsData(opts: {
     subChannelSeries,
     categorySeries,
   };
+}
+
+// ── Range Exceptions ─────────────────────────────────────────────
+/* A properly loaded range file states TRUE or FALSE for every product × store.
+   Any DISPO line the file says NOTHING about (no row, or a blank indicator) is
+   then a gap in the file, listed here so it can be fixed. Only for a "full"
+   file: in a TRUE-only file every non-TRUE line is unstated by design, so this
+   would just be a list of everything (lib/rangeState.ts). */
+export interface RangeExceptionRow {
+  vendor: string;
+  subChannel: string;
+  province: string;
+  site: string;
+  siteName: string;
+  productCode: string;
+  article: string;
+  description: string;
+  productStatus: string;
+  soh: number;
+  soo: number;
+  sit: number;
+}
+
+export function buildRangeExceptions(rows: Row[], mode: RangeMode): RangeExceptionRow[] {
+  if (mode !== "full") return [];
+  const out: RangeExceptionRow[] = [];
+  for (const row of rows) {
+    if (rangeStateOf(row) !== "MISSING") continue;
+    const n = (v: unknown) => { const x = parseNum(v, 0); return isNaN(x) ? 0 : x; };
+    out.push({
+      vendor: rowVendor(row),
+      subChannel: String(row["_storeSubChannel"] || row["_storeChannel"] || ""),
+      province: String(row["_province"] || ""),
+      site: String(row["Site"] ?? ""),
+      siteName: String(row["_storeName"] || row["Site Name"] || ""),
+      productCode: String(row["_clientProductId"] || ""),
+      article: String(row["Article"] ?? ""),
+      description: String(row["Article Desc"] || row["_productDescription"] || ""),
+      productStatus: String(row["_productStatus"] || ""),
+      soh: n(row["SOH"]),
+      soo: n(row["SOO"]),
+      sit: n(row["SIT"]),
+    });
+  }
+  out.sort((a, b) => a.site.localeCompare(b.site) || a.article.localeCompare(b.article, undefined, { numeric: true }));
+  return out;
+}
+
+/** One line for the report's Menu: how the range file was read. */
+export function rangeModeLabel(mode: RangeMode): string {
+  switch (mode) {
+    case "full": return "Loaded with TRUE and FALSE. Lines it doesn't state are treated as not ranged and listed on Range Exceptions.";
+    case "true-only": return "TRUE values only. Every product/store it doesn't list is treated as NOT ranged: no OOS or Open to Order is reported for those.";
+    default: return "";
+  }
 }

@@ -23,7 +23,8 @@ import type {
   NDAnalysis,
   OTOAnalysis,
 } from "./monthEndReport";
-import { buildDateContext, dataRowExtras } from "./monthEndReport";
+import { buildDateContext, dataRowExtras, rangeModeLabel, type RangeExceptionRow } from "./monthEndReport";
+import { rangeLabel, type RangeMode } from "./rangeState";
 import { analyzeCoverage, coverageMessageLines, formatMonth } from "./dataCoverage";
 import { applyStreamWriterOrderFix } from "./exceljsStreamOrder";
 
@@ -49,7 +50,7 @@ const MIXED_BG = "FFF2CC";     // amber
 const HEADER_ICONS: Record<string, string> = {
   vendor: "🏢",
   "sub-channel": "🔗", province: "📍", category: "🏷️", "sub-category": "🏷️",
-  site: "🏬", store: "🏬", "site name": "🏬", product: "📦", article: "📦",
+  site: "🏬", store: "🏬", "site name": "🏬", product: "📦", article: "📦", range: "🎯",
   "product code": "#️⃣", description: "📝", brand: "🏷️",
   "pr st": "🔖", status: "🔖", "product status": "✅", "pmf status": "✅",
   soh: "📦", soo: "🚚", sit: "🚛",
@@ -137,6 +138,7 @@ const MENU_SHEET_ORDER: { key: string; name: string }[] = [
   { key: "nd", name: "ND" },
   { key: "ndDetail", name: "ND Detail" },
   { key: "ndFalse", name: "ND False" },
+  { key: "rangeExceptions", name: "Range Exceptions" },
   { key: "data", name: "Data" },
 ];
 
@@ -300,6 +302,9 @@ export async function buildMonthEndWorkbook(
      the test scripts keep working; when it is absent the Data sheet's own
      date context falls back to reading the latest month in the data. */
   period?: { year: number; month: number; excludedMonths?: string[] },
+  /* How the client's range file was read, and (full files only) the lines it
+     says nothing about. Optional for the older callers and test scripts. */
+  range?: { mode: RangeMode; exceptions: RangeExceptionRow[] },
 ): Promise<Buffer> {
   // Collect the streamed output into a Buffer — the caller needs bytes for
   // both the download response and the SharePoint save.
@@ -351,6 +356,7 @@ export async function buildMonthEndWorkbook(
     nd: !!ndAnalysis && want("nd"),
     ndDetail: !!ndAnalysis && want("ndDetail"),
     ndFalse: !!ndAnalysis && ndAnalysis.hasRanging && ndAnalysis.falseDetail.length > 0 && want("ndFalse"),
+    rangeExceptions: range?.mode === "full" && range.exceptions.length > 0 && want("rangeExceptions"),
     data: dataRows.length > 0 && want("data"),
   };
 
@@ -377,6 +383,7 @@ export async function buildMonthEndWorkbook(
     excludedLabel: period?.excludedMonths?.length
       ? `${period.excludedMonths.map(formatMonth).join(", ")} — later than this report`
       : "",
+    rangeLine: range ? rangeModeLabel(range.mode) : "",
     sheetNames: MENU_SHEET_ORDER.filter((s) => has[s.key]).map((s) => s.name),
   });
   await commitSheet(menuSheet, false);   // the Menu needs no 🏠 button
@@ -437,6 +444,7 @@ export async function buildMonthEndWorkbook(
   if (has.nd) await buildNdSheet(wb, ndAnalysis!, clientName, channelLabel, periodLabel);
   if (has.ndDetail) await buildNdDetailSheet(wb, ndAnalysis!);
   if (has.ndFalse) await buildNdFalseSheet(wb, ndAnalysis!);
+  if (has.rangeExceptions) await buildRangeExceptionsSheet(wb, range!.exceptions);
   if (has.data) await buildDataSheet(wb, dataRows, dateColumns, period);
 
   await wb.commit();
@@ -686,6 +694,7 @@ async function buildDataSheet(
     { header: "Description", width: 30, get: (r) => String(r["Article Desc"] ?? "") },
     { header: "Site", width: 10, get: (r) => String(r["Site"] ?? "") },
     { header: "Site Name", width: 22, get: (r) => String(r["_storeName"] || r["Site Name"] || "") },
+    { header: "Range", width: 16, get: (r) => rangeLabel(r) },
     { header: "Status", width: 10, get: (r) => String(r["Status"] ?? r["PR ST"] ?? "") },
     { header: "Product Status", width: 14, get: (r) => String(r["_productStatus"] || "") },
     { header: "SOH", width: 8, get: (r) => toNum(r["SOH"]) },
@@ -1708,6 +1717,51 @@ async function buildNdFalseSheet(wb: ExcelJS.Workbook, nd: NDAnalysis): Promise<
   await commitSheet(sheet);
 }
 
+// Range Exceptions — DISPO lines a full (TRUE/FALSE) range file says nothing
+// about. See buildRangeExceptions() in lib/monthEndReport.ts.
+async function buildRangeExceptionsSheet(wb: ExcelJS.Workbook, rows: RangeExceptionRow[]): Promise<void> {
+  const sheet = wb.addWorksheet("Range Exceptions", sheetOpts({ state: "frozen", ySplit: 2 }));
+  const cols: { header: string; width: number; key: keyof RangeExceptionRow; num?: boolean }[] = [
+    { header: "Vendor", width: 10, key: "vendor" },
+    { header: "Sub-Channel", width: 14, key: "subChannel" },
+    { header: "Province", width: 14, key: "province" },
+    { header: "Site", width: 10, key: "site" },
+    { header: "Site Name", width: 22, key: "siteName" },
+    { header: "Product Code", width: 14, key: "productCode" },
+    { header: "Article", width: 12, key: "article" },
+    { header: "Description", width: 30, key: "description" },
+    { header: "Product Status", width: 14, key: "productStatus" },
+    { header: "SOH", width: 9, key: "soh", num: true },
+    { header: "SOO", width: 9, key: "soo", num: true },
+    { header: "SIT", width: 9, key: "sit", num: true },
+  ];
+  const note = sheet.getCell(1, 1);
+  note.value =
+    "Product/store lines in the DISPO that the range file does not state as TRUE or FALSE. " +
+    "They are treated as NOT ranged (no OOS or Open to Order). Add them to the range file with the right value.";
+  note.font = { name: "Calibri", size: 10, italic: true };
+  sheet.mergeCells(1, 1, 1, cols.length);
+  cols.forEach((c, i) => {
+    const cell = sheet.getCell(2, i + 1);
+    cell.value = c.header; cell.font = headerFont();
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_BG } };
+    cell.border = thinBorder(); cell.alignment = { horizontal: "center", wrapText: true };
+    sheet.getColumn(i + 1).width = c.width;
+  });
+  let r = 3;
+  for (const row of rows) {
+    cols.forEach((c, i) => {
+      const cell = sheet.getCell(r, i + 1);
+      cell.value = row[c.key];
+      cell.font = bodyFont(); cell.border = thinBorder();
+      if (c.num) { cell.numFmt = "#,##0.##"; cell.alignment = { horizontal: "right" }; }
+    });
+    r++;
+  }
+  sheet.autoFilter = { from: { row: 2, column: 1 }, to: { row: rows.length + 2, column: cols.length } };
+  await commitSheet(sheet);
+}
+
 // Helper alias types for keyof access (string-valued columns only)
 type NDDetailRowLite = { vendor: string; subChannel: string; province: string; site: string; siteName: string; productCode: string; article: string; description: string; prst: string; pmfStatus: string; ranging: string };
 type NDFalseRowLite = { vendor: string; subChannel: string; province: string; site: string; siteName: string; productCode: string; article: string; description: string; prst: string; pmfStatus: string };
@@ -1906,6 +1960,7 @@ function buildMenuSheet(
     dataGapLines?: string[];
     coverageSpan?: string;
     excludedLabel?: string;
+    rangeLine?: string;
     // Tab names in order. Passed in rather than read off wb.worksheets, because
     // this sheet is now written before any of the others exist.
     sheetNames: string[];
@@ -1938,6 +1993,7 @@ function buildMenuSheet(
   meanLine("Period", meta.periodLabel);
   if (meta.coverageSpan) meanLine("Data present", meta.coverageSpan);
   if (meta.excludedLabel) meanLine("Months excluded", meta.excludedLabel);
+  if (meta.rangeLine) meanLine("Range file", meta.rangeLine);
   row += 2;
 
   // Data-coverage warning block (only when the monthly series has gaps).

@@ -9,6 +9,7 @@ import { incrementReportCount } from "@/lib/reportCounts";
 import {
   buildDateContext,
   buildSalesSummary,
+  buildRangeExceptions,
   buildOOSSummary,
   buildOOSDetail,
   buildStatusSummary,
@@ -377,6 +378,7 @@ export async function GET(req: NextRequest) {
       dscSummary,
       dscDetail,
       { year: rYear, month: rMonth, excludedMonths },
+      { mode: enriched.rangeMode, exceptions: buildRangeExceptions(reportRows, enriched.rangeMode) },
     );
 
     // 9. Log activity
