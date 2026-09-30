@@ -159,14 +159,36 @@ export function calcArticleRankings(
 export type OtoBlock =
   | "In stock" | "Not ranged at this store" | "Status not POSITIVE"
   | "Status code has no definition" | "On order / in transit"
-  | "PMF status not ACTIVE" | "No R. Profile";
+  | "PMF status not ACTIVE";
+
+// DISPO numbers can carry thousands separators ("1,234.000"); Number() makes
+// those NaN, which would read a stocked line as empty. Blank / junk → 0.
+function qty(v: unknown): number {
+  const n = Number(String(v ?? "").replace(/,/g, "").trim() || 0);
+  return isNaN(n) ? 0 : n;
+}
+
+/**
+ * Units to suggest per order, before the category multiplier (Carl, 30 Sep
+ * 2026): the DISPO's R. Profile when it has one, else its Order Unit (Makro
+ * DISPOs carry that instead), else 2. Builders DISPOs have neither column,
+ * which is what left every Month-End OTO sheet blank.
+ */
+export const OTO_DEFAULT_UNITS = 2;
+export function otoBaseUnits(row: Row): { units: number; source: "R. Profile" | "Order Unit" | "default" } {
+  const rp = qty(row["R. Profile"]);
+  if (rp > 0) return { units: rp, source: "R. Profile" };
+  const ou = qty(row["Order Unit"]);
+  if (ou > 0) return { units: ou, source: "Order Unit" };
+  return { units: OTO_DEFAULT_UNITS, source: "default" };
+}
 
 export function openToOrderBlock(
   row: Row,
   statusDefs: StatusDefinition[],
   statusScenarios: StatusScenario[] = [],
 ): { block: OtoBlock; detail: string } | null {
-  const soh = Number(row["SOH"] ?? 0);
+  const soh = qty(row["SOH"]);
   if (soh > 0) return { block: "In stock", detail: "" };
   // Not ranged at this store (lib/rangeState.ts) → nothing to re-order.
   if (notRangedHere(row)) return { block: "Not ranged at this store", detail: "" };
@@ -187,17 +209,13 @@ export function openToOrderBlock(
     }
   }
 
-  const soo = Number(row["SOO"] ?? 0);
-  const sit = Number(row["SIT"] ?? 0);
+  const soo = qty(row["SOO"]);
+  const sit = qty(row["SIT"]);
   if (soo + sit !== 0) return { block: "On order / in transit", detail: "" };
 
   const productStatus = String(row["_productStatus"] ?? "").trim().toUpperCase();
   if (productStatus !== "ACTIVE") return { block: "PMF status not ACTIVE", detail: productStatus || "(blank / not in PMF)" };
 
-  const rpRaw = Number(row["R. Profile"] ?? 0);
-  if (isNaN(rpRaw) || rpRaw <= 0) {
-    return { block: "No R. Profile", detail: row["R. Profile"] === undefined ? "(column missing)" : String(row["R. Profile"]) || "(blank)" };
-  }
   return null;
 }
 
@@ -208,11 +226,8 @@ export function calcOpenToOrder(
   statusScenarios: StatusScenario[] = []
 ): { oto: number; otoValue: number } {
   if (openToOrderBlock(row, statusDefs, statusScenarios)) return { oto: 0, otoValue: 0 };
-  const rp = Number(row["R. Profile"] ?? 0);
-  const nettCost = Number(row["Nett Cost"] ?? 0);
-  const nc = isNaN(nettCost) ? 0 : nettCost;
-  const oto = categoryMultiplier * rp;          // suggested order units
-  const otoValue = oto * nc;                     // value of suggested order
+  const oto = categoryMultiplier * otoBaseUnits(row).units;   // suggested order units
+  const otoValue = oto * qty(row["Nett Cost"]);                // value of suggested order
   return { oto, otoValue };
 }
 

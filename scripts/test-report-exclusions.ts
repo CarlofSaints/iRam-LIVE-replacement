@@ -3,7 +3,7 @@
    base; an empty OTO sheet says which rule emptied it. */
 import { applyReportExclusions, isClosedStore, isDeadDiscontinued, exclusionLabel } from "../lib/reportExclusions";
 import { buildNumericalDistribution, buildOpenToOrder } from "../lib/monthEndReport";
-import { openToOrderBlock } from "../lib/vitalSigns";
+import { calcOpenToOrder, openToOrderBlock, otoBaseUnits } from "../lib/vitalSigns";
 import type { ProductMaster, StatusDefinition, StoreRecord } from "../lib/types";
 
 let failures = 0;
@@ -74,7 +74,12 @@ const defs = [{ code: "Z4", classification: "POSITIVE", channelId: "c" }] as Sta
 const base: Row = { SOH: 0, SOO: 0, SIT: 0, _productStatus: "ACTIVE", "R. Profile": 6, Status: "Z4" };
 check("qualifying line → no block", openToOrderBlock(base, defs), null);
 check("unknown status code", openToOrderBlock({ ...base, Status: "Z9" }, defs), { block: "Status code has no definition", detail: "Z9" });
-check("R. Profile column missing", openToOrderBlock({ ...base, "R. Profile": undefined }, defs), { block: "No R. Profile", detail: "(column missing)" });
+// Quantity: R. Profile, else Order Unit, else 2 (Carl, 30 Sep).
+check("qty from R. Profile", otoBaseUnits({ "R. Profile": 6, "Order Unit": 4 }), { units: 6, source: "R. Profile" });
+check("qty from Order Unit when no R. Profile", otoBaseUnits({ "Order Unit": "    4.000" }), { units: 4, source: "Order Unit" });
+check("qty defaults to 2 (Builders DISPO has neither)", otoBaseUnits({}), { units: 2, source: "default" });
+check("Builders-shaped line now gets OTO: 2 x multiplier 3", calcOpenToOrder({ SOH: 0, SOO: 0, SIT: 0, _productStatus: "ACTIVE", "Nett Cost": "1,000.50" }, defs, 3), { oto: 6, otoValue: 6003 });
+check("\"1,234.000\" SOH reads as in stock, not empty", openToOrderBlock({ ...base, SOH: "1,234.000" }, defs), { block: "In stock", detail: "" });
 check("PMF status", openToOrderBlock({ ...base, _productStatus: "" }, defs), { block: "PMF status not ACTIVE", detail: "(blank / not in PMF)" });
 
 const oto = buildOpenToOrder({
@@ -87,9 +92,9 @@ const oto = buildOpenToOrder({
 });
 check("empty OTO says why", oto.skipped.map((s) => `${s.reason}: ${s.lines} [${s.examples}]`), [
   "Status code has no definition: 3 [Z9 (2), Z7 (1)]",
-  "No R. Profile: 1 [(blank) (1)]",
+
 ]);
-check("and still no lines", oto.totalLines, 0);
+check("the blank R. Profile line now qualifies (default 2)", [oto.totalLines, oto.totalUnits], [1, 2]);
 
 console.log(failures ? `\n${failures} FAILED` : "\nall passed");
 process.exit(failures ? 1 : 0);

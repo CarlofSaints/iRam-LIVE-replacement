@@ -15,7 +15,7 @@
 
 import type { StatusDefinition, StatusScenario, StatusClassification, StoreRecord, ProductMaster } from "./types";
 import { evaluateScenarios } from "./statusScenarioData";
-import { calcOpenToOrder, openToOrderBlock } from "./vitalSigns";
+import { calcOpenToOrder, openToOrderBlock, otoBaseUnits } from "./vitalSigns";
 import { rangingField, rangeRowArticle, rangeRowSite } from "./rangingFields";
 import { notRangedHere, rangeFlag, rangeLabel, rangeStateOf, type RangeMode } from "./rangeState";
 import { isClosedStore } from "./reportExclusions";
@@ -1732,7 +1732,7 @@ export function buildNumericalDistribution(opts: {
 // Suggested replenishment for SKU/site lines that are out of stock AND
 // orderable. A line qualifies only when SOH = 0, nothing is on order or in
 // transit (SOO = SIT = 0), the DISPO status classifies POSITIVE, and the PMF
-// product status is ACTIVE. OTO Units = category multiplier Ã— R. Profile;
+// product status is ACTIVE. OTO Units = category multiplier x (R. Profile, else Order Unit, else 2);
 // OTO Value = OTO Units Ã— Nett Cost. (Logic shared with the Vital Signs report
 // via calcOpenToOrder.) Because every qualifying line meets the same
 // conditions, the detail sheet omits SOH/SOO/SIT/Status columns.
@@ -1875,7 +1875,7 @@ export function buildOpenToOrder(opts: {
 //   OTO       â€” total OTO Value (suggested replenishment for orderable OOS).
 //   ND        â€” 1 unit Ã— Nett Cost for every active SKU/site combo NOT
 //               distributed (ND = 0); uses the ranging universe when present.
-//   OOS       â€” OTO-default order (category multiplier Ã— R. Profile) Ã— Nett
+//   OOS       â€” OTO-default order (category multiplier x otoBaseUnits) Ã— Nett
 //               Cost for every out-of-stock line.
 //   Phantom   â€” OTO-default order Ã— Nett Cost for every phantom line with
 //               SOH < 5 (treated as written off and reordered).
@@ -1995,8 +1995,8 @@ export function buildChartsData(opts: {
 
     const category = String(row["_category"] ?? "").toLowerCase().trim();
     const mult = (category && otoMultipliers[category]) || 1;
-    const rp = parseNum(row["R. Profile"], 0);
-    const otoUnits = mult * (isNaN(rp) ? 0 : rp);
+    // Same quantity rule as Open to Order: R. Profile, else Order Unit, else 2.
+    const otoUnits = mult * otoBaseUnits(row).units;
     if (otoUnits <= 0 || ncost <= 0) continue;
 
     // OOS opportunity â€” order the OTO default for every out-of-stock line

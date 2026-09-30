@@ -1781,7 +1781,7 @@ type NDFalseRowLite = { vendor: string; subChannel: string; province: string; si
 const OTO_NOTE =
   "Open to Order (OTO) = suggested replenishment for SKU/site lines that are out of stock and orderable. " +
   "A line qualifies only when SOH = 0, nothing is on order or in transit (SOO = SIT = 0), the DISPO status classifies as POSITIVE, " +
-  "and the PMF product status is ACTIVE. OTO Units = category multiplier × R. Profile; OTO Value = OTO Units × Nett Cost. " +
+  "and the PMF product status is ACTIVE. OTO Units = category multiplier × the DISPO's R. Profile (else its Order Unit, else 2 units); OTO Value = OTO Units × Nett Cost. " +
   "Because every line below meets these same conditions, the SOH / SOO / SIT / Status / Product Status columns are omitted — they would be identical on every row.";
 
 // OTO Summary — cascading rollups by Sub-Channel, Category, SKU, then Site.
