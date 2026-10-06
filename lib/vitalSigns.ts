@@ -163,7 +163,7 @@ export type OtoBlock =
 
 // DISPO numbers can carry thousands separators ("1,234.000"); Number() makes
 // those NaN, which would read a stocked line as empty. Blank / junk → 0.
-function qty(v: unknown): number {
+export function qty(v: unknown): number {
   const n = Number(String(v ?? "").replace(/,/g, "").trim() || 0);
   return isNaN(n) ? 0 : n;
 }

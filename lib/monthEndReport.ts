@@ -15,7 +15,7 @@
 
 import type { StatusDefinition, StatusScenario, StatusClassification, StoreRecord, ProductMaster } from "./types";
 import { evaluateScenarios } from "./statusScenarioData";
-import { calcOpenToOrder, openToOrderBlock, otoBaseUnits } from "./vitalSigns";
+import { calcOpenToOrder, openToOrderBlock, otoBaseUnits, qty } from "./vitalSigns";
 import { rangingField, rangeRowArticle, rangeRowSite } from "./rangingFields";
 import { notRangedHere, rangeFlag, rangeLabel, rangeStateOf, type RangeMode } from "./rangeState";
 import { isClosedStore } from "./reportExclusions";
@@ -229,6 +229,7 @@ export interface SummaryRow {
   growthVsLmPct: number | null;
   growthVsPymPct: number | null;
   contributionPct: number;
+  category?: string;   // Product tables only
 }
 
 function calcGrowth(current: number, previous: number): number | null {
@@ -489,6 +490,23 @@ export function buildSalesSummary(
   // Level 5: Product
   const prodVolume = aggregateRows(rows, ctx, (r) => String(r["Article Desc"] || r["Article"] || "Unknown"), grandYtdUnits, "volume");
   const prodValue = aggregateRows(rows, ctx, (r) => String(r["Article Desc"] || r["Article"] || "Unknown"), grandYtdValue, "value");
+
+  /* Each product's PMF category, for the Category column on the Product
+     tables. A product name is one SKU, so this is normally one category; if
+     rows disagree (a PMF edit between loads), the most common one wins. */
+  const catVotes = new Map<string, Map<string, number>>();
+  for (const r of rows) {
+    const name = String(r["Article Desc"] || r["Article"] || "Unknown");
+    const cat = String(r["_category"] || "").trim();
+    if (!cat) continue;
+    let v = catVotes.get(name);
+    if (!v) { v = new Map(); catVotes.set(name, v); }
+    v.set(cat, (v.get(cat) ?? 0) + 1);
+  }
+  const categoryOf = (name: string) =>
+    [...(catVotes.get(name) ?? new Map<string, number>()).entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
+  for (const p of [...prodVolume, ...prodValue]) p.category = categoryOf(p.name);
+
   levels.push({
     level: "Product",
     volumeRows: prodVolume,
@@ -1753,6 +1771,11 @@ export interface OTODetailRow {
   vendor: string;
   rangeIndicator: string; // "TRUE" | "FALSE" | "N/A" (when no ranging file)
   description: string;
+  // Stock position the line qualified on, parsed the same way the rule reads
+  // it: SOH is 0 or below, SOO + SIT nets to 0.
+  soh: number;
+  soo: number;
+  sit: number;
   units: number;
   value: number;
 }
@@ -1822,7 +1845,11 @@ export function buildOpenToOrder(opts: {
     const siteName = String(row["_storeName"] || "");
     const desc = String(row["_productDescription"] || row["Article Desc"] || "");
 
-    detail.push({ vendor: rowVendor(row), site, siteName, productCode: cpid, article, rangeIndicator, description: desc, units: oto, value: otoValue });
+    detail.push({
+      vendor: rowVendor(row), site, siteName, productCode: cpid, article, rangeIndicator, description: desc,
+      soh: qty(row["SOH"]), soo: qty(row["SOO"]), sit: qty(row["SIT"]),
+      units: oto, value: otoValue,
+    });
 
     bump(subAcc, subCh, subCh, oto, otoValue);
     bump(catAcc, catName, catName, oto, otoValue);
