@@ -144,6 +144,8 @@ export default function ClientDetailPage() {
       rows: (u) => u.rowCount,
       // Sort on the instant, not the rendered date string.
       date: (u) => Date.parse(u.uploadDate) || 0,
+      // Undated loads (Aged Stock, very old DISPOs) sort below every real period.
+      period: (u) => (u.reportYear ?? 0) * 10000 + (u.reportMonth ?? 0) * 100 + (u.reportWeek ?? 0),
       status: (u) => u.status,
     },
     "date",
@@ -1028,7 +1030,7 @@ export default function ClientDetailPage() {
               <thead>
                 <tr className="border-b border-[var(--color-border)] text-left text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
                   {[["Channel", "channel"], ["Type", "type"], ["Vendor", "vendor"],
-                    ["Rows", "rows"], ["Date", "date"], ["Status", "status"]].map(([label, key]) => (
+                    ["Rows", "rows"], ["Period", "period"], ["Uploaded", "date"], ["Status", "status"]].map(([label, key]) => (
                     <SortableTh key={key} label={label} sortKey={key} className="px-6"
                       current={uploadTools.sortKey} dir={uploadTools.sortDir} onSort={uploadTools.toggleSort} />
                   ))}
@@ -1041,7 +1043,9 @@ export default function ClientDetailPage() {
                     <td className="px-6 py-3"><span className={`rounded-full px-2 py-0.5 text-xs font-medium ${u.fileType === "dispo" ? "bg-blue-50 text-blue-700" : "bg-amber-50 text-amber-700"}`}>{u.fileType === "dispo" ? "DISPO" : "Aged Stock"}</span></td>
                     <td className="px-6 py-3 text-[var(--color-text-muted)]">{u.vendorNumber}</td>
                     <td className="px-6 py-3 text-[var(--color-text-muted)]">{u.rowCount}</td>
-                    <td className="px-6 py-3 text-[var(--color-text-muted)]">{new Date(u.uploadDate).toLocaleDateString()}</td>
+                    <td className="px-6 py-3 whitespace-nowrap">{u.reportYear && u.reportMonth ? `${u.reportYear}-${String(u.reportMonth).padStart(2, "0")} Wk${u.reportWeek ?? "?"}` : "—"}</td>
+                    {/* Spelled-out month: "9/8/2026" reads as 9 Aug or 8 Sep depending on the browser. */}
+                    <td className="px-6 py-3 whitespace-nowrap text-[var(--color-text-muted)]">{new Date(u.uploadDate).toLocaleString("en-ZA", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "Africa/Johannesburg" })}</td>
                     <td className="px-6 py-3"><span className={`rounded-full px-2 py-0.5 text-xs font-medium ${u.status === "processed" ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>{u.status}</span></td>
                   </tr>
                 ))}
