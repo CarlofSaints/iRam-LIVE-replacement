@@ -277,6 +277,23 @@ const SUMMARY_COLS = [
   { header: "Contribution %", width: 13, key: "contributionPct", fmt: "0.0%" },
 ];
 
+type SummaryCol = { header: string; width: number; key: string; fmt?: string };
+
+/* The Product tables carry the product's Category straight after its name.
+   Every formula below looks its columns up by KEY (summaryColLetter), never by a
+   fixed letter, so inserting this column shifts them correctly. */
+const PRODUCT_SUMMARY_COLS: SummaryCol[] = [
+  SUMMARY_COLS[0],
+  { header: "Category", width: 16, key: "category" },
+  ...SUMMARY_COLS.slice(1),
+];
+
+function summaryColLetter(cols: SummaryCol[], key: string): string {
+  const i = cols.findIndex((c) => c.key === key);
+  if (i < 0) throw new Error(`Summary table has no "${key}" column`);
+  return colLetter(i + 1);
+}
+
 // ── Build workbook ─────────────────────────────────────────────
 
 export async function buildMonthEndWorkbook(
@@ -404,7 +421,7 @@ export async function buildMonthEndWorkbook(
     const titleCell = salesSheet.getCell(row, 1);
     titleCell.value = `Sales Summary — ${clientName} — ${channelLabel} — ${periodLabel}`;
     titleCell.font = { name: "Calibri", size: 14, bold: true, color: { argb: HEADER_BG } };
-    salesSheet.mergeCells(row, 1, row, SUMMARY_COLS.length);
+    salesSheet.mergeCells(row, 1, row, PRODUCT_SUMMARY_COLS.length); // widest table
     row += 2;
 
     // Write each level's volume + value tables
@@ -415,19 +432,25 @@ export async function buildMonthEndWorkbook(
       const countLabel = level.level === "Store" ? "Number of SKU's" : "# Stores";
 
       // Volume table
-      row = writeSummaryTable(salesSheet, row, `${dim} — Volume (Units)`, level.volumeRows, level.volumeTotal, false, dim, countLabel);
+      // A level whose rows carry a category (the engine sets it on Product)
+      // gets the Category column; nothing here is keyed on the level's name.
+      const hasCategory = [...level.volumeRows, ...level.valueRows].some((r) => r.category !== undefined);
+      const cols = hasCategory ? PRODUCT_SUMMARY_COLS : SUMMARY_COLS;
+      row = writeSummaryTable(salesSheet, row, `${dim} — Volume (Units)`, level.volumeRows, level.volumeTotal, false, dim, countLabel, cols);
       row += 1; // gap
 
       // Value table
-      row = writeSummaryTable(salesSheet, row, `${dim} — Value (Rand)`, level.valueRows, level.valueTotal, true, dim, countLabel);
+      row = writeSummaryTable(salesSheet, row, `${dim} — Value (Rand)`, level.valueRows, level.valueTotal, true, dim, countLabel, cols);
       row += 2; // larger gap between levels
     }
 
-    // Set column widths
-    SUMMARY_COLS.forEach((col, i) => {
-      const excelCol = salesSheet.getColumn(i + 1);
-      excelCol.width = col.width;
-    });
+    // Column widths: one set for the whole sheet, so each column takes the
+    // widest of what any table puts there (B is "# Stores" on most tables and
+    // "Category" on the Product ones).
+    const tables = [SUMMARY_COLS, PRODUCT_SUMMARY_COLS];
+    for (let i = 0; i < PRODUCT_SUMMARY_COLS.length; i++) {
+      salesSheet.getColumn(i + 1).width = Math.max(...tables.map((t) => t[i]?.width ?? 0));
+    }
 
     await commitSheet(salesSheet);
   }
@@ -1127,13 +1150,15 @@ async function buildStatusDetailSheet(wb: ExcelJS.Workbook, rows: StatusDetailRo
   const cols: { header: string; width: number; key: keyof StatusDetailRow }[] = [
     { header: "Vendor", width: 10, key: "vendor" },
     { header: "Sub-Channel", width: 14, key: "subChannel" },
+    // Site straight after Sub-Channel (C and D): the store is what someone
+    // acts on, so it reads first, ahead of where it is and what the product is.
+    { header: "Site", width: 10, key: "site" },
+    { header: "Site Name", width: 34, key: "siteName" },
     { header: "Province", width: 14, key: "province" },
     { header: "Category", width: 16, key: "category" },
     { header: "Brand", width: 14, key: "brand" },
     { header: "Article", width: 12, key: "article" },
     { header: "Description", width: 30, key: "description" },
-    { header: "Site", width: 10, key: "site" },
-    { header: "Site Name", width: 22, key: "siteName" },
     { header: "PR ST", width: 10, key: "prst" },
     { header: "Product Status", width: 14, key: "productStatus" },
     { header: "Range", width: 10, key: "ranging" },
@@ -1313,6 +1338,7 @@ function writeSummaryTable(
   isValue: boolean,
   dimLabel: string,
   countLabel: string,
+  cols: SummaryCol[] = SUMMARY_COLS,
 ): number {
   let row = startRow;
 
@@ -1321,16 +1347,16 @@ function writeSummaryTable(
   subHeaderCell.value = title;
   subHeaderCell.font = { name: "Calibri", size: 11, bold: true, color: { argb: HEADER_BG } };
   subHeaderCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: SUBHEADER_BG } };
-  sheet.mergeCells(row, 1, row, SUMMARY_COLS.length);
-  for (let c = 1; c <= SUMMARY_COLS.length; c++) {
+  sheet.mergeCells(row, 1, row, cols.length);
+  for (let c = 1; c <= cols.length; c++) {
     sheet.getCell(row, c).border = thinBorder();
   }
   row++;
 
   // Column headers
-  SUMMARY_COLS.forEach((col, i) => {
+  cols.forEach((col, i) => {
     const cell = sheet.getCell(row, i + 1);
-    cell.value = i === 0 ? dimLabel : i === 1 ? countLabel : col.header;
+    cell.value = i === 0 ? dimLabel : col.key === "storeCount" ? countLabel : col.header;
     cell.font = headerFont();
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_BG } };
     cell.border = thinBorder();
@@ -1344,22 +1370,27 @@ function writeSummaryTable(
   const firstDataRow = row;
   const lastDataRow = row + dataRows.length - 1;
   const totalRowNum = lastDataRow + 1;
-  const ctx = { totalRowNum, firstDataRow, lastDataRow };
+  // Looked up by key once per table: the Product tables have an extra column.
+  const letters = {
+    YTD: summaryColLetter(cols, "ytd"), LY: summaryColLetter(cols, "lyYtd"), CM: summaryColLetter(cols, "currentMonth"),
+    PYM: summaryColLetter(cols, "sameMonthLy"), LM: summaryColLetter(cols, "lastMonth"),
+  };
+  const ctx = { totalRowNum, firstDataRow, lastDataRow, letters };
 
   for (const data of dataRows) {
-    row = writeSummaryDataRow(sheet, row, data, isValue, false, ctx);
+    row = writeSummaryDataRow(sheet, row, data, isValue, false, ctx, cols);
   }
 
   // Total row
-  row = writeSummaryDataRow(sheet, row, totalRow, isValue, true, ctx);
+  row = writeSummaryDataRow(sheet, row, totalRow, isValue, true, ctx, cols);
 
   // Growth % columns: positive green, negative red. Covers the data rows plus
   // the total row.
   if (dataRows.length > 0) {
-    const growthCols = SUMMARY_COLS
+    const growthCols = cols
       .map((col, i) => ({ col, i }))
       .filter(({ col }) => typeof col.key === "string" && col.key.startsWith("growth"))
-      .map(({ i }) => String.fromCharCode(65 + i));
+      .map(({ i }) => colLetter(i + 1));
     for (const L of growthCols) {
       addGrowthSignRules(sheet, `${L}${firstDataRow}:${L}${totalRowNum}`);
     }
@@ -1376,19 +1407,20 @@ function writeSummaryDataRow(
   data: SummaryRow,
   isValue: boolean,
   isTotal: boolean,
-  ctx: { totalRowNum: number; firstDataRow: number; lastDataRow: number },
+  ctx: { totalRowNum: number; firstDataRow: number; lastDataRow: number; letters: Record<"YTD" | "LY" | "CM" | "PYM" | "LM", string> },
+  cols: SummaryCol[] = SUMMARY_COLS,
 ): number {
   const valueFmt = isValue ? RAND_FMT : "#,##0";
   const hasData = ctx.lastDataRow >= ctx.firstDataRow;
   const T = ctx.totalRowNum;
-  // Column letters (fixed layout): C=YTD D=LY YTD E=Current Month F=Same Month LY G=Last Month
-  SUMMARY_COLS.forEach((col, i) => {
+  const { YTD, LY, CM, PYM, LM } = ctx.letters;
+  cols.forEach((col, i) => {
     const cell = sheet.getCell(row, i + 1);
     const rawVal = data[col.key as keyof SummaryRow];
-    const colL = String.fromCharCode(65 + i);
+    const colL = colLetter(i + 1);
 
-    if (col.key === "name") {
-      cell.value = rawVal as string;
+    if (col.key === "name" || col.key === "category") {
+      cell.value = (rawVal as string | undefined) ?? "";
       cell.alignment = { horizontal: "left" };
     } else if (col.key === "storeCount") {
       cell.value = rawVal as number;
@@ -1407,15 +1439,15 @@ function writeSummaryDataRow(
     } else if (col.key === "contributionPct") {
       // YTD share of the table total (references the total row's YTD cell)
       const result = rawVal === null || rawVal === undefined ? 0 : (rawVal as number) / 100;
-      cell.value = { formula: `IF($C$${T}=0,0,C${row}/$C$${T})`, result };
+      cell.value = { formula: `IF($${YTD}$${T}=0,0,${YTD}${row}/$${YTD}$${T})`, result };
       cell.numFmt = "0.0%";
       cell.alignment = { horizontal: "center" };
     } else if (col.fmt === "0.0%") {
       // Growth columns — live formulas referencing this row's own value cells
       let formula = "";
-      if (col.key === "growthYtdPct") formula = `IF(D${row}=0,"",(C${row}-D${row})/ABS(D${row}))`;
-      else if (col.key === "growthVsLmPct") formula = `IF(G${row}=0,"",(E${row}-G${row})/ABS(G${row}))`;
-      else if (col.key === "growthVsPymPct") formula = `IF(F${row}=0,"",(E${row}-F${row})/ABS(F${row}))`;
+      if (col.key === "growthYtdPct") formula = `IF(${LY}${row}=0,"",(${YTD}${row}-${LY}${row})/ABS(${LY}${row}))`;
+      else if (col.key === "growthVsLmPct") formula = `IF(${LM}${row}=0,"",(${CM}${row}-${LM}${row})/ABS(${LM}${row}))`;
+      else if (col.key === "growthVsPymPct") formula = `IF(${PYM}${row}=0,"",(${CM}${row}-${PYM}${row})/ABS(${PYM}${row}))`;
 
       const result = typeof rawVal === "number" ? rawVal / 100 : "";
       cell.value = { formula, result };
@@ -1780,9 +1812,9 @@ type NDFalseRowLite = { vendor: string; subChannel: string; province: string; si
 // ── Open to Order (OTO) sheets ──────────────────────────────────
 const OTO_NOTE =
   "Open to Order (OTO) = suggested replenishment for SKU/site lines that are out of stock and orderable. " +
-  "A line qualifies only when SOH = 0, nothing is on order or in transit (SOO = SIT = 0), the DISPO status classifies as POSITIVE, " +
+  "A line qualifies only when SOH is 0 or below, nothing is on order or in transit (SOO + SIT nets to 0), the DISPO status classifies as POSITIVE, " +
   "and the PMF product status is ACTIVE. OTO Units = category multiplier × the DISPO's R. Profile (else its Order Unit, else 2 units); OTO Value = OTO Units × Nett Cost. " +
-  "Because every line below meets these same conditions, the SOH / SOO / SIT / Status / Product Status columns are omitted — they would be identical on every row.";
+  "OTO Detail shows each line's SOH, SOO and SIT for reference. Status and Product Status are omitted: every line is POSITIVE and ACTIVE.";
 
 // OTO Summary — cascading rollups by Sub-Channel, Category, SKU, then Site.
 async function buildOtoSummarySheet(
@@ -1931,6 +1963,10 @@ async function buildOtoDetailSheet(
     { header: "Article", width: 12, key: "article" },
     { header: "Range", width: 10, key: "rangeIndicator" },
     { header: "Product Description", width: 32, key: "description" },
+    // For reference: the stock position each line qualified on.
+    { header: "SOH", width: 9, key: "soh", fmt: "#,##0", align: "right" },
+    { header: "SOO", width: 9, key: "soo", fmt: "#,##0", align: "right" },
+    { header: "SIT", width: 9, key: "sit", fmt: "#,##0", align: "right" },
     { header: "OTO Units", width: 12, key: "units", fmt: "#,##0", align: "right" },
     { header: "OTO Value", width: 14, key: "value", fmt: RAND_FMT, align: "right" },
   ];
