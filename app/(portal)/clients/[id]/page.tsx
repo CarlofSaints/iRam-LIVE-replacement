@@ -1,5 +1,6 @@
 "use client";
 
+import { useRetailCalendar } from "@/lib/useRetailCalendar";
 import React, { useEffect, useState } from "react";
 import { useTableTools } from "@/lib/useTableTools";
 import { SortableTh, TableSearch } from "@/components/TableTools";
@@ -33,6 +34,7 @@ const REPORT_SP_FIELDS: { key: string; label: string; note?: string }[] = [
 ];
 
 export default function ClientDetailPage() {
+  useRetailCalendar(); // admin-loaded Massmart calendar years for the week pickers
   const { id } = useParams<{ id: string }>();
   const { user } = useAuth();
   const isAdmin = user?.role === "super_admin" || user?.role === "admin";

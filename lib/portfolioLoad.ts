@@ -14,6 +14,7 @@
    client and channel, that is a bug in one of them, not a definition gap.
    ────────────────────────────────────────────────────────────── */
 
+import { ensureRetailCalendar } from "@/lib/retailCalendarData";
 import { getActiveClients } from "./clientData";
 import { getSalesLedger, getSalesLedgerMeta } from "./salesData";
 import { enrichLedger } from "./enrichment";
@@ -107,6 +108,7 @@ export async function loadPortfolioHealth(opts: LoadPortfolioOpts): Promise<Load
     for (const m of present) for (const dc of m.dateColumns ?? []) allDateCols.add(dc);
   }
 
+  await ensureRetailCalendar(); // the no-stamp fallback reads retail weeks
   const period = resolveReportPeriod(allMetas, {
     year: opts.year ?? null,
     month: opts.month ?? null,

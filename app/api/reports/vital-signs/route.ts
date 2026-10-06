@@ -1,3 +1,4 @@
+import { ensureRetailCalendar } from "@/lib/retailCalendarData";
 import { NextRequest } from "next/server";
 import * as XLSX from "xlsx";
 import { requirePermission, handleAuthError } from "@/lib/auth";
@@ -95,6 +96,7 @@ export async function GET(req: NextRequest) {
        ledger holding a later month (one day of September on a DISPO that was
        otherwise August) put that month into an August report's series and its
        averages. Same defect as the Month-End report, same cure. */
+    await ensureRetailCalendar(); // the no-stamp fallback reads retail weeks
     const period = resolveReportPeriod(
       pickedMetas(ledgerResults, channelIds, allChannelsForGroup),
       { year: yearParam, month: monthParam, week: weekParam },

@@ -1,5 +1,6 @@
 "use client";
 
+import { useRetailCalendar } from "@/lib/useRetailCalendar";
 import { useEffect, useMemo, useState } from "react";
 import { resolveReportPeriod, latestStamp } from "@/lib/reportPeriod";
 import { authFetch } from "@/lib/useAuth";
@@ -40,6 +41,7 @@ const REPORT_SHEETS = [
 ];
 
 export default function ReportsPage() {
+  useRetailCalendar(); // admin-loaded Massmart calendar years for the week pickers
   const [clients, setClients] = useState<Client[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [clientId, setClientId] = useState("");
