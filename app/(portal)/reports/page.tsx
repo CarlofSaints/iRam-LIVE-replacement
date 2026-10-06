@@ -9,6 +9,7 @@ import { analyzeCoverage, formatMonth, type CoverageResult } from "@/lib/dataCov
 import { vendorLabel, type VendorOption } from "@/lib/vendorScope";
 import type { Client, Channel, SalesLedgerMeta } from "@/lib/types";
 import { filenameFromContentDisposition } from "@/lib/contentDisposition";
+import { retailWeekOptions } from "@/lib/retailCalendar";
 
 interface ReportStats {
   totalDispos: number;
@@ -671,8 +672,8 @@ export default function ReportsPage() {
                 className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm"
               >
                 <option value="">Auto</option>
-                {Array.from({ length: 5 }, (_, i) => i + 1).map((w) => (
-                  <option key={w} value={w}>W{w}</option>
+                {retailWeekOptions(reportYear, reportMonth, reportWeek).map(({ week: w, valid }) => (
+                  <option key={w} value={w}>W{w}{valid ? "" : " (not a retail week)"}</option>
                 ))}
               </select>
             </div>
@@ -868,8 +869,8 @@ export default function ReportsPage() {
                 className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm"
               >
                 <option value="">Auto</option>
-                {Array.from({ length: 5 }, (_, i) => i + 1).map((w) => (
-                  <option key={w} value={w}>W{w}</option>
+                {retailWeekOptions(meYear, meMonth, meWeek).map(({ week: w, valid }) => (
+                  <option key={w} value={w}>W{w}{valid ? "" : " (not a retail week)"}</option>
                 ))}
               </select>
             </div>

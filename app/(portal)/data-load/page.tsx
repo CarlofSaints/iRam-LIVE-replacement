@@ -6,6 +6,7 @@ import { authFetch } from "@/lib/useAuth";
 import UploadZone from "@/components/UploadZone";
 import SearchSelect from "@/components/SearchSelect";
 import type { Client, Channel, FileType } from "@/lib/types";
+import { weeksInRetailMonth, isValidRetailWeek } from "@/lib/retailCalendar";
 
 type Step = "select" | "upload" | "confirm" | "result";
 
@@ -43,6 +44,14 @@ export default function DataLoadPage() {
   // stamped with the correct week for the load checklist.
   const [reportWeek, setReportWeek] = useState<number | "">("");
   const [uploading, setUploading] = useState(false);
+
+  // Every year/month change goes through here, so a week the new month doesn't
+  // have (Wk5 after switching Aug → Sep) is cleared rather than sent.
+  function setPeriod(y: number, m: number) {
+    setReportYear(y);
+    setReportMonth(m);
+    if (reportWeek !== "" && !isValidRetailWeek(y, m, reportWeek)) setReportWeek("");
+  }
 
   // Keep a ref to the uploaded file so we can re-submit with force=true
   const pendingFileRef = useRef<File | null>(null);
@@ -414,7 +423,7 @@ export default function DataLoadPage() {
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="mb-1 block text-xs text-[var(--color-text-muted)]">Year</label>
-                  <select value={reportYear} onChange={(e) => setReportYear(Number(e.target.value))}
+                  <select value={reportYear} onChange={(e) => setPeriod(Number(e.target.value), reportMonth)}
                     className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm">
                     {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - 2 + i).map((y) => (
                       <option key={y} value={y}>{y}</option>
@@ -423,7 +432,7 @@ export default function DataLoadPage() {
                 </div>
                 <div>
                   <label className="mb-1 block text-xs text-[var(--color-text-muted)]">Month</label>
-                  <select value={reportMonth} onChange={(e) => setReportMonth(Number(e.target.value))}
+                  <select value={reportMonth} onChange={(e) => setPeriod(reportYear, Number(e.target.value))}
                     className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm">
                     {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
                       <option key={m} value={m}>{String(m).padStart(2, "0")} - {["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][m-1]}</option>
@@ -437,7 +446,8 @@ export default function DataLoadPage() {
                   <select value={reportWeek} onChange={(e) => setReportWeek(e.target.value === "" ? "" : Number(e.target.value))}
                     className={`w-full rounded-lg border px-3 py-2 text-sm ${reportWeek === "" ? "border-red-300" : "border-[var(--color-border)]"}`}>
                     <option value="">Select week…</option>
-                    {[1, 2, 3, 4, 5].map((w) => (
+                    {/* Massmart 4-5-4 calendar: only Feb, May, Aug and Nov have a Week 5. */}
+                    {Array.from({ length: weeksInRetailMonth(reportYear, reportMonth) }, (_, i) => i + 1).map((w) => (
                       <option key={w} value={w}>Week {w}</option>
                     ))}
                   </select>

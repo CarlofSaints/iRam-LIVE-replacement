@@ -18,6 +18,7 @@ import { requireLogin, requirePermission, noCacheHeaders, handleAuthError } from
 import { addLog } from "@/lib/activityLog";
 import { acquireUploadLock, releaseUploadLock, lockMessage, type UploadLock } from "@/lib/uploadLock";
 import { PARSER_VERSION } from "@/lib/parserVersion";
+import { weeksInRetailMonth, isValidRetailWeek } from "@/lib/retailCalendar";
 import { buildChannelGroup } from "@/lib/channelGroup";
 import { judgeChannelFit, wrongChannelMessage } from "@/lib/channelFit";
 import type { FileType } from "@/lib/types";
@@ -175,6 +176,17 @@ export async function POST(req: NextRequest) {
     // buckets loads by (year, month, week), so a missing week can't be placed.
     if (fileType === "dispo" && (reportWeek === undefined || isNaN(reportWeek) || reportWeek < 1)) {
       return refuse(400, { error: "A report week is required for DISPO uploads" }, "No report week was chosen");
+    }
+
+    // The picker only offers real weeks, but an old open tab or a script can
+    // still send "Sep Wk5". Massmart's 4-5-4 calendar has no such week.
+    if (reportWeek !== undefined && reportYear && reportMonth && !isValidRetailWeek(reportYear, reportMonth, reportWeek)) {
+      const n = weeksInRetailMonth(reportYear, reportMonth);
+      return refuse(
+        400,
+        { error: `Week ${reportWeek} does not exist in ${MONTH_ABBR[reportMonth] ?? reportMonth} ${reportYear}. That month has ${n} weeks on the Massmart retail calendar.` },
+        `Week ${reportWeek} chosen for a ${n}-week month`,
+      );
     }
 
     const client = await getClientById(clientId);
