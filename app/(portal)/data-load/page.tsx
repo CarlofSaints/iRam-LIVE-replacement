@@ -1,5 +1,6 @@
 "use client";
 
+import { useRetailCalendar } from "@/lib/useRetailCalendar";
 import { useEffect, useState, useRef } from "react";
 import { upload } from "@vercel/blob/client";
 import { authFetch } from "@/lib/useAuth";
@@ -30,6 +31,7 @@ interface HeaderCollision {
 const BLOB_THRESHOLD_BYTES = 4 * 1024 * 1024;
 
 export default function DataLoadPage() {
+  useRetailCalendar(); // admin-loaded Massmart calendar years for the week pickers
   const [clients, setClients] = useState<Client[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [loading, setLoading] = useState(true);

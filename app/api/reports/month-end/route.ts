@@ -1,3 +1,4 @@
+import { ensureRetailCalendar } from "@/lib/retailCalendarData";
 import { NextRequest } from "next/server";
 import { requirePermission, handleAuthError, AuthError, noCacheHeaders } from "@/lib/auth";
 import { getSalesLedger, getSalesLedgerMeta } from "@/lib/salesData";
@@ -162,6 +163,7 @@ export async function GET(req: NextRequest) {
        run off the full set of month columns — so the selection reached the
        filename and the sheet headers but none of the numbers underneath
        them. See lib/reportPeriod.ts for how each field resolves. */
+    await ensureRetailCalendar(); // the no-stamp fallback reads retail weeks
     const period = resolveReportPeriod(
       pickedMetas(ledgerResults, channelIds, allChannelsForGroup),
       { year: yearParam, month: monthParam, week: weekParam },
