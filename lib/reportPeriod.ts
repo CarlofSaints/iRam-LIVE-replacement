@@ -19,6 +19,8 @@
    Year, month and week resolve independently on purpose: a user may pin the
    month and leave the week on Auto, and that should still work.               */
 
+import { retailPeriodOf } from "./retailCalendar";
+
 export interface PeriodStamp {
   reportYear?: number;
   reportMonth?: number;
@@ -83,9 +85,12 @@ export function resolveReportPeriod(
   const chosenM = intOrNull(choice.month);
   const chosenW = intOrNull(choice.week);
 
-  const year = chosenY ?? latest?.reportYear ?? now.getFullYear();
-  const month = chosenM ?? latest?.reportMonth ?? (now.getMonth() + 1);
-  const week = chosenW ?? latest?.reportWeek ?? Math.ceil(now.getDate() / 7);
+  // Nothing chosen or stamped: use the retail period today falls in. Calendar
+  // day-of-month / 7 gave "Sep Wk5" on 29 Sep, which is retail Oct Wk1.
+  const today = retailPeriodOf(now);
+  const year = chosenY ?? latest?.reportYear ?? today.year;
+  const month = chosenM ?? latest?.reportMonth ?? today.month;
+  const week = chosenW ?? latest?.reportWeek ?? today.week;
 
   const src = (chosen: number | null, stamped: number | undefined): Source =>
     chosen !== null ? "chosen" : (stamped !== undefined ? "stamped" : "fallback");

@@ -6,7 +6,7 @@ import { authFetch } from "@/lib/useAuth";
 import UploadZone from "@/components/UploadZone";
 import SearchSelect from "@/components/SearchSelect";
 import type { Client, Channel, FileType } from "@/lib/types";
-import { weeksInRetailMonth } from "@/lib/retailCalendar";
+import { weeksInRetailMonth, isValidRetailWeek } from "@/lib/retailCalendar";
 
 type Step = "select" | "upload" | "confirm" | "result";
 
@@ -44,6 +44,14 @@ export default function DataLoadPage() {
   // stamped with the correct week for the load checklist.
   const [reportWeek, setReportWeek] = useState<number | "">("");
   const [uploading, setUploading] = useState(false);
+
+  // Every year/month change goes through here, so a week the new month doesn't
+  // have (Wk5 after switching Aug → Sep) is cleared rather than sent.
+  function setPeriod(y: number, m: number) {
+    setReportYear(y);
+    setReportMonth(m);
+    if (reportWeek !== "" && !isValidRetailWeek(y, m, reportWeek)) setReportWeek("");
+  }
 
   // Keep a ref to the uploaded file so we can re-submit with force=true
   const pendingFileRef = useRef<File | null>(null);
@@ -415,7 +423,7 @@ export default function DataLoadPage() {
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="mb-1 block text-xs text-[var(--color-text-muted)]">Year</label>
-                  <select value={reportYear} onChange={(e) => { const y = Number(e.target.value); setReportYear(y); if (reportWeek !== "" && reportWeek > weeksInRetailMonth(y, reportMonth)) setReportWeek(""); }}
+                  <select value={reportYear} onChange={(e) => setPeriod(Number(e.target.value), reportMonth)}
                     className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm">
                     {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - 2 + i).map((y) => (
                       <option key={y} value={y}>{y}</option>
@@ -424,7 +432,7 @@ export default function DataLoadPage() {
                 </div>
                 <div>
                   <label className="mb-1 block text-xs text-[var(--color-text-muted)]">Month</label>
-                  <select value={reportMonth} onChange={(e) => { const m = Number(e.target.value); setReportMonth(m); if (reportWeek !== "" && reportWeek > weeksInRetailMonth(reportYear, m)) setReportWeek(""); }}
+                  <select value={reportMonth} onChange={(e) => setPeriod(reportYear, Number(e.target.value))}
                     className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm">
                     {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
                       <option key={m} value={m}>{String(m).padStart(2, "0")} - {["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][m-1]}</option>

@@ -11,6 +11,7 @@ import type { Client, Channel, CAM, ControlFileType, UploadMeta, ProductFieldMap
 import type { ReportConfig } from "@/lib/reportConfig";
 import { filenameFromContentDisposition } from "@/lib/contentDisposition";
 import DropboxControlFiles from "@/components/DropboxControlFiles";
+import { isValidRetailWeek, periodScore } from "@/lib/retailCalendar";
 
 const CF_LABELS: Record<ControlFileType, string> = {
   pmf: "PMF (Product Management File)",
@@ -145,7 +146,7 @@ export default function ClientDetailPage() {
       // Sort on the instant, not the rendered date string.
       date: (u) => Date.parse(u.uploadDate) || 0,
       // Undated loads (Aged Stock, very old DISPOs) sort below every real period.
-      period: (u) => (u.reportYear ?? 0) * 10000 + (u.reportMonth ?? 0) * 100 + (u.reportWeek ?? 0),
+      period: (u) => periodScore(u.reportYear, u.reportMonth, u.reportWeek),
       status: (u) => u.status,
     },
     "date",
@@ -1043,7 +1044,17 @@ export default function ClientDetailPage() {
                     <td className="px-6 py-3"><span className={`rounded-full px-2 py-0.5 text-xs font-medium ${u.fileType === "dispo" ? "bg-blue-50 text-blue-700" : "bg-amber-50 text-amber-700"}`}>{u.fileType === "dispo" ? "DISPO" : "Aged Stock"}</span></td>
                     <td className="px-6 py-3 text-[var(--color-text-muted)]">{u.vendorNumber}</td>
                     <td className="px-6 py-3 text-[var(--color-text-muted)]">{u.rowCount}</td>
-                    <td className="px-6 py-3 whitespace-nowrap">{u.reportYear && u.reportMonth ? `${u.reportYear}-${String(u.reportMonth).padStart(2, "0")} Wk${u.reportWeek ?? "?"}` : "—"}</td>
+                    <td className="px-6 py-3 whitespace-nowrap">
+                      {u.reportYear && u.reportMonth
+                        ? <>
+                            {u.reportYear}-{String(u.reportMonth).padStart(2, "0")}{u.reportWeek ? ` Wk${u.reportWeek}` : ""}
+                            {u.reportWeek && !isValidRetailWeek(u.reportYear, u.reportMonth, u.reportWeek) && (
+                              <span className="ml-2 rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700"
+                                title="This month has fewer weeks on the Massmart retail calendar">not a retail week</span>
+                            )}
+                          </>
+                        : "—"}
+                    </td>
                     {/* Spelled-out month: "9/8/2026" reads as 9 Aug or 8 Sep depending on the browser. */}
                     <td className="px-6 py-3 whitespace-nowrap text-[var(--color-text-muted)]">{new Date(u.uploadDate).toLocaleString("en-ZA", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "Africa/Johannesburg" })}</td>
                     <td className="px-6 py-3"><span className={`rounded-full px-2 py-0.5 text-xs font-medium ${u.status === "processed" ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>{u.status}</span></td>
