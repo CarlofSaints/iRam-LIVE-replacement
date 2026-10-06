@@ -491,21 +491,20 @@ export function buildSalesSummary(
   const prodVolume = aggregateRows(rows, ctx, (r) => String(r["Article Desc"] || r["Article"] || "Unknown"), grandYtdUnits, "volume");
   const prodValue = aggregateRows(rows, ctx, (r) => String(r["Article Desc"] || r["Article"] || "Unknown"), grandYtdValue, "value");
 
-  /* Each product's PMF category, for the Category column on the Product
-     tables. A product name is one SKU, so this is normally one category; if
-     rows disagree (a PMF edit between loads), the most common one wins. */
-  const catVotes = new Map<string, Map<string, number>>();
+  /* Each product's category for the Category column on the Product tables,
+     read exactly as the Category level groups it (same key, same "Unknown"),
+     so a product always shows the row it is counted under there. Products
+     are grouped by description, so two SKUs sharing one description can
+     land in one row; if their categories differ, all of them are shown
+     ("200ML / 500ML") rather than hiding the mix behind a majority. */
+  const catsOf = new Map<string, Set<string>>();
   for (const r of rows) {
     const name = String(r["Article Desc"] || r["Article"] || "Unknown");
-    const cat = String(r["_category"] || "").trim();
-    if (!cat) continue;
-    let v = catVotes.get(name);
-    if (!v) { v = new Map(); catVotes.set(name, v); }
-    v.set(cat, (v.get(cat) ?? 0) + 1);
+    let set = catsOf.get(name);
+    if (!set) { set = new Set(); catsOf.set(name, set); }
+    set.add(String(r["_category"] || "Unknown"));
   }
-  const categoryOf = (name: string) =>
-    [...(catVotes.get(name) ?? new Map<string, number>()).entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
-  for (const p of [...prodVolume, ...prodValue]) p.category = categoryOf(p.name);
+  for (const p of [...prodVolume, ...prodValue]) p.category = [...(catsOf.get(p.name) ?? [])].sort().join(" / ");
 
   levels.push({
     level: "Product",

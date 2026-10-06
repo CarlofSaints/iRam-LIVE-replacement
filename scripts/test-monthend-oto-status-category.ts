@@ -13,8 +13,9 @@
 
 import ExcelJS from "exceljs";
 import { buildMonthEndWorkbook } from "../lib/monthEndExcel";
-import { buildSalesSummary, buildDateContext } from "../lib/monthEndReport";
-import type { OOSSummary, OTOAnalysis, StatusDetailRow } from "../lib/monthEndReport";
+import { buildSalesSummary, buildDateContext, buildOpenToOrder } from "../lib/monthEndReport";
+import type { OOSSummary, StatusDetailRow } from "../lib/monthEndReport";
+import type { StatusDefinition } from "../lib/types";
 
 let failures = 0;
 function assert(label: string, cond: boolean, note = "") {
@@ -26,6 +27,10 @@ const DATE_COLS = ["01-2026", "02-2026", "03-2026", "01-2025", "02-2025", "03-20
 const rows = [
   { Site: "W28", "Article Desc": "BOOSTER RED", _category: "500ML", "01-2026": 10, "02-2026": 12, "03-2026": 14, "01-2025": 8, "02-2025": 9, "03-2025": 10, "Incl SP": 23, SOH: 5 },
   { Site: "A01", "Article Desc": "BOOSTER RED", _category: "500ML", "01-2026": 4, "02-2026": 5, "03-2026": 6, "01-2025": 3, "02-2025": 3, "03-2025": 4, "Incl SP": 23, SOH: 1 },
+  // Same description, different category: both categories must show.
+  { Site: "A01", "Article Desc": "BOOST GRAPE", _category: "500ML", "01-2026": 1, "02-2026": 1, "03-2026": 1, "01-2025": 1, "02-2025": 1, "03-2025": 1, "Incl SP": 11, SOH: 0 },
+  // No category: shows as "Unknown", the row the Category table counts it under.
+  { Site: "A01", "Article Desc": "MYSTERY", "01-2026": 1, "02-2026": 1, "03-2026": 1, "01-2025": 1, "02-2025": 1, "03-2025": 1, "Incl SP": 5, SOH: 0 },
   { Site: "W28", "Article Desc": "BOOST GRAPE", _category: "200ML", "01-2026": 2, "02-2026": 3, "03-2026": 1, "01-2025": 2, "02-2025": 2, "03-2025": 2, "Incl SP": 11, SOH: 0 },
 ];
 const ctx = buildDateContext(DATE_COLS, { year: 2026, month: 3 });
@@ -39,12 +44,17 @@ const statusDetail: StatusDetailRow[] = [{
   prst: "Z4", productStatus: "ACTIVE", ranging: "TRUE",
 } as StatusDetailRow];
 
-const oto: OTOAnalysis = {
-  hasRanging: false, totalLines: 1, totalUnits: 6, totalValue: 60,
-  bySubChannel: [], byCategory: [], bySku: [], bySite: [], skipped: [],
-  detail: [{ vendor: "13390", site: "W28", siteName: "CASH AND CARRY CROWN MINES", productCode: "P1", article: "123",
-    rangeIndicator: "N/A", description: "BOOSTER RED", soh: -2, soo: 0, sit: 0, units: 6, value: 60 }],
-};
+// Through the real OTO engine, so SOH/SOO/SIT are read the way the rule reads
+// them: thousands separators, negatives, and SOO/SIT that net to 0.
+const oto = buildOpenToOrder({
+  rows: [{
+    Site: "W28", Article: "123", "Article Desc": "BOOSTER RED", _storeName: "CASH AND CARRY CROWN MINES",
+    SOH: "-1,234.000", SOO: "5", SIT: "-5", Status: "Z1", _productStatus: "ACTIVE",
+    "R. Profile": 6, "Nett Cost": 10, _category: "500ML", _vendor: "13390",
+  }],
+  statusDefs: [{ id: "s", code: "Z1", channelId: "c", classification: "POSITIVE", description: "", autoDetected: false } as StatusDefinition],
+  statusScenarios: [], otoMultipliers: {}, hasRanging: false, rangingRows: [],
+});
 
 async function main() {
   const buf = await buildMonthEndWorkbook(
@@ -71,9 +81,13 @@ async function main() {
   assert("Product table D header = YTD", text(sales.getCell(prodHeader, 4)).endsWith("YTD"), text(sales.getCell(prodHeader, 4)));
 
   const r1 = prodHeader + 1;
-  const name = String(sales.getCell(r1, 1).value);
-  const cat = String(sales.getCell(r1, 2).value);
-  assert("Product row carries its category", (name === "BOOSTER RED" && cat === "500ML") || (name === "BOOST GRAPE" && cat === "200ML"), `${name} → ${cat}`);
+  const catOf = new Map<string, string>();
+  for (let r = r1; !/TOTAL/i.test(String(sales.getCell(r, 1).value ?? "")); r++) {
+    catOf.set(String(sales.getCell(r, 1).value), String(sales.getCell(r, 2).value ?? ""));
+  }
+  assert("Product row carries its category", catOf.get("BOOSTER RED") === "500ML", catOf.get("BOOSTER RED"));
+  assert("Mixed categories are all shown", catOf.get("BOOST GRAPE") === "200ML / 500ML", catOf.get("BOOST GRAPE"));
+  assert("No category shows Unknown", catOf.get("MYSTERY") === "Unknown", catOf.get("MYSTERY"));
 
   // Formulas after the insert: YTD is D, LY YTD E, Current Month F, Same Month LY G, Last Month H.
   const f = (c: number) => (sales.getCell(r1, c).value as { formula?: string })?.formula ?? "";
@@ -92,6 +106,9 @@ async function main() {
   assert("Category table still B = # Stores", text(sales.getCell(catHeader, 2)).endsWith("# Stores"));
   assert("Category table Growth YTD % still C vs D", cf === `IF(D${c1}=0,"",(C${c1}-D${c1})/ABS(D${c1}))`, cf);
 
+  const titleMerge = (sales as unknown as { _merges: Record<string, { model: { right: number } }> })._merges?.A1?.model?.right;
+  assert("Sales title spans the 12-column Product table", titleMerge === 12, String(titleMerge));
+
   // ── Status Detail ──
   const sd = wb.getWorksheet("Status Detail")!;
   const sdh = [1, 2, 3, 4, 5].map((c) => text(sd.getCell(1, c)));
@@ -107,9 +124,11 @@ async function main() {
   const at = (h: string) => hdr.findIndex((x) => x.endsWith(h)) + 1;
   assert("OTO Detail has SOH, SOO, SIT before OTO Units",
     at("SOH") > 0 && at("SOO") === at("SOH") + 1 && at("SIT") === at("SOO") + 1 && at("OTO Units") === at("SIT") + 1, hdr.join(" | "));
-  assert("OTO Detail SOH value written (-2)", od.getCell(5, at("SOH")).value === -2, String(od.getCell(5, at("SOH")).value));
+  assert("OTO engine produced the line", oto.detail.length === 1, String(oto.detail.length));
+  assert("OTO Detail SOH parsed from \"-1,234.000\"", od.getCell(5, at("SOH")).value === -1234, String(od.getCell(5, at("SOH")).value));
+  assert("OTO Detail SOO / SIT = 5 / -5", od.getCell(5, at("SOO")).value === 5 && od.getCell(5, at("SIT")).value === -5);
   const note = String(od.getCell(2, 1).value);
-  assert("OTO note no longer says SOH/SOO/SIT are omitted", !/SOH \/ SOO \/ SIT \/ Status \/ Product Status columns are omitted/.test(note));
+  assert("OTO note states the real rule (SOH 0 or below)", /SOH is 0 or below/.test(note) && !/SOH = 0/.test(note), note.slice(0, 120));
 
   console.log(failures ? `\n${failures} FAILED` : "\nAll assertions passed");
   process.exit(failures ? 1 : 0);

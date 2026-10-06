@@ -421,7 +421,7 @@ export async function buildMonthEndWorkbook(
     const titleCell = salesSheet.getCell(row, 1);
     titleCell.value = `Sales Summary — ${clientName} — ${channelLabel} — ${periodLabel}`;
     titleCell.font = { name: "Calibri", size: 14, bold: true, color: { argb: HEADER_BG } };
-    salesSheet.mergeCells(row, 1, row, SUMMARY_COLS.length);
+    salesSheet.mergeCells(row, 1, row, PRODUCT_SUMMARY_COLS.length); // widest table
     row += 2;
 
     // Write each level's volume + value tables
@@ -432,7 +432,10 @@ export async function buildMonthEndWorkbook(
       const countLabel = level.level === "Store" ? "Number of SKU's" : "# Stores";
 
       // Volume table
-      const cols = level.level === "Product" ? PRODUCT_SUMMARY_COLS : SUMMARY_COLS;
+      // A level whose rows carry a category (the engine sets it on Product)
+      // gets the Category column; nothing here is keyed on the level's name.
+      const hasCategory = [...level.volumeRows, ...level.valueRows].some((r) => r.category !== undefined);
+      const cols = hasCategory ? PRODUCT_SUMMARY_COLS : SUMMARY_COLS;
       row = writeSummaryTable(salesSheet, row, `${dim} — Volume (Units)`, level.volumeRows, level.volumeTotal, false, dim, countLabel, cols);
       row += 1; // gap
 
@@ -1367,7 +1370,12 @@ function writeSummaryTable(
   const firstDataRow = row;
   const lastDataRow = row + dataRows.length - 1;
   const totalRowNum = lastDataRow + 1;
-  const ctx = { totalRowNum, firstDataRow, lastDataRow };
+  // Looked up by key once per table: the Product tables have an extra column.
+  const letters = {
+    YTD: summaryColLetter(cols, "ytd"), LY: summaryColLetter(cols, "lyYtd"), CM: summaryColLetter(cols, "currentMonth"),
+    PYM: summaryColLetter(cols, "sameMonthLy"), LM: summaryColLetter(cols, "lastMonth"),
+  };
+  const ctx = { totalRowNum, firstDataRow, lastDataRow, letters };
 
   for (const data of dataRows) {
     row = writeSummaryDataRow(sheet, row, data, isValue, false, ctx, cols);
@@ -1382,7 +1390,7 @@ function writeSummaryTable(
     const growthCols = cols
       .map((col, i) => ({ col, i }))
       .filter(({ col }) => typeof col.key === "string" && col.key.startsWith("growth"))
-      .map(({ i }) => String.fromCharCode(65 + i));
+      .map(({ i }) => colLetter(i + 1));
     for (const L of growthCols) {
       addGrowthSignRules(sheet, `${L}${firstDataRow}:${L}${totalRowNum}`);
     }
@@ -1399,19 +1407,17 @@ function writeSummaryDataRow(
   data: SummaryRow,
   isValue: boolean,
   isTotal: boolean,
-  ctx: { totalRowNum: number; firstDataRow: number; lastDataRow: number },
+  ctx: { totalRowNum: number; firstDataRow: number; lastDataRow: number; letters: Record<"YTD" | "LY" | "CM" | "PYM" | "LM", string> },
   cols: SummaryCol[] = SUMMARY_COLS,
 ): number {
   const valueFmt = isValue ? RAND_FMT : "#,##0";
   const hasData = ctx.lastDataRow >= ctx.firstDataRow;
   const T = ctx.totalRowNum;
-  // Looked up by key: the Product tables have an extra Category column.
-  const YTD = summaryColLetter(cols, "ytd"), LY = summaryColLetter(cols, "lyYtd"), CM = summaryColLetter(cols, "currentMonth");
-  const PYM = summaryColLetter(cols, "sameMonthLy"), LM = summaryColLetter(cols, "lastMonth");
+  const { YTD, LY, CM, PYM, LM } = ctx.letters;
   cols.forEach((col, i) => {
     const cell = sheet.getCell(row, i + 1);
     const rawVal = data[col.key as keyof SummaryRow];
-    const colL = String.fromCharCode(65 + i);
+    const colL = colLetter(i + 1);
 
     if (col.key === "name" || col.key === "category") {
       cell.value = (rawVal as string | undefined) ?? "";
@@ -1806,9 +1812,9 @@ type NDFalseRowLite = { vendor: string; subChannel: string; province: string; si
 // ── Open to Order (OTO) sheets ──────────────────────────────────
 const OTO_NOTE =
   "Open to Order (OTO) = suggested replenishment for SKU/site lines that are out of stock and orderable. " +
-  "A line qualifies only when SOH = 0, nothing is on order or in transit (SOO = SIT = 0), the DISPO status classifies as POSITIVE, " +
+  "A line qualifies only when SOH is 0 or below, nothing is on order or in transit (SOO + SIT nets to 0), the DISPO status classifies as POSITIVE, " +
   "and the PMF product status is ACTIVE. OTO Units = category multiplier × the DISPO's R. Profile (else its Order Unit, else 2 units); OTO Value = OTO Units × Nett Cost. " +
-  "OTO Detail shows each line's SOH, SOO and SIT for reference (SOH can be negative; SOO + SIT nets to 0). Status and Product Status are omitted: every line is POSITIVE and ACTIVE.";
+  "OTO Detail shows each line's SOH, SOO and SIT for reference. Status and Product Status are omitted: every line is POSITIVE and ACTIVE.";
 
 // OTO Summary — cascading rollups by Sub-Channel, Category, SKU, then Site.
 async function buildOtoSummarySheet(
