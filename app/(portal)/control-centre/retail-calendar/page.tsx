@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 import { authFetch } from "@/lib/useAuth";
 import UploadZone from "@/components/UploadZone";
-import { registerRetailCalendar, isRetailYearLoaded, weeksInRetailMonth, type RetailCalendarYears } from "@/lib/retailCalendar";
-import { invalidateRetailCalendar } from "@/lib/useRetailCalendar";
+import { isRetailYearLoaded, weeksInRetailMonth } from "@/lib/retailCalendar";
+import { invalidateRetailCalendar, loadRetailCalendar } from "@/lib/useRetailCalendar";
 import type { RetailCalendarYear } from "@/lib/retailCalendarData";
 
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -36,21 +36,36 @@ export default function RetailCalendarPage() {
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
 
   async function load() {
-    const res = await authFetch("/api/retail-calendar");
-    if (res.ok) {
-      const d: { years: RetailCalendarYear[] } = await res.json();
-      setYears(d.years);
-      const map: RetailCalendarYears = {};
-      for (const y of d.years) map[y.year] = y.weeks;
-      registerRetailCalendar(map);
+    try {
+      setYears(await loadRetailCalendar());
+    } catch (e) {
+      setError(`Couldn't load the saved calendars: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
   useEffect(() => { load(); }, []);
 
   function flash(msg: string) {
     setToast(msg);
     setTimeout(() => setToast(""), 4000);
+  }
+
+  /* Every call goes through here so a non-JSON reply (Vercel's 413 page for a
+     PDF over ~4.5MB, a 504) says what happened instead of "Network error". */
+  async function call(url: string, init: Parameters<typeof authFetch>[1], fallback: string) {
+    let res: Response;
+    try {
+      res = await authFetch(url, init);
+    } catch {
+      return { ok: false as const, error: "Couldn't reach the server. Check your connection and try again." };
+    }
+    const body = await res.json().catch(() => null);
+    if (res.ok && body) return { ok: true as const, body };
+    const why = body?.error
+      ?? (res.status === 413 ? "That file is too big to upload (limit about 4.5MB)."
+        : `${fallback} (server said ${res.status}).`);
+    return { ok: false as const, error: why };
   }
 
   async function readPdf(file: File) {
@@ -60,49 +75,38 @@ export default function RetailCalendarPage() {
     const form = new FormData();
     form.append("file", file);
     form.append("year", String(year));
-    try {
-      const res = await authFetch("/api/retail-calendar", { method: "POST", body: form, rawBody: true, headers: {} });
-      const d = await res.json();
-      if (!res.ok) setError(d.error || "Couldn't read that file.");
-      else setPreview(d);
-    } catch {
-      setError("Network error.");
-    } finally {
-      setBusy(false);
-    }
+    const r = await call("/api/retail-calendar", { method: "POST", body: form, rawBody: true, headers: {} }, "Couldn't read that file");
+    if (r.ok) setPreview(r.body); else setError(r.error);
+    setBusy(false);
   }
 
   async function save() {
     if (!preview) return;
     setBusy(true);
     setError("");
-    try {
-      const res = await authFetch("/api/retail-calendar", {
-        method: "PUT",
-        body: JSON.stringify({
-          year: preview.year,
-          weeks: preview.weeks,
-          monthEndWeeks: preview.monthEndWeeks,
-          fileName: preview.fileName,
-          printedJan1Weekday: preview.jan1Weekday,
-        }),
-      });
-      const d = await res.json();
-      if (!res.ok) { setError(d.error || "Save failed."); return; }
-      invalidateRetailCalendar();
-      flash(`${preview.year} calendar saved. Data Load and Reports now use it.`);
-      setPreview(null);
-      await load();
-    } finally {
-      setBusy(false);
-    }
+    const r = await call("/api/retail-calendar", {
+      method: "PUT",
+      body: JSON.stringify({
+        year: preview.year,
+        weeks: preview.weeks,
+        fileName: preview.fileName,
+        printedJan1Weekday: preview.jan1Weekday,
+      }),
+    }, "Save failed");
+    setBusy(false);
+    if (!r.ok) { setError(r.error); return; }
+    invalidateRetailCalendar();
+    flash(`${preview.year} calendar saved. Data Load and Reports now use it.`);
+    setPreview(null);
+    await load();
   }
 
   async function remove(y: number) {
     if (confirmDelete !== y) { setConfirmDelete(y); return; }
     setConfirmDelete(null);
-    const res = await authFetch(`/api/retail-calendar?year=${y}`, { method: "DELETE" });
-    if (!res.ok) { setError((await res.json()).error || "Remove failed."); return; }
+    setError("");
+    const r = await call(`/api/retail-calendar?year=${y}`, { method: "DELETE" }, "Remove failed");
+    if (!r.ok) { setError(r.error); return; }
     invalidateRetailCalendar();
     flash(`${y} calendar removed.`);
     await load();

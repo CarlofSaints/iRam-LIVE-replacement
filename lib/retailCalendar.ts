@@ -45,6 +45,19 @@ export function registerRetailCalendar(years: RetailCalendarYears): void {
   loaded = { ...years };
 }
 
+/** The stored year records → the map registerRetailCalendar takes. */
+export function toWeeksMap(years: { year: number; weeks: number[] }[]): RetailCalendarYears {
+  const out: RetailCalendarYears = {};
+  for (const y of years) out[y.year] = y.weeks;
+  return out;
+}
+
+/** Running total of weeks: the retail week each month ends on. */
+export function monthEndWeeksOf(weeks: number[]): number[] {
+  let sum = 0;
+  return weeks.map((w) => (sum += w));
+}
+
 const DAY = 86_400_000;
 
 /** Monday (UTC midnight) of retail week 1 of `year`. */
@@ -190,7 +203,7 @@ export function parseMassmartCalendarText(text: string): ParsedRetailCalendar {
 export function retailCalendarProblems(
   year: number,
   weeks: number[],
-  printedJan1Weekday: number | null = null,
+  printedJan1Weekday: number | null,
 ): string[] {
   const out: string[] = [];
   if (!Number.isInteger(year) || year < 2020 || year > 2100) out.push(`${year} is not a sensible year.`);
@@ -202,7 +215,11 @@ export function retailCalendarProblems(
   if (total !== expected) {
     out.push(`The months add up to ${total} weeks, but retail ${year} has ${expected} (week 1 is the week holding 1 January).`);
   }
-  if (printedJan1Weekday !== null && printedJan1Weekday !== jan1Weekday(year)) {
+  /* Required, not optional: without it a 2026 PDF saves cleanly as 2027 (both
+     52 weeks, same 4-5-4 shape). */
+  if (printedJan1Weekday === null || !Number.isInteger(printedJan1Weekday) || printedJan1Weekday < 0 || printedJan1Weekday > 6) {
+    out.push(`Couldn't find the week-1 row (1 January) in the PDF, so can't confirm it is the ${year} calendar.`);
+  } else if (printedJan1Weekday !== jan1Weekday(year)) {
     out.push(
       `This calendar starts 1 January on a ${WEEKDAYS[printedJan1Weekday]}, but 1 January ${year} is a ` +
       `${WEEKDAYS[jan1Weekday(year)]}. Wrong year picked, or the wrong year's PDF?`,

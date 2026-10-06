@@ -41,7 +41,9 @@ const REPORT_SHEETS = [
 ];
 
 export default function ReportsPage() {
-  useRetailCalendar(); // admin-loaded Massmart calendar years for the week pickers
+  // Admin-loaded Massmart calendar years; a dependency of the period memos so
+  // the Auto label is recomputed once they arrive.
+  const calendarReady = useRetailCalendar();
   const [clients, setClients] = useState<Client[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [clientId, setClientId] = useState("");
@@ -235,11 +237,11 @@ export default function ReportsPage() {
   );
   const vsPeriod = useMemo(
     () => resolveReportPeriod(scopedLedgers, { year: reportYear, month: reportMonth, week: reportWeek }),
-    [scopedLedgers, reportYear, reportMonth, reportWeek],
+    [scopedLedgers, reportYear, reportMonth, reportWeek, calendarReady],
   );
   const mePeriod = useMemo(
     () => resolveReportPeriod(scopedLedgers, { year: meYear, month: meMonth, week: meWeek }),
-    [scopedLedgers, meYear, meMonth, meWeek],
+    [scopedLedgers, meYear, meMonth, meWeek, calendarReady],
   );
 
   // Fetch stats when client or effective channels change

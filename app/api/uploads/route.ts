@@ -181,7 +181,7 @@ export async function POST(req: NextRequest) {
 
     // The picker only offers real weeks, but an old open tab or a script can
     // still send "Sep Wk5". Massmart's 4-5-4 calendar has no such week.
-    await ensureRetailCalendar();
+    if (reportWeek !== undefined) await ensureRetailCalendar();
     if (reportWeek !== undefined && reportYear && reportMonth && !isValidRetailWeek(reportYear, reportMonth, reportWeek)) {
       const n = weeksInRetailMonth(reportYear, reportMonth);
       return refuse(

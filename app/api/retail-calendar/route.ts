@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { extractText, getDocumentProxy } from "unpdf";
 import { requireLogin, requirePermission, noCacheHeaders, handleAuthError } from "@/lib/auth";
 import { addLog } from "@/lib/activityLog";
-import { parseMassmartCalendarText, retailCalendarProblems } from "@/lib/retailCalendar";
+import { parseMassmartCalendarText, retailCalendarProblems, monthEndWeeksOf } from "@/lib/retailCalendar";
 import {
   getRetailCalendarYears,
   saveRetailCalendarYear,
@@ -14,7 +14,7 @@ import {
    GET    — every loaded year (any logged-in user: the week pickers need it).
    POST   — multipart { file: PDF, year }: READ ONLY. Returns the weeks per
             month found in the PDF plus any problems, for the admin to check.
-   PUT    — JSON { year, weeks, monthEndWeeks?, fileName, printedJan1Weekday? }:
+   PUT    — JSON { year, weeks, fileName, printedJan1Weekday }:
             saves a year after the admin has seen the preview. Re-validated
             here, so the preview step can't be skipped into a bad save.
    DELETE — ?year=2027: drop a loaded year (falls back to built-in / 4-5-4). */
@@ -91,7 +91,7 @@ export async function PUT(req: NextRequest) {
     await saveRetailCalendarYear({
       year,
       weeks,
-      monthEndWeeks: Array.isArray(body.monthEndWeeks) ? body.monthEndWeeks.map(Number) : undefined,
+      monthEndWeeks: monthEndWeeksOf(weeks), // derived, never taken from the request
       fileName,
       loadedAt: new Date().toISOString(),
       loadedBy: session.name,
