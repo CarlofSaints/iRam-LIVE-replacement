@@ -22,8 +22,10 @@
    with the same size, or it says which do not. */
 import { list, put, type ListBlobResultBlob } from "@vercel/blob";
 
-const SRC = (process.env.SRC_BLOB_TOKEN || "").trim();
-const DEST = (process.env.DEST_BLOB_TOKEN || "").trim();
+// Defaults are the names a `vercel env pull` gives when the new store is
+// connected with the prefix PRIVATE_BLOB (old store keeps the default BLOB).
+const SRC = (process.env.SRC_BLOB_TOKEN || process.env.BLOB_READ_WRITE_TOKEN || "").trim();
+const DEST = (process.env.DEST_BLOB_TOKEN || process.env.PRIVATE_BLOB_READ_WRITE_TOKEN || "").trim();
 const COPY = process.argv.includes("--copy");
 const SKIP_PREFIX = "uploads-tmp/";
 
