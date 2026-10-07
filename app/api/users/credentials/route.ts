@@ -10,6 +10,7 @@ import {
 } from "@/lib/email";
 import { createResetToken } from "@/lib/passwordReset";
 import { NO_LOGIN_ROLES } from "@/lib/types";
+import { siteUrl } from "@/lib/brand";
 
 export const dynamic = "force-dynamic";
 
@@ -186,9 +187,7 @@ export async function POST(req: NextRequest) {
 
       case "send-reset-link": {
         const token = await createResetToken(user.email);
-        const siteUrl =
-          process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
-        const resetUrl = `${siteUrl}/reset-password?token=${token}`;
+        const resetUrl = `${siteUrl()}/reset-password?token=${token}`;
         const emailRes = await tryEmail(() =>
           sendPasswordResetEmail({
             to: user.email,

@@ -35,6 +35,7 @@ import { getUsers } from "./userData";
 import { getStoreReportState, periodKey, type StoreReportState } from "./storeReportState";
 import { sendLoadStatusEmail } from "./email";
 import { checkDispoFiling, type FilingCheckResult } from "./dispoFilingCheck";
+import { brand } from "./brand";
 
 // Africa/Johannesburg is UTC+2 all year (no DST), so a fixed offset is safe.
 const SAST_OFFSET_MS = 2 * 60 * 60 * 1000;
@@ -335,7 +336,8 @@ export async function runLoadStatus(opts: {
   // Is what was loaded also filed in SharePoint? Never allowed to break the
   // email — a failure is reported inside it as "the check didn't run".
   let filing: FilingCheckResult | undefined;
-  if (opts.checkFiling !== false && computed.currentPeriod) {
+  // Only iRam's deployment files DISPOs in SharePoint.
+  if (brand.features.sharepointFiling && opts.checkFiling !== false && computed.currentPeriod) {
     try {
       filing = await checkDispoFiling(
         computed.clientsLoadedThisPeriod, computed.currentPeriod, {},

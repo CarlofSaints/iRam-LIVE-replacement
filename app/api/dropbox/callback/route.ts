@@ -7,6 +7,7 @@ import {
   DROPBOX_AUTH_KEY, resetDropboxTokenCache,
   type StoredDropboxAuth,
 } from "@/lib/dropbox";
+import { brand } from "@/lib/brand";
 
 /* Step 2: Dropbox sends the user back here with a one-time code, and this
    trades it for the durable refresh token — server side, in the same second
@@ -22,10 +23,10 @@ function page(title: string, body: string, ok: boolean): Response {
     `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
      <title>${title}</title>
      <div style="font-family:system-ui,Arial,sans-serif;max-width:560px;margin:12vh auto;padding:0 20px">
-       <div style="border:1px solid #E2E8F0;border-top:4px solid ${ok ? "#7CC042" : "#E04E2A"};border-radius:10px;padding:28px">
+       <div style="border:1px solid #E2E8F0;border-top:4px solid ${ok ? brand.colors.primary : "#E04E2A"};border-radius:10px;padding:28px">
          <h1 style="margin:0 0 12px;font-size:20px;color:#2D3748">${title}</h1>
          <p style="margin:0 0 20px;font-size:14px;line-height:1.6;color:#4A5568">${body}</p>
-         <a href="/control-centre/dropbox" style="display:inline-block;background:#7CC042;color:#fff;text-decoration:none;padding:10px 20px;border-radius:8px;font-size:14px;font-weight:600">Back to iRam LIVE</a>
+         <a href="/control-centre/dropbox" style="display:inline-block;background:${brand.colors.primary};color:#fff;text-decoration:none;padding:10px 20px;border-radius:8px;font-size:14px;font-weight:600">Back to ${brand.product}</a>
        </div>
      </div>`,
     { status: ok ? 200 : 400, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } },

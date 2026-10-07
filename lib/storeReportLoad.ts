@@ -21,6 +21,7 @@ import { getStatusScenarios } from "./statusScenarioData";
 import { getMergedStores } from "./storeFileData";
 import { buildStoreReport, type ClientStoreInput, type StoreReport } from "./storeReport";
 import { resolveDispoCode, looseCode } from "./storeReportCodeMap";
+import { brand } from "./brand";
 
 const MONTHS = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -267,7 +268,9 @@ const RETAILER_FILE: Record<string, string> = {
 
 export function storeReportLogos(origin: string, subChannel: string): {
   iramLogoUrl: string;
+  iramLogoAlt: string;
   outerjoinLogoUrl: string;
+  outerjoinLogoAlt: string;
   retailerLogoUrl?: string;
 } {
   const file = RETAILER_FILE[norm(subChannel)];
@@ -281,8 +284,13 @@ export function storeReportLogos(origin: string, subChannel: string): {
     } catch { /* ignore — fall back to text */ }
   }
   return {
-    iramLogoUrl: `${origin}/brand/iram.png`,
-    outerjoinLogoUrl: `${origin}/brand/outerjoin.png`,
+    // The two partner logos come from the brand: iRam + OuterJoin on iRam's
+    // deployment, ARIA + OuterJoin on OuterJoin's. Field names kept so stored
+    // and in-flight meta still read.
+    iramLogoUrl: `${origin}${brand.reportLogos[0].src}`,
+    iramLogoAlt: brand.reportLogos[0].alt,
+    outerjoinLogoUrl: `${origin}${brand.reportLogos[1].src}`,
+    outerjoinLogoAlt: brand.reportLogos[1].alt,
     retailerLogoUrl,
   };
 }
@@ -295,7 +303,12 @@ export function storeReportLogos(origin: string, subChannel: string): {
 // the env var isn't set. Accepts a bare host (adds https://) and trims slashes.
 export function reportBaseUrl(fallbackOrigin: string): string {
   const raw = (process.env.STORE_REPORT_BASE_URL || "").trim().replace(/\/+$/, "");
-  if (!raw) return fallbackOrigin;
+  if (!raw) {
+    // The project's production domain beats the request origin: a cron or a
+    // test send can arrive on a protected per-deployment URL.
+    const prod = (process.env.VERCEL_PROJECT_PRODUCTION_URL || "").trim();
+    return prod ? `https://${prod}` : fallbackOrigin;
+  }
   return /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
 }
 

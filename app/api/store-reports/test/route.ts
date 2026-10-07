@@ -7,6 +7,7 @@ import { sendStoreReportEmail } from "@/lib/email";
 import { addLog } from "@/lib/activityLog";
 import { addTrackingSend, trackingDay } from "@/lib/storeReportTracking";
 import { v4 as uuid } from "uuid";
+import { brand } from "@/lib/brand";
 
 // Sends a one-off store-report email to the logged-in user (Outlook rendering
 // test). Real data, no SQL proxy needed — reads DISPO data from Blob + Resend.
@@ -64,7 +65,7 @@ export async function POST(req: NextRequest) {
       periodLabel: loaded.periodLabel,
       reportUrl,
       generatedAt: formatGeneratedAt(),
-      version: "iRam LIVE",
+      version: brand.product,
       trackingPixelUrl,
       ...storeReportLogos(base, loaded.report.subChannel),
     });

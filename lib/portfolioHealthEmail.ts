@@ -26,6 +26,7 @@
 import { aggregateCube, emptyFilter, type PortfolioCube } from "./portfolioCube";
 import type { ClientFreshness, KpiCounts, PortfolioHealth } from "./portfolioHealth";
 import type { ComparisonPoint } from "./portfolioSnapshot";
+import { brand } from "./brand";
 
 export interface PortfolioEmailRecipient {
   name: string;
@@ -237,7 +238,7 @@ export function buildPortfolioHealthEmail(input: PortfolioEmailInput): Portfolio
   </p>
   <p style="margin:0;font-size:12px;color:#71717a">
     Click any row on the report to filter, or the arrow to see the lines behind it.
-    You are receiving this because Portfolio Stock Health is ticked on your iRam LIVE account.
+    You are receiving this because Portfolio Stock Health is ticked on your ${brand.product} account.
   </p>
 </div>`.trim();
 

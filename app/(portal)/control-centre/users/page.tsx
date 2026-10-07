@@ -6,6 +6,7 @@ import { SortableTh, TableSearch } from "@/components/TableTools";
 import { authFetch, useAuth } from "@/lib/useAuth";
 import { ROLE_DEFINITIONS } from "@/lib/types";
 import type { User } from "@/lib/types";
+import { brand } from "@/lib/brand";
 
 type UserSafe = Omit<User, "password">;
 
@@ -303,7 +304,7 @@ export default function UsersPage() {
               <div className="mb-1 text-sm font-medium text-[var(--color-text)]">Store reports on check-in</div>
               <p className="mb-2 text-xs text-[var(--color-text-muted)]">
                 Matched on the email Perigee has for this person. Without the tick below they get the full store report
-                (every opted-in client), like iRam&apos;s own reps.
+                (every opted-in client), like {brand.company}&apos;s own reps.
               </p>
               <label className="flex items-center gap-2 text-sm">
                 <input

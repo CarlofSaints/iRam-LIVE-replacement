@@ -3,6 +3,7 @@ import { getUserByEmail } from "@/lib/userData";
 import { createResetToken } from "@/lib/passwordReset";
 import { sendPasswordResetEmail } from "@/lib/email";
 import { noCacheHeaders } from "@/lib/auth";
+import { siteUrl } from "@/lib/brand";
 
 export async function POST(req: NextRequest) {
   try {
@@ -11,8 +12,7 @@ export async function POST(req: NextRequest) {
     const user = await getUserByEmail(email);
     if (user && user.active) {
       const token = await createResetToken(email);
-      const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
-      const resetUrl = `${siteUrl}/reset-password?token=${token}`;
+      const resetUrl = `${siteUrl()}/reset-password?token=${token}`;
       await sendPasswordResetEmail({ to: user.email, name: user.name, resetUrl });
     }
     return Response.json({ success: true }, { headers: noCacheHeaders() });

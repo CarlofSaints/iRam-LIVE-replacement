@@ -4,11 +4,13 @@ import { useState, FormEvent, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import PasswordInput from "@/components/PasswordInput";
 import { useAuth } from "@/lib/useAuth";
+import { brand } from "@/lib/brand";
 
 function LoginInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const isLocal = searchParams.get("local") === "true";
+  // No Hub on this deployment = the email + password form IS the login.
+  const isLocal = !brand.features.hubSso || searchParams.get("local") === "true";
   const { login, user } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -70,13 +72,15 @@ function LoginInner() {
     <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-50">
       <div className="w-full max-w-md">
         <div className="rounded-t-xl bg-[var(--color-primary)] px-8 py-6 text-center">
-          <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-lg bg-white/20 text-xl font-bold text-white">L</div>
-          <h1 className="text-xl font-bold text-white">iRam LIVE</h1>
-          <p className="mt-1 text-sm text-white/80">OuterJoin</p>
+          <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-lg bg-white/20 text-xl font-bold text-white">{brand.product.charAt(0)}</div>
+          <h1 className="text-xl font-bold text-white">{brand.product}</h1>
+          <p className="mt-1 text-sm text-white/80">{brand.tagline}</p>
         </div>
-        <div className="border-x border-amber-200 bg-amber-50 px-4 py-2 text-center text-xs text-amber-700">
-          Emergency local login — normal access is via iRam Hub
-        </div>
+        {brand.features.hubSso && (
+          <div className="border-x border-amber-200 bg-amber-50 px-4 py-2 text-center text-xs text-amber-700">
+            Emergency local login — normal access is via iRam Hub
+          </div>
+        )}
         <div className="rounded-b-xl border border-t-0 border-[var(--color-border)] bg-white px-8 py-8">
           <form onSubmit={handleSubmit} className="space-y-5">
             {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}

@@ -2,6 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element */
 import { useState, useEffect } from "react";
+import { brand } from "@/lib/brand";
 
 /* ──────────────────────────────────────────────────────────────
    Client Setup Guide
@@ -140,7 +141,7 @@ export default function GuidePage() {
   return (
     <div className="p-8">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-[var(--color-text)]">iRam LIVE Guide</h1>
+        <h1 className="text-2xl font-bold text-[var(--color-text)]">{brand.product} Guide</h1>
         <p className="mt-1 text-sm text-[var(--color-text-muted)]">
           How to onboard a new client — what each setting means and the order to do it in — plus, in the
           appendices, how DISPO data turns into a report figure and what to check when one looks wrong.

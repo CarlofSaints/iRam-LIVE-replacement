@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth, usePermissions } from "@/lib/useAuth";
 import { avatarSrc } from "@/lib/avatar";
+import { brand } from "@/lib/brand";
 
 interface NavItem {
   label: string;
@@ -243,6 +244,8 @@ export default function Sidebar() {
     "/portfolio-health": "view_dashboard",
   };
   const allowed = (item: NavItem) => {
+    // SharePoint filing is iRam's SharePoint; nothing to show elsewhere.
+    if (item.href === "/dispo-filing" && !brand.features.sharepointFiling) return false;
     const perm = navPermission[item.href];
     return !perm || can(perm);
   };
@@ -255,14 +258,14 @@ export default function Sidebar() {
       {/* Header */}
       <div className="flex items-center gap-3 border-b border-[var(--color-border)] px-5 py-4">
         <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--color-primary)] text-sm font-bold text-white">
-          L
+          {brand.product.charAt(0)}
         </div>
         <div>
           <div className="text-sm font-bold text-[var(--color-text)]">
-            iRam LIVE
+            {brand.product}
           </div>
           <div className="text-xs text-[var(--color-text-muted)]">
-            OuterJoin
+            {brand.tagline}
           </div>
         </div>
       </div>

@@ -27,6 +27,7 @@ import { buildDateContext, dataRowExtras, rangeModeLabel, type RangeExceptionRow
 import { rangeFlag, type RangeMode } from "./rangeState";
 import { analyzeCoverage, coverageMessageLines, formatMonth } from "./dataCoverage";
 import { applyStreamWriterOrderFix } from "./exceljsStreamOrder";
+import { brand } from "./brand";
 
 // ── Colors ─────────────────────────────────────────────────────
 
@@ -346,7 +347,7 @@ export async function buildMonthEndWorkbook(
        `compression: true` fix. */
     zip: { zlib: { level: 6 } },
   } as never);
-  wb.creator = "iRam LIVE Replacement";
+  wb.creator = brand.product;
   wb.created = new Date();
   nextCfPriority = 1; // reset CF rule priorities per workbook
 

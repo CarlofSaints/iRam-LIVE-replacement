@@ -36,6 +36,7 @@ const FEED_BUDGET_MS = 40_000;
 import { getClients } from "./clientData";
 import type { NormalisedVisit } from "./storeReportSync";
 import { v4 as uuid } from "uuid";
+import { brand } from "./brand";
 
 const normCh = normChannel;
 
@@ -140,7 +141,10 @@ export async function runStoreReportSync(opts: RunOptions): Promise<RunResult> {
   //    still get reports while it is down. The failure is named in the run.
   let visits: Record<string, unknown>[] = [];
   const runProblems: string[] = [];
-  try {
+  // Only iRam's deployment has the main feed (iRam's own Perigee DB). On the
+  // others every report comes from a client feed, which only ever reaches a
+  // user limited to that client: there is no all-client report to send.
+  if (brand.features.iramVisitFeed) try {
     visits = await getTodayMassmartVisits();
   } catch (e) {
     runProblems.push(`Main feed failed: ${e instanceof Error ? e.message : "visit fetch failed"}`);
@@ -323,7 +327,7 @@ export async function runStoreReportSync(opts: RunOptions): Promise<RunResult> {
         periodLabel: loaded.periodLabel,
         reportUrl,
         generatedAt: formatGeneratedAt(),
-        version: "iRam LIVE",
+        version: brand.product,
         trackingPixelUrl,
         ...storeReportLogos(base, report.subChannel),
       });

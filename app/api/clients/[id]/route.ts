@@ -4,6 +4,7 @@ import { purgeClient } from "@/lib/clientPurge";
 import { requireLogin, requirePermission, noCacheHeaders, handleAuthError } from "@/lib/auth";
 import { addLog } from "@/lib/activityLog";
 import { getIramLiveClientNames, canonicalClientName } from "@/lib/sqlClientNames";
+import { brand } from "@/lib/brand";
 
 export async function GET(
   req: NextRequest,
@@ -43,7 +44,8 @@ export async function PUT(
       !!existing && !!newName &&
       newName.trim().toUpperCase() !== existing.name.trim().toUpperCase();
 
-    if (renaming) {
+    // The SQL client list only exists on iRam's deployment.
+    if (renaming && brand.features.sqlClientList) {
       const allowed = await getIramLiveClientNames();
       if (allowed.error || allowed.names.length === 0) {
         return Response.json(

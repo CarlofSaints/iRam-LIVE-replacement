@@ -13,6 +13,7 @@
    ────────────────────────────────────────────────────────────── */
 
 import type { StoreReport } from "./storeReport";
+import { brand } from "./brand";
 
 export interface StoreReportPageMeta {
   periodLabel: string;       // e.g. "Week ending 25 Jun 2026" or "Wk 4 · Jun 2026"
@@ -20,7 +21,9 @@ export interface StoreReportPageMeta {
   version: string;           // "iRam LIVE v1.0.0"
   reportId: string;          // stable id for localStorage tick state (e.g. "MW35-2026-06-4")
   iramLogoUrl?: string;
+  iramLogoAlt?: string;
   outerjoinLogoUrl?: string;
+  outerjoinLogoAlt?: string;
   retailerLogoUrl?: string;
   track?: { url: string; token: string; day: string };  // engagement beacons
   // Endpoints + signed token for the page's own calls: saving stock counts and
@@ -728,7 +731,7 @@ function tick(id,on,box){
 
 function logos(){
   const L=(u,alt)=> u? '<img src="'+esc(u)+'" alt="'+esc(alt)+'">' : '<span style="color:#9aa3ad;font-weight:600;font-size:12px">'+esc(alt)+'</span>';
-  document.getElementById("logos").innerHTML = L(M.iramLogoUrl,"iRAM")+L(M.outerjoinLogoUrl,"OUTERJOIN")+L(M.retailerLogoUrl,R.subChannel||"Retailer");
+  document.getElementById("logos").innerHTML = L(M.iramLogoUrl,M.iramLogoAlt||"iRAM")+L(M.outerjoinLogoUrl,M.outerjoinLogoAlt||"OUTERJOIN")+L(M.retailerLogoUrl,R.subChannel||"Retailer");
 }
 
 const INFO = [
@@ -743,7 +746,7 @@ function buildInfo(){
   let h='<div class="note">An article can appear in more than one list when it matches several rules — its chips show the others (e.g. + Margin Risk). Tick it off in any list and it\\'s ticked off everywhere. A card turns <b style="color:#2e9e5b">green</b> once every item in its list is ticked.</div>';
   for(const [c,t,p] of INFO){ h+='<div class="def"><div class="t"><span class="dot" style="background:'+c+'"></span>'+t+'</div><p>'+p+'</p></div>'; }
   h+='<div class="def"><div class="t">DROS</div><p>Daily Rate Of Sale = this year\\'s units ÷ days elapsed in the year. We work from monthly DISPO data, so it\\'s an average daily rate, not an exact day-by-day figure.</p></div>';
-  h+='<div class="def"><div class="t">Stock found</div><p>On Phantom lines, type what you physically counted on the shelf. Decimals are fine (e.g. 3.5 metres of rope). It saves as you type \\u2014 to this phone first, so a weak signal in-store can\\'t lose it, then to iRam. From the Phantom list you can download or email a stock count sheet, either blank to write on or already filled in with what you captured here.</p></div>';
+  h+='<div class="def"><div class="t">Stock found</div><p>On Phantom lines, type what you physically counted on the shelf. Decimals are fine (e.g. 3.5 metres of rope). It saves as you type \\u2014 to this phone first, so a weak signal in-store can\\'t lose it, then to ${brand.company}. From the Phantom list you can download or email a stock count sheet, either blank to write on or already filled in with what you captured here.</p></div>';
   h+='<div class="def"><div class="t">Tick boxes</div><p>Tick an item to mark it done; it drops into the Completed list at the bottom.</p></div>';
   document.getElementById("infoBody").innerHTML=h;
 }

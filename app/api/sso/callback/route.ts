@@ -5,10 +5,13 @@ import { writeJson } from "@/lib/blob";
 import { encodeSession, sessionCookieOptions, noCacheHeaders } from "@/lib/auth";
 import { NO_LOGIN_ROLES, type SessionPayload, type User } from "@/lib/types";
 import { v4 as uuid } from "uuid";
+import { brand } from "@/lib/brand";
 
 const MODULE_SLUG = "iram-live";
 
 export async function POST(req: NextRequest) {
+  // Hub sign-in exists only on iRam's deployment.
+  if (!brand.features.hubSso) return NextResponse.json({ error: "Not found" }, { status: 404, headers: noCacheHeaders() });
   const { token } = (await req.json()) as { token?: string };
   if (!token) return NextResponse.json({ error: "Missing token" }, { status: 400, headers: noCacheHeaders() });
 
