@@ -4,6 +4,7 @@
 
 import ExcelJS from "exceljs";
 import type { StoreReportClaim } from "./storeReportClaims";
+import { brand } from "./brand";
 
 const CAT_LABEL: Record<string, string> = {
   oos: "Out of Stock",
@@ -37,7 +38,7 @@ function styleHeader(row: ExcelJS.Row) {
 
 export async function buildActionWorkbook(claims: StoreReportClaim[], rangeLabel: string): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
-  wb.creator = "iRam LIVE";
+  wb.creator = brand.product;
 
   // ── Summary sheet — per rep ──
   const summary = wb.addWorksheet("Summary");

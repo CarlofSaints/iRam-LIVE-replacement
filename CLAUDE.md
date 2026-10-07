@@ -4,7 +4,6 @@
 `C:\Users\CarlDosSantos-(OUTER\Projects\iram-live-replacement`
 GitHub: [iRam-LIVE-replacement](https://github.com/CarlofSaints/iRam-LIVE-replacement)
 Vercel: `https://i-ram-live-replacement.vercel.app/`
-Seed secret: `oj-seed-2026`
 
 ## Tech Stack
 - Next.js 16.2.6, React 19, TypeScript, Tailwind CSS 4

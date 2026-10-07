@@ -8,6 +8,7 @@ import Link from "next/link";
 import { authFetch, useAuth, usePermissions } from "@/lib/useAuth";
 import type { Client, Channel, CAM, ControlFileType } from "@/lib/types";
 import { CLIENT_REQUEST_CHECKLIST, emptyChecklist } from "@/lib/clientRequestChecklist";
+import { brand } from "@/lib/brand";
 
 /* The whole "Email OJ" request in one shape, used for the initial state, for
    the reset after a send, and posted as-is. One object rather than a field
@@ -207,7 +208,7 @@ export default function ClientsPage() {
     setShowForm(opening);
     setError("");
     setNameNotice("");
-    if (opening) loadSqlNames();
+    if (opening && brand.features.sqlClientList) loadSqlNames();
   }
 
   // Keyed on the SQL name, which is what the picker offers.
@@ -229,7 +230,7 @@ export default function ClientsPage() {
       // Adding it twice would split the client's data across two records, and
       // an archived client still owns its name.
       setNameNotice(
-        `${name} is already on iRam LIVE${already.active ? "" : " (archived — restore it instead of adding it again)"}.`,
+        `${name} is already on ${brand.product}${already.active ? "" : " (archived — restore it instead of adding it again)"}.`,
       );
       return;
     }
@@ -238,7 +239,7 @@ export default function ClientsPage() {
        company; being wrong the other way would stop a legitimate add. */
     if (m && m.likely.length > 0) {
       setNameNotice(
-        `iRam LIVE already has ${m.likely.map((l) => `"${l.name}"`).join(" and ")}. ` +
+        `${brand.product} already has ${m.likely.map((l) => `"${l.name}"`).join(" and ")}. ` +
         `If that is the same company, do NOT add "${name}" as a second client — open the existing one and ` +
         `rename it to "${name}" instead, which keeps its data and maps it to SQL.`,
       );
@@ -435,6 +436,16 @@ export default function ClientsPage() {
             {/* The name is PICKED, never typed — see SqlNamesResponse above. */}
             <div>
               <label className="mb-2 block text-sm font-medium text-[var(--color-text)]">Client Name</label>
+              {/* No SQL client list on this deployment: the name is typed. */}
+              {!brand.features.sqlClientList ? (
+                <input
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  placeholder="The client's trading name"
+                  required
+                  className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm"
+                />
+              ) : (<>
               {namesLoading ? (
                 <div className="rounded-lg border border-[var(--color-border)] bg-zinc-50 px-3 py-2 text-sm text-[var(--color-text-muted)]">
                   Reading the client list from SQL Server…
@@ -487,6 +498,7 @@ export default function ClientsPage() {
                   ✉ Email OJ — client not on the list
                 </button>
               </div>
+              </>)}
               {nameNotice && (
                 <div className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">{nameNotice}</div>
               )}

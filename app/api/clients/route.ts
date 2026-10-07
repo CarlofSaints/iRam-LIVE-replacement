@@ -3,6 +3,7 @@ import { getClients, createClient } from "@/lib/clientData";
 import { requireLogin, requirePermission, noCacheHeaders, handleAuthError } from "@/lib/auth";
 import { addLog } from "@/lib/activityLog";
 import { getIramLiveClientNames, canonicalClientName } from "@/lib/sqlClientNames";
+import { brand } from "@/lib/brand";
 
 export async function GET(req: NextRequest) {
   try {
@@ -44,6 +45,21 @@ export async function POST(req: NextRequest) {
     if (!requested) {
       return Response.json({ error: "A client name is required." }, { status: 400, headers: noCacheHeaders() });
     }
+    // No SQL client list on this deployment: the name is typed. Refuse only an
+    // exact repeat of an existing client, the one mistake the server can see.
+    if (!brand.features.sqlClientList) {
+      const clash = (await getClients()).find((c) => c.name.trim().toUpperCase() === requested.toUpperCase());
+      if (clash) {
+        return Response.json(
+          { error: `"${clash.name}" already exists${clash.active ? "" : " (archived: restore it instead)"}.` },
+          { status: 409, headers: noCacheHeaders() },
+        );
+      }
+      const client = await createClient({ ...data, name: requested });
+      await addLog({ userId: session.userId, userName: session.name, action: "create_client", details: `Created client ${client.name}`, status: "success" });
+      return Response.json(client, { status: 201, headers: noCacheHeaders() });
+    }
+
     const allowed = await getIramLiveClientNames();
     if (allowed.error || allowed.names.length === 0) {
       return Response.json(

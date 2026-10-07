@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserByEmail, verifyPassword, updateUser } from "@/lib/userData";
-import { encodeSession, sessionCookieOptions, noCacheHeaders, handleAuthError } from "@/lib/auth";
+import { encodeSession, getSession, sessionCookieOptions, noCacheHeaders, handleAuthError } from "@/lib/auth";
 import { addLog } from "@/lib/activityLog";
 import { NO_LOGIN_ROLES, type SessionPayload } from "@/lib/types";
 
@@ -35,6 +35,13 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     return handleAuthError(err);
   }
+}
+
+/** Is this browser's cookie still a valid session? 401 if not. */
+export async function GET(req: NextRequest) {
+  const session = getSession(req);
+  if (!session) return Response.json({ error: "Not authenticated" }, { status: 401, headers: noCacheHeaders() });
+  return Response.json({ session }, { headers: noCacheHeaders() });
 }
 
 export async function DELETE() {

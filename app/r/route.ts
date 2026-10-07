@@ -3,6 +3,7 @@ import { loadStoreReport, formatGeneratedAt, storeReportLogos } from "@/lib/stor
 import { renderStoreReportPage } from "@/lib/storeReportPage";
 import { verifyReportLink, signReportLink, legacyLinksAllowed, linkClientIds, ReportLinkPayload } from "@/lib/reportLink";
 import { getPhantomCounts, countsForLines } from "@/lib/phantomCounts";
+import { brand } from "@/lib/brand";
 
 // PUBLIC hosted action-list page — reps open this from the email link, so it is
 // intentionally not behind a login (any rep may view any store's report). The
@@ -133,7 +134,7 @@ export async function GET(req: NextRequest) {
     const html = renderStoreReportPage(loaded.report, {
       periodLabel: loaded.periodLabel,
       generatedAt: formatGeneratedAt(),
-      version: "iRam LIVE",
+      version: brand.product,
       reportId: `${target.site}-${loaded.year}-${loaded.month}-${loaded.week}`,
       ...storeReportLogos(u.origin, loaded.report.subChannel),
       ...(token && day ? { track: { url: `${u.origin}/api/store-reports/track`, token, day } } : {}),

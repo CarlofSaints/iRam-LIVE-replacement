@@ -216,8 +216,9 @@ export default function ClientDetailPage() {
       if (file.size > BLOB_THRESHOLD_BYTES) {
         // Too big to POST through the function (~4.5MB body cap). Upload straight
         // to Blob from the browser, then send only the URL to be parsed.
-        const blob = await upload(file.name, file, {
-          access: "public",
+        // Must match TEMP_UPLOAD_PREFIX in lib/blob.ts (a client page cannot import it).
+        const blob = await upload(`uploads-tmp/${file.name}`, file, {
+          access: process.env.NEXT_PUBLIC_BLOB_ACCESS === "private" ? "private" : "public",
           handleUploadUrl: `/api/clients/${id}/control-files/blob`,
         });
         res = await authFetch(`/api/clients/${id}/control-files`, {

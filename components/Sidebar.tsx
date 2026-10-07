@@ -4,6 +4,8 @@ import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth, usePermissions } from "@/lib/useAuth";
+import { avatarSrc } from "@/lib/avatar";
+import { brand } from "@/lib/brand";
 
 interface NavItem {
   label: string;
@@ -242,6 +244,8 @@ export default function Sidebar() {
     "/portfolio-health": "view_dashboard",
   };
   const allowed = (item: NavItem) => {
+    // SharePoint filing is iRam's SharePoint; nothing to show elsewhere.
+    if (item.href === "/dispo-filing" && !brand.features.sharepointFiling) return false;
     const perm = navPermission[item.href];
     return !perm || can(perm);
   };
@@ -254,14 +258,14 @@ export default function Sidebar() {
       {/* Header */}
       <div className="flex items-center gap-3 border-b border-[var(--color-border)] px-5 py-4">
         <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--color-primary)] text-sm font-bold text-white">
-          L
+          {brand.product.charAt(0)}
         </div>
         <div>
           <div className="text-sm font-bold text-[var(--color-text)]">
-            iRam LIVE
+            {brand.product}
           </div>
           <div className="text-xs text-[var(--color-text-muted)]">
-            OuterJoin
+            {brand.tagline}
           </div>
         </div>
       </div>
@@ -315,8 +319,8 @@ export default function Sidebar() {
         <div className="border-t border-[var(--color-border)] px-4 py-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2.5 min-w-0">
-              {user.profilePicUrl ? (
-                <img src={user.profilePicUrl} alt="" className="h-8 w-8 shrink-0 rounded-full object-cover" />
+              {avatarSrc(user.profilePicUrl) ? (
+                <img src={avatarSrc(user.profilePicUrl) ?? undefined} alt="" className="h-8 w-8 shrink-0 rounded-full object-cover" />
               ) : (
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary)] text-xs font-bold text-white">
                   {user.name.split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 2)}

@@ -23,6 +23,7 @@
 import ExcelJS from "exceljs";
 import { effectiveDsc, NO_COVER, type StoreLine } from "./storeReport";
 import { parseDispoDate } from "./monthEndReport";
+import { brand } from "./brand";
 
 // "1063 — ADDIS", or just the number when we have no name for it.
 export function vendorLabelFor(vendor: string, name: string): string {
@@ -221,7 +222,7 @@ export async function buildPhantomCountWorkbook(
   opts: PhantomSheetOpts,
 ): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
-  wb.creator = "iRam LIVE";
+  wb.creator = brand.product;
   wb.created = new Date();
 
   const counts = opts.counts ?? {};

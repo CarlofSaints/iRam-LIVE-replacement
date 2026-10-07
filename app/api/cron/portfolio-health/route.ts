@@ -117,9 +117,10 @@ async function emailChannel(args: {
 
 export async function GET(req: NextRequest) {
   const secret = process.env.CRON_SECRET;
-  if (secret) {
+  {
+    // No CRON_SECRET in production = refuse, never "anyone may trigger".
     const auth = req.headers.get("authorization") || "";
-    if (auth !== `Bearer ${secret}`) {
+    if (secret ? auth !== `Bearer ${secret}` : process.env.NODE_ENV === "production") {
       return Response.json({ error: "Unauthorized" }, { status: 401 });
     }
   }

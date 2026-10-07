@@ -19,7 +19,9 @@ export interface StoreReportEmailMeta {
   generatedAt: string;       // "26 Jun 2026 at 13:36"
   version: string;           // "iRam LIVE v1.0.0"
   iramLogoUrl?: string;      // data: URL or https
+  iramLogoAlt?: string;
   outerjoinLogoUrl?: string;
+  outerjoinLogoAlt?: string;
   retailerLogoUrl?: string;  // store's own main-channel logo (Makro / Builders)
   trackingPixelUrl?: string; // 1×1 open-tracking pixel
 }
@@ -132,8 +134,8 @@ export function renderStoreReportEmail(report: StoreReport, meta: StoreReportEma
   <!-- footer logos -->
   <tr><td align="center" style="padding:18px 28px 4px 28px;">
     <table role="presentation" cellpadding="0" cellspacing="0"><tr>
-      <td style="padding:0 16px;">${logo(meta.iramLogoUrl, "iRAM")}</td>
-      <td style="padding:0 16px;">${logo(meta.outerjoinLogoUrl, "OUTERJOIN")}</td>
+      <td style="padding:0 16px;">${logo(meta.iramLogoUrl, meta.iramLogoAlt || "iRAM")}</td>
+      <td style="padding:0 16px;">${logo(meta.outerjoinLogoUrl, meta.outerjoinLogoAlt || "OUTERJOIN")}</td>
       <td style="padding:0 16px;">${logo(meta.retailerLogoUrl, report.subChannel || "Retailer")}</td>
     </tr></table>
   </td></tr>

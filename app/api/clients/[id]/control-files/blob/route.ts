@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import { requirePermission, AuthError, noCacheHeaders } from "@/lib/auth";
+import { TEMP_UPLOAD_PREFIX } from "@/lib/blob";
 
 // Issues a short-lived token so the BROWSER can upload a control file straight to
 // Vercel Blob. A Range Management file runs to ~20MB, far past the ~4.5MB
@@ -15,7 +16,9 @@ export async function POST(req: NextRequest): Promise<Response> {
     const json = await handleUpload({
       body,
       request: req,
-      onBeforeGenerateToken: async () => {
+      onBeforeGenerateToken: async (pathname) => {
+        // Browser uploads may only land in the temp folder, never over app data.
+        if (!pathname.startsWith(TEMP_UPLOAD_PREFIX) || pathname.includes("..")) throw new AuthError("Uploads must go to the temporary upload folder", 400);
         await requirePermission(req, "manage_control_files");
         return {
           maximumSizeInBytes: 200 * 1024 * 1024,

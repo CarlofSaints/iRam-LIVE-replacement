@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { upsertStatus, getStatusDefinitions } from "@/lib/statusData";
 import { getChannels } from "@/lib/channelData";
-import { noCacheHeaders } from "@/lib/auth";
+import { noCacheHeaders, seedSecretOk } from "@/lib/auth";
 import type { StatusClassification } from "@/lib/types";
 
 interface SeedEntry {
@@ -14,7 +14,7 @@ interface SeedEntry {
 
 export async function POST(req: NextRequest) {
   const secret = req.headers.get("x-seed-secret");
-  if (!secret || secret !== process.env.SUPER_ADMIN_SEED_SECRET) {
+  if (!seedSecretOk(secret)) {
     return Response.json({ error: "Invalid seed secret" }, { status: 403, headers: noCacheHeaders() });
   }
 

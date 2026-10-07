@@ -16,6 +16,7 @@ import { buildPrincipalMap, resolveVendors, principalCoverage } from "@/lib/prin
 import { getProductMaster } from "@/lib/productMasterData";
 import { requireLogin, requirePermission, noCacheHeaders, handleAuthError } from "@/lib/auth";
 import { addLog } from "@/lib/activityLog";
+import { fetchBlobBytes, isOwnTempUpload } from "@/lib/blob";
 import { acquireUploadLock, releaseUploadLock, lockMessage, type UploadLock } from "@/lib/uploadLock";
 import { PARSER_VERSION } from "@/lib/parserVersion";
 import { weeksInRetailMonth, isValidRetailWeek } from "@/lib/retailCalendar";
@@ -131,7 +132,9 @@ export async function POST(req: NextRequest) {
 
     if (contentType.includes("application/json")) {
       const body = await req.json();
-      tempBlobUrl = typeof body.blobUrl === "string" ? body.blobUrl : null;
+      // Only ever a URL on a Blob host: this route fetches it server-side, so an
+      // unchecked value would fetch any address the browser names.
+      tempBlobUrl = typeof body.blobUrl === "string" && isOwnTempUpload(body.blobUrl) ? body.blobUrl : null;
       clientId = body.clientId ?? null;
       channelId = body.channelId ?? null;
       fileType = (body.fileType ?? null) as FileType | null;
@@ -143,11 +146,16 @@ export async function POST(req: NextRequest) {
       if (!tempBlobUrl) {
         return refuse(400, { error: "Missing uploaded file reference" }, "The browser sent no reference to the uploaded file");
       }
-      const r = await fetch(tempBlobUrl);
-      if (!r.ok) {
-        return refuse(400, { error: "Could not read the uploaded file — please try again" }, `The temporary upload could not be fetched back (HTTP ${r.status})`);
+      let fetched: Buffer | null;
+      try {
+        fetched = await fetchBlobBytes(tempBlobUrl);
+      } catch (e) {
+        return refuse(400, { error: "Could not read the uploaded file — please try again" }, `The temporary upload could not be fetched back (${e instanceof Error ? e.message : String(e)})`);
       }
-      buffer = Buffer.from(await r.arrayBuffer());
+      if (!fetched) {
+        return refuse(400, { error: "Could not read the uploaded file — please try again" }, "The temporary upload could not be fetched back (not found)");
+      }
+      buffer = fetched;
     } else {
       const formData = await req.formData();
       const file = formData.get("file") as File | null;

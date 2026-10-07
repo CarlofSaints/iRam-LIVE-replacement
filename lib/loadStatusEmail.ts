@@ -8,6 +8,7 @@
    ────────────────────────────────────────────────────────────── */
 
 import type { LoadStatusResult, OutstandingVendor } from "./loadStatus";
+import { brand } from "./brand";
 
 type Status = Omit<LoadStatusResult, "recipients" | "emailed" | "failures">;
 
@@ -86,7 +87,7 @@ export function renderLoadStatusEmail(params: {
     : "";
 
   const listBlock = allIn
-    ? `<p style="margin:0;padding:14px 16px;background:#F0FFF4;border-left:4px solid #7CC042;border-radius:4px;font-size:14px;color:#276749;">
+    ? `<p style="margin:0;padding:14px 16px;background:#F0FFF4;border-left:4px solid ${brand.colors.primary};border-radius:4px;font-size:14px;color:#276749;">
          Every vendor has a DISPO loaded for ${esc(period)} — nothing outstanding.
        </p>`
     : `<p style="font-size:14px;color:#2D3748;margin:0 0 10px;font-weight:600;">
@@ -122,7 +123,7 @@ export function renderLoadStatusEmail(params: {
         </p>`;
     } else if (f.problems.length === 0 && f.unmatched.length === 0) {
       filingBlock = `
-        <p style="margin:0;padding:12px 14px;background:#F0FFF4;border-left:4px solid #7CC042;border-radius:4px;font-size:13px;color:#276749;">
+        <p style="margin:0;padding:12px 14px;background:#F0FFF4;border-left:4px solid ${brand.colors.primary};border-radius:4px;font-size:13px;color:#276749;">
           All ${f.filed} of ${f.checked} ${plural(f.checked, "client", "clients")} that loaded a DISPO for ${esc(period)} also filed it in SharePoint.
         </p>`;
     } else {
@@ -159,7 +160,7 @@ export function renderLoadStatusEmail(params: {
 
   const html = `
     <div style="font-family:Arial,Helvetica,sans-serif;max-width:680px;margin:0 auto;background:#ffffff;">
-      <div style="background:#7CC042;padding:24px 32px;text-align:center;border-radius:8px 8px 0 0;">
+      <div style="background:${brand.colors.primary};padding:24px 32px;text-align:center;border-radius:8px 8px 0 0;">
         <h1 style="color:#ffffff;font-size:20px;margin:0;font-weight:700;">DISPO Load Status</h1>
         <p style="color:rgba(255,255,255,0.9);font-size:13px;margin:6px 0 0;">${esc(s.windowLabel)}</p>
       </div>
@@ -167,7 +168,7 @@ export function renderLoadStatusEmail(params: {
         <p style="font-size:15px;color:#2D3748;margin:0 0 16px;">Hi ${esc(firstName(params.name))},</p>
 
         <p style="font-size:14px;color:#4A5568;margin:0 0 14px;line-height:1.7;">
-          iRam has <strong>${s.clientCount}</strong> ${plural(s.clientCount, "client", "clients")} in the iRam LIVE system,
+          ${brand.company} has <strong>${s.clientCount}</strong> ${plural(s.clientCount, "client", "clients")} in the ${brand.product} system,
           covering <strong>${s.vendorCount}</strong> vendor ${plural(s.vendorCount, "number", "numbers")}.
         </p>
         <p style="font-size:14px;color:#4A5568;margin:0 0 14px;line-height:1.7;">
