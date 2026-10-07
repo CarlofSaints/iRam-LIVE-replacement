@@ -74,7 +74,17 @@ const BRANDS: Record<BrandKey, Brand> = {
   },
 };
 
-export const brand: Brand = BRANDS[process.env.NEXT_PUBLIC_BRAND === "oj" ? "oj" : "iram"];
+// A typo must not quietly build iRam's site, with the Hub and iRam's feed
+// switched on, for OuterJoin's clients. Unset = iram; anything unknown stops
+// the build.
+function brandKey(): BrandKey {
+  const v = (process.env.NEXT_PUBLIC_BRAND || "").trim().toLowerCase();
+  if (v === "" || v === "iram") return "iram";
+  if (v === "oj") return "oj";
+  throw new Error(`NEXT_PUBLIC_BRAND is "${process.env.NEXT_PUBLIC_BRAND}": use "oj" or "iram" (or leave it unset for iram)`);
+}
+
+export const brand: Brand = BRANDS[brandKey()];
 
 /** This deployment's own address, for links in emails. NEVER the request's
  *  Host header. NEXT_PUBLIC_SITE_URL was the only source and is not set on
@@ -85,7 +95,11 @@ export const brand: Brand = BRANDS[process.env.NEXT_PUBLIC_BRAND === "oj" ? "oj"
 export function siteUrl(): string {
   const explicit = (process.env.NEXT_PUBLIC_SITE_URL || "").trim().replace(/\/+$/, "");
   if (explicit) return explicit;
+  // Only on the PRODUCTION deployment: a preview's emails must not send people
+  // to production.
   const prod = (process.env.VERCEL_PROJECT_PRODUCTION_URL || "").trim();
-  if (prod) return `https://${prod}`;
+  if (prod && process.env.VERCEL_ENV === "production") return `https://${prod}`;
+  const own = (process.env.VERCEL_URL || "").trim();
+  if (own) return `https://${own}`;
   return "http://localhost:3000";
 }

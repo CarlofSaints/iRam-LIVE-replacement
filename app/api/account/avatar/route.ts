@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { cookies } from "next/headers";
-import { requireLogin, encodeSession, sessionCookieOptions, noCacheHeaders, handleAuthError } from "@/lib/auth";
+import { requireLogin, resignSession, sessionCookieOptions, noCacheHeaders, handleAuthError } from "@/lib/auth";
 import { updateUser } from "@/lib/userData";
 import { writeBlob, readBlobBytes, deleteBlob } from "@/lib/blob";
 import { AVATAR_ROUTE } from "@/lib/avatar";
@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
     const updatedSession = { ...session, profilePicUrl: url };
     const cookieStore = await cookies();
     const { name, ...opts } = sessionCookieOptions();
-    cookieStore.set(name, encodeSession(updatedSession), opts);
+    cookieStore.set(name, resignSession(req, updatedSession), opts);
 
     return Response.json({ success: true, url, session: updatedSession }, { headers: noCacheHeaders() });
   } catch (err) {

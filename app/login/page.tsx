@@ -18,6 +18,11 @@ function LoginInner() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    // Already signed in on a password-only deployment: go in, not back to the form.
+    if (!brand.features.hubSso && user) {
+      router.replace(user.forcePasswordChange ? "/account" : "/");
+      return;
+    }
     if (isLocal) return;
     if (user) {
       if (user.forcePasswordChange) router.replace("/account");

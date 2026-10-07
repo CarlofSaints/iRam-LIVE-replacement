@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifySSOToken } from "@/lib/sso";
-import { getUsers, getUserByEmail, updateUser } from "@/lib/userData";
+import { getUsersStrict, getUserByEmail, updateUser } from "@/lib/userData";
 import { writeJson } from "@/lib/blob";
-import { encodeSession, sessionCookieOptions, noCacheHeaders } from "@/lib/auth";
+import { encodeSession, sessionCookieOptions, noCacheHeaders, sessionSigningReady } from "@/lib/auth";
 import { NO_LOGIN_ROLES, type SessionPayload, type User } from "@/lib/types";
 import { v4 as uuid } from "uuid";
 import { brand } from "@/lib/brand";
@@ -12,6 +12,9 @@ const MODULE_SLUG = "iram-live";
 export async function POST(req: NextRequest) {
   // Hub sign-in exists only on iRam's deployment.
   if (!brand.features.hubSso) return NextResponse.json({ error: "Not found" }, { status: 404, headers: noCacheHeaders() });
+  // Refuse BEFORE provisioning anyone: a user created and then unable to get a
+  // cookie is a half-done sign-in.
+  if (!sessionSigningReady()) return NextResponse.json({ error: "Sign-in is not configured on this server" }, { status: 500, headers: noCacheHeaders() });
   const { token } = (await req.json()) as { token?: string };
   if (!token) return NextResponse.json({ error: "Missing token" }, { status: 400, headers: noCacheHeaders() });
 
@@ -37,7 +40,9 @@ export async function POST(req: NextRequest) {
   }
 
   if (!user) {
-    const users = await getUsers();
+    // STRICT read: this list is written straight back, and a forgiving read
+    // that came back [] on a blip would save a list holding only this user.
+    const users = await getUsersStrict();
     const newUser: User = {
       id: uuid(),
       name: payload.name,

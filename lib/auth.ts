@@ -20,37 +20,67 @@ export function noCacheHeaders() {
    "v1.<payload>.<HMAC-SHA256>" with an expiry inside the signed payload, so
    it can't be edited and a copied cookie stops working when it expires.
 
-   The key is SESSION_SECRET, else REPORT_LINK_SECRET (already a server-only
-   secret on every deployment). There is NO constant fallback: a fallback in a
-   public repo is a published key. Production without a key accepts no
-   sessions at all; local dev gets a random key per process. */
+   The key is DERIVED (HKDF, label "session-v1") from SESSION_SECRET, else
+   REPORT_LINK_SECRET, else CRON_SECRET: the same chain report links use, so
+   a deployment whose links work can always sign people in. Deriving keeps the
+   jobs apart: a report-link signature can never pass as a session one, even
+   when both come from the same secret. There is NO constant fallback: a
+   fallback in a public repo is a published key. Production with none of the
+   three accepts no sessions; local dev gets a random key per process.
+
+   Re-signing (avatar, password change) keeps the cookie's ORIGINAL expiry,
+   so posting an avatar daily can't keep a session alive for ever. */
 const SESSION_TTL_SECONDS = 60 * 60 * 24;
 let devKey: string | null = null;
 
-function sessionKey(): string | null {
-  const k = (process.env.SESSION_SECRET || process.env.REPORT_LINK_SECRET || "").trim();
-  if (k) return k;
-  if (process.env.NODE_ENV === "production") return null;
-  devKey ??= crypto.randomBytes(32).toString("hex");
-  return devKey;
+function sessionKey(): Buffer | null {
+  let base = (process.env.SESSION_SECRET || process.env.REPORT_LINK_SECRET || process.env.CRON_SECRET || "").trim();
+  if (!base) {
+    if (process.env.NODE_ENV === "production") return null;
+    devKey ??= crypto.randomBytes(32).toString("hex");
+    base = devKey;
+  }
+  return Buffer.from(crypto.hkdfSync("sha256", base, "iram-live", "session-v1", 32));
+}
+
+/** Can this server sign a session at all? Check before creating anything. */
+export function sessionSigningReady(): boolean {
+  return sessionKey() !== null;
 }
 
 function b64url(buf: Buffer): string {
   return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-function sign(body: string, key: string): string {
+function sign(body: string, key: Buffer): string {
   return b64url(crypto.createHmac("sha256", key).update(body).digest());
 }
 
 export function encodeSession(payload: SessionPayload, ttlSeconds = SESSION_TTL_SECONDS): string {
+  return encodeWithExp(payload, Math.floor(Date.now() / 1000) + ttlSeconds);
+}
+
+function encodeWithExp(payload: SessionPayload, exp: number): string {
   const key = sessionKey();
-  if (!key) throw new AuthError("Sign-in is not configured on this server (no SESSION_SECRET)", 500);
-  const body = b64url(Buffer.from(JSON.stringify({ ...payload, exp: Math.floor(Date.now() / 1000) + ttlSeconds })));
+  if (!key) throw new AuthError("Sign-in is not configured on this server (set SESSION_SECRET, REPORT_LINK_SECRET or CRON_SECRET)", 500);
+  const body = b64url(Buffer.from(JSON.stringify({ ...payload, exp })));
   return `v1.${body}.${sign(body, key)}`;
 }
 
+/** Re-sign an updated session for this request, keeping the cookie's
+ *  ORIGINAL expiry. Throws 401 if the request has no valid session. */
+export function resignSession(req: NextRequest, payload: SessionPayload): string {
+  const cookie = req.cookies.get(COOKIE_NAME)?.value;
+  const exp = cookie ? decodeWithExp(cookie)?.exp : undefined;
+  if (!exp) throw new AuthError("Not authenticated", 401);
+  return encodeWithExp(payload, exp);
+}
+
 export function decodeSession(cookie: string): SessionPayload | null {
+  return decodeWithExp(cookie)?.payload ?? null;
+}
+
+function decodeWithExp(cookie: string): { payload: SessionPayload; exp: number } | null {
   const key = sessionKey();
   if (!key) return null;
   const [ver, body, sig] = cookie.split(".");
@@ -63,7 +93,7 @@ export function decodeSession(cookie: string): SessionPayload | null {
       Buffer.from(body.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf-8"),
     ) as SessionPayload & { exp?: number };
     if (typeof exp !== "number" || exp < Date.now() / 1000) return null;
-    return payload as SessionPayload;
+    return { payload: payload as SessionPayload, exp };
   } catch {
     return null;
   }

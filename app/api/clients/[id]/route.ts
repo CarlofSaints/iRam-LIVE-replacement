@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { getClientById, updateClient } from "@/lib/clientData";
+import { getClientById, getClients, updateClient } from "@/lib/clientData";
 import { purgeClient } from "@/lib/clientPurge";
 import { requireLogin, requirePermission, noCacheHeaders, handleAuthError } from "@/lib/auth";
 import { addLog } from "@/lib/activityLog";
@@ -44,6 +44,13 @@ export async function PUT(
       !!existing && !!newName &&
       newName.trim().toUpperCase() !== existing.name.trim().toUpperCase();
 
+    // Without iRam's SQL list, a rename may not take another client's name.
+    if (renaming && !brand.features.sqlClientList) {
+      const clash = (await getClients()).find((c) => c.id !== id && c.name.trim().toUpperCase() === newName.toUpperCase());
+      if (clash) {
+        return Response.json({ error: `"${clash.name}" already exists.` }, { status: 409, headers: noCacheHeaders() });
+      }
+    }
     // The SQL client list only exists on iRam's deployment.
     if (renaming && brand.features.sqlClientList) {
       const allowed = await getIramLiveClientNames();

@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import { getSession, requirePermission, AuthError, noCacheHeaders } from "@/lib/auth";
-import { BLOB_ACCESS } from "@/lib/blob";
+import { BLOB_ACCESS, TEMP_UPLOAD_PREFIX } from "@/lib/blob";
 
 // Issues a short-lived token so the BROWSER can upload a DISPO straight to Vercel
 // Blob, bypassing the ~4.5MB serverless request-body limit that was failing large
@@ -54,7 +54,9 @@ export async function POST(req: NextRequest): Promise<Response> {
     const json = await handleUpload({
       body,
       request: req,
-      onBeforeGenerateToken: async () => {
+      onBeforeGenerateToken: async (pathname) => {
+        // Browser uploads may only land in the temp folder, never over app data.
+        if (!pathname.startsWith(TEMP_UPLOAD_PREFIX) || pathname.includes("..")) throw new AuthError("Uploads must go to the temporary upload folder", 400);
         // Same permission the upload API itself enforces. The browser's upload()
         // is a same-origin request, so the session cookie is present here.
         await requirePermission(req, "upload_data");

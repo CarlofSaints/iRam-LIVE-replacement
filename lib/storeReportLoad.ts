@@ -306,8 +306,9 @@ export function reportBaseUrl(fallbackOrigin: string): string {
   if (!raw) {
     // The project's production domain beats the request origin: a cron or a
     // test send can arrive on a protected per-deployment URL.
+    // Production only, so a preview's test send still links to the preview.
     const prod = (process.env.VERCEL_PROJECT_PRODUCTION_URL || "").trim();
-    return prod ? `https://${prod}` : fallbackOrigin;
+    return prod && process.env.VERCEL_ENV === "production" ? `https://${prod}` : fallbackOrigin;
   }
   return /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
 }

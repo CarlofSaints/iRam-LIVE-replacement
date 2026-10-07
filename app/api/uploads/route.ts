@@ -16,7 +16,7 @@ import { buildPrincipalMap, resolveVendors, principalCoverage } from "@/lib/prin
 import { getProductMaster } from "@/lib/productMasterData";
 import { requireLogin, requirePermission, noCacheHeaders, handleAuthError } from "@/lib/auth";
 import { addLog } from "@/lib/activityLog";
-import { fetchBlobBytes, isBlobStoreUrl } from "@/lib/blob";
+import { fetchBlobBytes, isOwnTempUpload } from "@/lib/blob";
 import { acquireUploadLock, releaseUploadLock, lockMessage, type UploadLock } from "@/lib/uploadLock";
 import { PARSER_VERSION } from "@/lib/parserVersion";
 import { weeksInRetailMonth, isValidRetailWeek } from "@/lib/retailCalendar";
@@ -134,7 +134,7 @@ export async function POST(req: NextRequest) {
       const body = await req.json();
       // Only ever a URL on a Blob host: this route fetches it server-side, so an
       // unchecked value would fetch any address the browser names.
-      tempBlobUrl = typeof body.blobUrl === "string" && isBlobStoreUrl(body.blobUrl) ? body.blobUrl : null;
+      tempBlobUrl = typeof body.blobUrl === "string" && isOwnTempUpload(body.blobUrl) ? body.blobUrl : null;
       clientId = body.clientId ?? null;
       channelId = body.channelId ?? null;
       fileType = (body.fileType ?? null) as FileType | null;

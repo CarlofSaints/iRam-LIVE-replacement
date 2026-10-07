@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { cookies } from "next/headers";
 import { getUserById, verifyPassword, setUserPassword, updateUser } from "@/lib/userData";
-import { requireLogin, encodeSession, sessionCookieOptions, noCacheHeaders, handleAuthError } from "@/lib/auth";
+import { requireLogin, resignSession, sessionCookieOptions, noCacheHeaders, handleAuthError } from "@/lib/auth";
 import { addLog } from "@/lib/activityLog";
 
 export async function POST(req: NextRequest) {
@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
     const updatedSession = { ...session, forcePasswordChange: false };
     const cookieStore = await cookies();
     const { name, ...opts } = sessionCookieOptions();
-    cookieStore.set(name, encodeSession(updatedSession), opts);
+    cookieStore.set(name, resignSession(req, updatedSession), opts);
 
     return Response.json({ success: true, session: updatedSession }, { headers: noCacheHeaders() });
   } catch (err) {

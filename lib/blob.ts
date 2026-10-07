@@ -41,12 +41,33 @@ export async function fetchBlobBytes(urlOrPathname: string): Promise<Buffer | nu
   return Buffer.from(await res.arrayBuffer());
 }
 
-/** True only for a URL on a Vercel Blob host. A route that fetches a URL the
- *  BROWSER sent must check this first, or it will fetch whatever it is told. */
-export function isBlobStoreUrl(u: string): boolean {
+/* ── Browser uploads ──
+   Large files go browser → Blob, then the browser POSTs the blob URL and the
+   server reads it back AND DELETES IT in a finally. Before this, any URL on
+   any *.blob.vercel-storage.com host was accepted, so a user with upload
+   rights could post the URL of live/users.json and the server would delete
+   it. Now: browser uploads may only be written under TEMP_UPLOAD_PREFIX (the
+   token routes refuse anything else), and the server only reads or deletes a
+   URL that is in THIS store and under that prefix. */
+export const TEMP_UPLOAD_PREFIX = "uploads-tmp/";
+
+/** This store's own hostname, or null if it can't be worked out. */
+function ownStoreHost(): string | null {
+  const fromToken = (process.env.BLOB_READ_WRITE_TOKEN || "").split("_")[3] || "";
+  const fromId = (process.env.BLOB_STORE_ID || "").replace(/^store_/, "");
+  const id = (fromToken || fromId).trim().toLowerCase();
+  return id ? `${id}.${BLOB_ACCESS}.blob.vercel-storage.com` : null;
+}
+
+/** True only for a temporary browser upload in THIS store. A route that
+ *  fetches or deletes a URL the BROWSER sent must check this first. */
+export function isOwnTempUpload(u: string): boolean {
   try {
     const url = new URL(u);
-    return url.protocol === "https:" && url.hostname.endsWith(".blob.vercel-storage.com");
+    if (url.protocol !== "https:") return false;
+    const host = ownStoreHost();
+    if (!host || url.hostname.toLowerCase() !== host) return false;
+    return decodeURIComponent(url.pathname).replace(/^\/+/, "").startsWith(TEMP_UPLOAD_PREFIX);
   } catch {
     return false;
   }

@@ -140,7 +140,8 @@ export default function DataLoadPage() {
         // Too big to POST through the function. Upload straight to Blob from the
         // browser once, then send only the URL; the confirm/force step reuses it.
         if (!pendingBlobUrlRef.current) {
-          const blob = await upload(file.name, file, {
+          // Must match TEMP_UPLOAD_PREFIX in lib/blob.ts (a client page cannot import it).
+          const blob = await upload(`uploads-tmp/${file.name}`, file, {
             access: process.env.NEXT_PUBLIC_BLOB_ACCESS === "private" ? "private" : "public",
             handleUploadUrl: "/api/uploads/blob",
           });

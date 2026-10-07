@@ -15,7 +15,7 @@ import {
 import { getProductMapping, buildProductMaster } from "@/lib/productMasterData";
 import { requirePermission, noCacheHeaders, handleAuthError } from "@/lib/auth";
 import { addLog } from "@/lib/activityLog";
-import { fetchBlobBytes, isBlobStoreUrl } from "@/lib/blob";
+import { fetchBlobBytes, isOwnTempUpload } from "@/lib/blob";
 import type { ControlFileType } from "@/lib/types";
 
 const PARSERS: Record<ControlFileType, (rows: Record<string, unknown>[]) => Record<string, unknown>[]> = {
@@ -52,7 +52,7 @@ export async function POST(
       const body = await req.json();
       type = (body.type ?? null) as ControlFileType | null;
       fileName = String(body.fileName || "upload.xlsx");
-      tempBlobUrl = typeof body.blobUrl === "string" && isBlobStoreUrl(body.blobUrl) ? body.blobUrl : null;
+      tempBlobUrl = typeof body.blobUrl === "string" && isOwnTempUpload(body.blobUrl) ? body.blobUrl : null;
       if (!tempBlobUrl) return Response.json({ error: "Missing uploaded file reference" }, { status: 400, headers: noCacheHeaders() });
       if (!type || !PARSERS[type]) return Response.json({ error: "Invalid file type" }, { status: 400, headers: noCacheHeaders() });
       let fetched: Buffer | null;
