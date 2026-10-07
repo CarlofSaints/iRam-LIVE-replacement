@@ -141,7 +141,7 @@ export default function DataLoadPage() {
         // browser once, then send only the URL; the confirm/force step reuses it.
         if (!pendingBlobUrlRef.current) {
           const blob = await upload(file.name, file, {
-            access: "public",
+            access: process.env.NEXT_PUBLIC_BLOB_ACCESS === "private" ? "private" : "public",
             handleUploadUrl: "/api/uploads/blob",
           });
           pendingBlobUrlRef.current = blob.url;

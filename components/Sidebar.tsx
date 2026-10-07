@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth, usePermissions } from "@/lib/useAuth";
+import { avatarSrc } from "@/lib/avatar";
 
 interface NavItem {
   label: string;
@@ -315,8 +316,8 @@ export default function Sidebar() {
         <div className="border-t border-[var(--color-border)] px-4 py-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2.5 min-w-0">
-              {user.profilePicUrl ? (
-                <img src={user.profilePicUrl} alt="" className="h-8 w-8 shrink-0 rounded-full object-cover" />
+              {avatarSrc(user.profilePicUrl) ? (
+                <img src={avatarSrc(user.profilePicUrl) ?? undefined} alt="" className="h-8 w-8 shrink-0 rounded-full object-cover" />
               ) : (
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary)] text-xs font-bold text-white">
                   {user.name.split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 2)}

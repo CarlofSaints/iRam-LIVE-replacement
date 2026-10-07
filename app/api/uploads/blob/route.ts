@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import { getSession, requirePermission, AuthError, noCacheHeaders } from "@/lib/auth";
+import { BLOB_ACCESS } from "@/lib/blob";
 
 // Issues a short-lived token so the BROWSER can upload a DISPO straight to Vercel
 // Blob, bypassing the ~4.5MB serverless request-body limit that was failing large
@@ -25,7 +26,7 @@ export async function GET(req: NextRequest) {
   let putTest = "not run";
   try {
     const { put, del } = await import("@vercel/blob");
-    const r = await put("live/_diag/ping.txt", "ok", { access: "public", addRandomSuffix: false, allowOverwrite: true });
+    const r = await put("live/_diag/ping.txt", "ok", { access: BLOB_ACCESS, addRandomSuffix: false, allowOverwrite: true });
     putTest = `put OK -> ${r.pathname}`;
     try { await del(r.url); } catch { /* ignore cleanup */ }
   } catch (e) {
@@ -41,6 +42,7 @@ export async function GET(req: NextRequest) {
       tokenSegments: parts.length,
       blobEnvVars,
       putTest,
+      blobAccess: BLOB_ACCESS,
     },
     { headers: noCacheHeaders() },
   );

@@ -1,4 +1,4 @@
-import { put, list, del } from "@vercel/blob";
+import { put, list, del, get } from "@vercel/blob";
 import { gzipSync, gunzipSync } from "zlib";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync, readdirSync, statSync } from "fs";
 import { join, dirname, relative } from "path";
@@ -6,6 +6,51 @@ import { join, dirname, relative } from "path";
 const PREFIX = "live/";
 const DATA_DIR = join(process.cwd(), "data");
 const useBlob = !!process.env.BLOB_READ_WRITE_TOKEN;
+
+/* ── Store access mode ──
+   A Blob store is public or private FOR LIFE (chosen at creation), and every
+   put() must name the store's own mode. NEXT_PUBLIC_BLOB_ACCESS is the ONE
+   switch: "private" for a private store, anything else = public (the original
+   store). NEXT_PUBLIC_ so the browser upload() reads the same value as the
+   server; two separate settings that must agree would be a trap.
+
+   On a public store every ledger, users.json and audit file is readable by
+   anyone who learns the hostname. A private store's URLs grant nothing
+   without the store token. */
+export const BLOB_ACCESS: "public" | "private" =
+  process.env.NEXT_PUBLIC_BLOB_ACCESS === "private" ? "private" : "public";
+
+/** A blob's bytes by URL (or, on a private store, pathname), in whichever
+ *  mode the store is. null = the blob is not there; throws when the read
+ *  itself failed. */
+export async function fetchBlobBytes(urlOrPathname: string): Promise<Buffer | null> {
+  if (BLOB_ACCESS === "private") {
+    // useCache:false reads from origin, so a read just after a write sees it.
+    // (CLAUDE.md's "never use get()" warning predates private stores: a
+    // private blob can ONLY be read this way.)
+    const r = await get(urlOrPathname, { access: "private", useCache: false });
+    if (!r) return null;
+    if (r.statusCode !== 200 || !r.stream) throw new Error(`HTTP ${r.statusCode}`);
+    return Buffer.from(await new Response(r.stream).arrayBuffer());
+  }
+  if (!/^https:\/\//.test(urlOrPathname)) throw new Error("A public read needs the blob URL");
+  const sep = urlOrPathname.includes("?") ? "&" : "?";
+  const res = await fetch(`${urlOrPathname}${sep}t=${Date.now()}`, { cache: "no-store" });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return Buffer.from(await res.arrayBuffer());
+}
+
+/** True only for a URL on a Vercel Blob host. A route that fetches a URL the
+ *  BROWSER sent must check this first, or it will fetch whatever it is told. */
+export function isBlobStoreUrl(u: string): boolean {
+  try {
+    const url = new URL(u);
+    return url.protocol === "https:" && url.hostname.endsWith(".blob.vercel-storage.com");
+  } catch {
+    return false;
+  }
+}
 
 function localPath(key: string): string {
   return join(DATA_DIR, key.replace(PREFIX, ""));
@@ -94,6 +139,22 @@ async function loadJson<T>(
     }
   }
 
+  // Private store: get() by pathname, no list() round trip needed.
+  if (BLOB_ACCESS === "private") {
+    let buf: Buffer | null;
+    try {
+      buf = await fetchBlobBytes(fullKey);
+    } catch (err) {
+      throw new BlobReadError(fullKey, err);
+    }
+    if (!buf) return { found: false };
+    try {
+      return { found: true, value: JSON.parse(decodeMaybeGzip(buf)) as T };
+    } catch (err) {
+      throw new BlobReadError(fullKey, err);
+    }
+  }
+
   // Use list() to find the blob URL, then fetch directly (cache-busted)
   let match;
   try {
@@ -162,7 +223,7 @@ export async function writeJson<T>(key: string, data: T): Promise<void> {
   }
 
   await put(fullKey, gzipSync(Buffer.from(json), { level: GZIP_LEVEL }), {
-    access: "public",
+    access: BLOB_ACCESS,
     addRandomSuffix: false,
     allowOverwrite: true,
     contentType: "application/json",
@@ -251,6 +312,19 @@ export async function listBlobs(prefix: string): Promise<BlobEntry[]> {
   return out;
 }
 
+/** Raw bytes stored under a key (an image, a file), or null if there are none. */
+export async function readBlobBytes(key: string): Promise<Buffer | null> {
+  const fullKey = key.startsWith(PREFIX) ? key : PREFIX + key;
+  if (!useBlob) {
+    const p = localPath(fullKey);
+    return existsSync(p) ? readFileSync(p) : null;
+  }
+  if (BLOB_ACCESS === "private") return fetchBlobBytes(fullKey);
+  const { blobs } = await list({ prefix: fullKey, limit: 10 });
+  const match = blobs.find((b) => b.pathname === fullKey);
+  return match ? fetchBlobBytes(match.url) : null;
+}
+
 export async function writeBlob(
   key: string,
   data: Buffer | string,
@@ -264,7 +338,7 @@ export async function writeBlob(
     return `/data/${fullKey.replace(PREFIX, "")}`;
   }
   const blob = await put(fullKey, data, {
-    access: "public",
+    access: BLOB_ACCESS,
     addRandomSuffix: false,
     allowOverwrite: true,
     contentType,

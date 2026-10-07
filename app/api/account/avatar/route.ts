@@ -2,7 +2,30 @@ import { NextRequest } from "next/server";
 import { cookies } from "next/headers";
 import { requireLogin, encodeSession, sessionCookieOptions, noCacheHeaders, handleAuthError } from "@/lib/auth";
 import { updateUser } from "@/lib/userData";
-import { writeBlob } from "@/lib/blob";
+import { writeBlob, readBlobBytes, deleteBlob } from "@/lib/blob";
+import { AVATAR_ROUTE } from "@/lib/avatar";
+
+const EXTS = ["jpg", "jpeg", "png", "webp"] as const;
+const TYPES: Record<string, string> = { jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp" };
+
+// The signed-in user's own picture. Served from here, not from a Blob URL,
+// because a private store's URLs can't be loaded by an <img>.
+export async function GET(req: NextRequest) {
+  try {
+    const session = requireLogin(req);
+    for (const ext of EXTS) {
+      const bytes = await readBlobBytes(`avatars/${session.userId}.${ext}`);
+      if (bytes) {
+        return new Response(new Uint8Array(bytes), {
+          headers: { "Content-Type": TYPES[ext], "Cache-Control": "private, max-age=300" },
+        });
+      }
+    }
+    return new Response(null, { status: 404, headers: noCacheHeaders() });
+  } catch (err) {
+    return handleAuthError(err);
+  }
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -16,14 +39,18 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: "File too large (max 2MB)" }, { status: 400, headers: noCacheHeaders() });
     }
     const ext = file.name.split(".").pop()?.toLowerCase() ?? "jpg";
-    if (!["jpg", "jpeg", "png", "webp"].includes(ext)) {
+    if (!(EXTS as readonly string[]).includes(ext)) {
       return Response.json({ error: "Only JPG, PNG, or WebP images allowed" }, { status: 400, headers: noCacheHeaders() });
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
-    const blobKey = `avatars/${session.userId}.${ext}`;
-    const url = await writeBlob(blobKey, buffer, file.type);
+    // GET serves the first extension it finds, so drop any older picture saved
+    // under a different one.
+    await Promise.all(EXTS.filter((e) => e !== ext).map((e) => deleteBlob(`avatars/${session.userId}.${e}`)));
+    await writeBlob(`avatars/${session.userId}.${ext}`, buffer, TYPES[ext]);
 
+    // ?v= so the browser drops its cached copy of the old picture.
+    const url = `${AVATAR_ROUTE}?v=${Date.now()}`;
     await updateUser(session.userId, { profilePicUrl: url });
 
     const updatedSession = { ...session, profilePicUrl: url };

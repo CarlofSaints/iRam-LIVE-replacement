@@ -3,6 +3,7 @@
 import { useState, useRef, FormEvent } from "react";
 import { useAuth, authFetch } from "@/lib/useAuth";
 import PasswordInput from "@/components/PasswordInput";
+import { avatarSrc } from "@/lib/avatar";
 
 export default function AccountPage() {
   const { user, login } = useAuth();
@@ -110,10 +111,10 @@ export default function AccountPage() {
         </h2>
         <div className="mb-6 flex items-center gap-5">
           <div className="relative">
-            {user?.profilePicUrl ? (
+            {avatarSrc(user?.profilePicUrl) ? (
               <img
-                src={user.profilePicUrl}
-                alt={user.name}
+                src={avatarSrc(user?.profilePicUrl) ?? undefined}
+                alt={user?.name ?? ""}
                 className="h-20 w-20 rounded-full object-cover border-2 border-[var(--color-border)]"
               />
             ) : (

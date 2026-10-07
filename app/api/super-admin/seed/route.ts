@@ -1,10 +1,10 @@
 import { NextRequest } from "next/server";
 import { getUserByEmail, createUser, setUserPassword } from "@/lib/userData";
-import { noCacheHeaders } from "@/lib/auth";
+import { noCacheHeaders, seedSecretOk } from "@/lib/auth";
 
 export async function POST(req: NextRequest) {
   const secret = req.headers.get("x-seed-secret");
-  if (!secret || secret !== process.env.SUPER_ADMIN_SEED_SECRET) {
+  if (!seedSecretOk(secret)) {
     return Response.json({ error: "Invalid seed secret" }, { status: 403, headers: noCacheHeaders() });
   }
   try {

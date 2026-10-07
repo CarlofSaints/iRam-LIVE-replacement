@@ -15,6 +15,7 @@ import {
 import { getProductMapping, buildProductMaster } from "@/lib/productMasterData";
 import { requirePermission, noCacheHeaders, handleAuthError } from "@/lib/auth";
 import { addLog } from "@/lib/activityLog";
+import { fetchBlobBytes, isBlobStoreUrl } from "@/lib/blob";
 import type { ControlFileType } from "@/lib/types";
 
 const PARSERS: Record<ControlFileType, (rows: Record<string, unknown>[]) => Record<string, unknown>[]> = {
@@ -29,15 +30,6 @@ const PARSERS: Record<ControlFileType, (rows: Record<string, unknown>[]) => Reco
 // default function duration.
 export const maxDuration = 300;
 
-// Only fetch back files that live in our own Blob store, never an arbitrary URL.
-function isOwnBlobUrl(u: string): boolean {
-  try {
-    const url = new URL(u);
-    return url.protocol === "https:" && url.hostname.endsWith(".blob.vercel-storage.com");
-  } catch {
-    return false;
-  }
-}
 
 export async function POST(
   req: NextRequest,
@@ -60,14 +52,19 @@ export async function POST(
       const body = await req.json();
       type = (body.type ?? null) as ControlFileType | null;
       fileName = String(body.fileName || "upload.xlsx");
-      tempBlobUrl = typeof body.blobUrl === "string" && isOwnBlobUrl(body.blobUrl) ? body.blobUrl : null;
+      tempBlobUrl = typeof body.blobUrl === "string" && isBlobStoreUrl(body.blobUrl) ? body.blobUrl : null;
       if (!tempBlobUrl) return Response.json({ error: "Missing uploaded file reference" }, { status: 400, headers: noCacheHeaders() });
       if (!type || !PARSERS[type]) return Response.json({ error: "Invalid file type" }, { status: 400, headers: noCacheHeaders() });
-      const r = await fetch(tempBlobUrl);
-      if (!r.ok) {
-        return Response.json({ error: `Could not read the uploaded file back (HTTP ${r.status}). Please try again.` }, { status: 400, headers: noCacheHeaders() });
+      let fetched: Buffer | null;
+      try {
+        fetched = await fetchBlobBytes(tempBlobUrl);
+      } catch (e) {
+        return Response.json({ error: `Could not read the uploaded file back (${e instanceof Error ? e.message : String(e)}). Please try again.` }, { status: 400, headers: noCacheHeaders() });
       }
-      buffer = Buffer.from(await r.arrayBuffer());
+      if (!fetched) {
+        return Response.json({ error: "Could not read the uploaded file back (not found). Please try again." }, { status: 400, headers: noCacheHeaders() });
+      }
+      buffer = fetched;
     } else {
       const formData = await req.formData();
       const file = formData.get("file") as File | null;

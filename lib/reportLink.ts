@@ -27,14 +27,19 @@ export interface ReportLinkPayload {
 }
 
 // Secret used to sign links. Prefer a dedicated REPORT_LINK_SECRET; fall back to
-// the already-configured CRON_SECRET (also unguessable) so this works with zero
-// extra setup, then a constant last-resort so nothing crashes if neither is set.
+// the already-configured CRON_SECRET (also unguessable). There is no constant
+// last resort any more: this repo is public, so a constant is a published key
+// that signs a working link to any store. Production with neither set refuses
+// to sign or verify; local dev gets a random key per process.
+let devLinkKey: string | null = null;
 function secret(): string {
-  return (
-    process.env.REPORT_LINK_SECRET ||
-    process.env.CRON_SECRET ||
-    "iram-live-report-link-default-secret"
-  );
+  const k = process.env.REPORT_LINK_SECRET || process.env.CRON_SECRET;
+  if (k) return k;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("REPORT_LINK_SECRET is not set: report links cannot be signed");
+  }
+  devLinkKey ??= crypto.randomBytes(32).toString("hex");
+  return devLinkKey;
 }
 
 // Link lifetime in days. Adjustable in Vercel without a redeploy; default 21 (3 weeks).

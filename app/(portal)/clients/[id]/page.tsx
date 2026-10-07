@@ -217,7 +217,7 @@ export default function ClientDetailPage() {
         // Too big to POST through the function (~4.5MB body cap). Upload straight
         // to Blob from the browser, then send only the URL to be parsed.
         const blob = await upload(file.name, file, {
-          access: "public",
+          access: process.env.NEXT_PUBLIC_BLOB_ACCESS === "private" ? "private" : "public",
           handleUploadUrl: `/api/clients/${id}/control-files/blob`,
         });
         res = await authFetch(`/api/clients/${id}/control-files`, {
