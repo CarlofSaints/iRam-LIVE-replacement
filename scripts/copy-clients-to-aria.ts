@@ -25,9 +25,9 @@
      - history: store-report audit/sends/tracking, activity log, report counts,
        Portfolio Stock Health snapshots (those are all-client).
 
-   Run (manual mode only):
-     SRC_BLOB_TOKEN=<iRam store rw token> DEST_BLOB_TOKEN=<ARIA store rw token> \
-       npx tsx scripts/copy-clients-to-aria.ts "Defy" "Lesco" "SNOMASTER (PTY) LTD"
+   Run (manual mode only), after `vercel env pull` of each project to a file:
+     npx tsx scripts/copy-clients-to-aria.ts --src-env=.env.iram --dest-env=.env.aria "Defy" "Lesco" "SNOMASTER (PTY) LTD"
+   Nobody copies a secret: see authFrom() below.
    Add --copy to copy, --archive-in-iram (separately, later) to archive.
    A name matches case-insensitively, exact first, else a unique "contains".
    Use --id=<clientId> instead of a name when a name matches more than one. */
@@ -37,15 +37,30 @@ import fs from "fs";
 
 const args = process.argv.slice(2);
 // --src-env=<file> / --dest-env=<file>: a `vercel env pull` file per store,
-// so nobody copies a token by hand. Only BLOB_READ_WRITE_TOKEN is read.
-function tokenFrom(flag: string): string {
-  const file = args.find((x) => x.startsWith(flag + "="))?.slice(flag.length + 1);
-  if (!file) return "";
-  const line = fs.readFileSync(file, "utf8").split("\n").map((l) => l.trim()).find((l) => l.startsWith("BLOB_READ_WRITE_TOKEN="));
-  return (line?.split("=").slice(1).join("=") || "").replace(/^"|"$/g, "").trim();
+// so nobody copies a secret by hand. Uses BLOB_READ_WRITE_TOKEN if it is
+// there; a SENSITIVE token pulls down BLANK, so otherwise it uses the
+// short-lived VERCEL_OIDC_TOKEN + BLOB_STORE_ID the same pull writes (it
+// expires on its own after some hours: pull again if the run says so).
+type Auth = { token: string } | { oidcToken: string; storeId: string };
+function readEnvFile(file: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const raw of fs.readFileSync(file, "utf8").split("\n")) {
+    const l = raw.trim();
+    const i = l.indexOf("=");
+    if (i > 0 && !l.startsWith("#")) out[l.slice(0, i)] = l.slice(i + 1).replace(/^"|"$/g, "").trim();
+  }
+  return out;
 }
-const SRC = (process.env.SRC_BLOB_TOKEN || tokenFrom("--src-env")).trim();
-const DEST = (process.env.DEST_BLOB_TOKEN || tokenFrom("--dest-env")).trim();
+function authFrom(flag: string): Auth | null {
+  const file = args.find((x) => x.startsWith(flag + "="))?.slice(flag.length + 1);
+  if (!file) return null;
+  const env = readEnvFile(file);
+  if (env.BLOB_READ_WRITE_TOKEN) return { token: env.BLOB_READ_WRITE_TOKEN };
+  if (env.VERCEL_OIDC_TOKEN && env.BLOB_STORE_ID) return { oidcToken: env.VERCEL_OIDC_TOKEN, storeId: env.BLOB_STORE_ID };
+  return null;
+}
+const SRC = authFrom("--src-env");
+const DEST = authFrom("--dest-env");
 const COPY = args.includes("--copy");
 const ARCHIVE = args.includes("--archive-in-iram");
 const ids = args.filter((a) => a.startsWith("--id=")).map((a) => a.slice(5));
@@ -56,11 +71,11 @@ type Json = Record<string, unknown>;
 interface Blob { pathname: string; url: string; size: number }
 
 // ── store access ──
-async function listAll(token: string, prefix: string): Promise<Blob[]> {
+async function listAll(auth: Auth, prefix: string): Promise<Blob[]> {
   const out: Blob[] = [];
   let cursor: string | undefined;
   do {
-    const r = await list({ token, prefix, limit: 1000, cursor });
+    const r = await list({ ...auth, prefix, limit: 1000, cursor });
     out.push(...r.blobs);
     cursor = r.hasMore ? r.cursor : undefined;
   } while (cursor);
@@ -68,14 +83,14 @@ async function listAll(token: string, prefix: string): Promise<Blob[]> {
 }
 // iRam's store is PUBLIC (read by URL); ARIA's is PRIVATE (read with its token).
 async function srcBytes(pathname: string): Promise<Buffer | null> {
-  const b = (await listAll(SRC, pathname)).find((x) => x.pathname === pathname);
+  const b = (await listAll(SRC!, pathname)).find((x) => x.pathname === pathname);
   if (!b) return null;
   const r = await fetch(`${b.url}?t=${Date.now()}`, { cache: "no-store" });
   if (!r.ok) throw new Error(`read ${pathname}: HTTP ${r.status}`);
   return Buffer.from(await r.arrayBuffer());
 }
 async function destBytes(pathname: string): Promise<Buffer | null> {
-  const r = await get(pathname, { access: "private", token: DEST, useCache: false });
+  const r = await get(pathname, { access: "private", ...DEST!, useCache: false });
   if (!r) return null;
   if (r.statusCode !== 200 || !r.stream) throw new Error(`read ${pathname}: HTTP ${r.statusCode}`);
   return Buffer.from(await new Response(r.stream).arrayBuffer());
@@ -89,7 +104,7 @@ const plan: string[] = [];
 async function putDest(pathname: string, body: Buffer, contentType = "application/json") {
   plan.push(`write ${pathname} (${body.length} B)`);
   if (!COPY) return;
-  await put(pathname, body, { token: DEST, access: "private", addRandomSuffix: false, allowOverwrite: true, contentType, cacheControlMaxAge: 0 });
+  await put(pathname, body, { ...DEST!, access: "private", addRandomSuffix: false, allowOverwrite: true, contentType, cacheControlMaxAge: 0 });
 }
 const putDestJson = (key: string, v: unknown) => putDest(P + key, gzipSync(Buffer.from(JSON.stringify(v)), { level: 6 }));
 async function copyRaw(pathname: string) {
@@ -98,7 +113,7 @@ async function copyRaw(pathname: string) {
   await putDest(pathname, b, pathname.endsWith(".json") ? "application/json" : "application/octet-stream");
 }
 async function copyPrefix(prefix: string): Promise<number> {
-  const blobs = await listAll(SRC, P + prefix);
+  const blobs = await listAll(SRC!, P + prefix);
   for (const b of blobs) await copyRaw(b.pathname);
   return blobs.length;
 }
@@ -109,8 +124,9 @@ function mergeById<T extends { id: string }>(dest: T[], add: T[]): T[] {
 }
 
 async function main() {
-  if (!SRC || !DEST) throw new Error("Set SRC_BLOB_TOKEN (iRam) and DEST_BLOB_TOKEN (ARIA).");
-  if (SRC === DEST) throw new Error("Source and destination are the same store.");
+  if (!SRC || !DEST) throw new Error("No store credentials in --src-env / --dest-env: pull each project's env again.");
+  const sid = (a: Auth) => ("storeId" in a ? a.storeId : a.token.split("_")[3] || "").replace(/^store_/, "").toLowerCase();
+  if (sid(SRC) === sid(DEST)) throw new Error("Source and destination are the same store.");
   if (!names.length && !ids.length) throw new Error("Name at least one client.");
 
   // ── pick the clients ──
@@ -146,7 +162,7 @@ async function main() {
       ? { ...c, active: false, archivedAt: now, archivedBy: "Moved to ARIA (OuterJoin)" } : c);
     for (const c of picked) console.log(`archive in iRam: ${c.name}`);
     if (!COPY) { console.log("\nDry run. Add --copy to archive."); return; }
-    await put(P + "clients.json", gzipSync(Buffer.from(JSON.stringify(next))), { token: SRC, access: "public", addRandomSuffix: false, allowOverwrite: true, contentType: "application/json", cacheControlMaxAge: 0 });
+    await put(P + "clients.json", gzipSync(Buffer.from(JSON.stringify(next))), { ...SRC!, access: "public", addRandomSuffix: false, allowOverwrite: true, contentType: "application/json", cacheControlMaxAge: 0 });
     console.log("Archived. Restore any of them from iRam LIVE's Clients page, Archived tab.");
     return;
   }
@@ -164,7 +180,7 @@ async function main() {
   await putDestJson("channels-seeded.json", { done: true });
   await putDestJson("channels-migrated-v2.json", { done: true });
   const mains = new Set(srcChannels.filter((c) => !c.parentId).map((c) => c.id));
-  for (const b of await listAll(SRC, P + "channels/")) {
+  for (const b of await listAll(SRC!, P + "channels/")) {
     const id = b.pathname.split("/")[2];
     if (mains.has(id)) await copyRaw(b.pathname);
   }
