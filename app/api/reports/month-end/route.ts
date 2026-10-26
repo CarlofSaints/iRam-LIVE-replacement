@@ -23,7 +23,7 @@ import {
   buildDscDetail,
   capDateColumns,
 } from "@/lib/monthEndReport";
-import { applyReportExclusions, exclusionLabel } from "@/lib/reportExclusions";
+import { applyReportExclusions, exclusionLabel, rowStoreClosed } from "@/lib/reportExclusions";
 import { buildMonthEndWorkbook } from "@/lib/monthEndExcel";
 import { calcMonthLastSold } from "@/lib/vitalSigns";
 import { getStatusDefinitions } from "@/lib/statusData";
@@ -250,6 +250,11 @@ export async function GET(req: NextRequest) {
         })
       : excl.rows;
 
+    /* Closed stores brought back by "Include closed stores? YES" count in sales
+       and stock, never as out of stock, a suggested order, or a distribution
+       point: nobody restocks a shut store. */
+    const openRows = includeClosed ? reportRows.filter((r) => !rowStoreClosed(r)) : reportRows;
+
     /* 5. Build date context, pinned to the report period. Without the ref it
        reads "current month" off the data, which is the same bug one step
        further in: capping the columns is not enough on its own if the report
@@ -274,8 +279,8 @@ export async function GET(req: NextRequest) {
     // 6. Build all report data (from the filtered row set)
     enter("building the Sales, OOS, Status, Margin and DSC analyses");
     const salesSummary = buildSalesSummary(reportRows, ctx);
-    const oosSummary = buildOOSSummary(reportRows, dateColumns);
-    const oosDetail = buildOOSDetail(reportRows, dateColumns);
+    const oosSummary = buildOOSSummary(openRows, dateColumns);
+    const oosDetail = buildOOSDetail(openRows, dateColumns);
     const statusSummary = buildStatusSummary(reportRows, dateColumns, statusDefs, statusScenarios);
     const statusDetail = buildStatusDetail(reportRows, dateColumns, statusDefs, statusScenarios);
     const marginAnalysis = buildMarginAnalysis(reportRows);
@@ -322,7 +327,7 @@ export async function GET(req: NextRequest) {
     let ndAnalysis;
     try {
       ndAnalysis = buildNumericalDistribution({
-        rows: reportRows,
+        rows: openRows,
         dateColumns,
         refYear: rYear,
         refMonth: rMonth,
@@ -341,7 +346,7 @@ export async function GET(req: NextRequest) {
     // Open to Order — suggested replenishment for out-of-stock, orderable lines
     enter("building Open to Order");
     const otoAnalysis = buildOpenToOrder({
-      rows: reportRows,
+      rows: openRows,
       statusDefs,
       statusScenarios,
       otoMultipliers: config.otoMultipliers,
@@ -391,7 +396,7 @@ export async function GET(req: NextRequest) {
       dscDetail,
       { year: rYear, month: rMonth, excludedMonths },
       { mode: enriched.rangeMode, exceptions: buildRangeExceptions(reportRows, enriched.rangeMode) },
-      exclusionLabel(excl, rYear),
+      exclusionLabel(excl, rYear, includeClosed),
     );
 
     // 9. Log activity

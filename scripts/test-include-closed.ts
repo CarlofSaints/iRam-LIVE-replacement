@@ -18,19 +18,22 @@ const rows = [
   { id: "closedSales", _storeName: "GAME X (CLOSED)", SOH: 0, "09-2026": 3 },
   { id: "closedLySalesOnly", _storeStatus: "CLOSED", SOH: 0, "09-2026": 0, "09-2025": 9 },
   { id: "closedEmpty", _storeStatus: "CLOSED", SOH: 0, "09-2026": 0 },
+  { id: "closedReturnOnly", _storeStatus: "CLOSED", SOH: 0, "09-2026": -2 },
 ];
 const ids = (r: { rows: { id: string }[] }) => r.rows.map((x) => x.id).join(",");
 
 const no = applyReportExclusions(rows, cols, 2026);
 check("NO: only the open store", ids(no) === "open", ids(no));
-check("NO: 4 closed lines left out", no.closedStoreLines === 4 && no.closedStoreLinesKept === 0, no);
-check("NO: label unchanged", exclusionLabel(no, 2026) === "4 lines at closed stores", exclusionLabel(no, 2026));
+check("NO: 5 closed lines left out", no.closedStoreLines === 5 && no.closedStoreLinesKept === 0, no);
+check("NO: label unchanged", exclusionLabel(no, 2026) === "5 lines at closed stores", exclusionLabel(no, 2026));
 
 const yes = applyReportExclusions(rows, cols, 2026, { includeClosed: true });
 check("YES: stock + this-year sales come back", ids(yes) === "open,closedStock,closedSales", ids(yes));
-check("YES: LY-only and empty stay out", yes.closedStoreLines === 2 && yes.closedStoreLinesKept === 2, yes);
-check("YES: label says both", exclusionLabel(yes, 2026) ===
-  "2 lines at closed stores with no stock and no sales (closed stores included: 2 lines with stock or 2026 sales)", exclusionLabel(yes, 2026));
+check("YES: LY-only, return-only and empty stay out", yes.closedStoreLines === 3 && yes.closedStoreLinesKept === 2, yes);
+check("YES: label says both", exclusionLabel(yes, 2026, true) ===
+  "3 lines at closed stores with no stock and no 2026 sales (closed stores included: 2 lines with stock or 2026 sales, not counted as OOS, Open to Order or ND)", exclusionLabel(yes, 2026, true));
+const yesNone = applyReportExclusions(rows.filter((r) => r.id === "closedEmpty"), cols, 2026, { includeClosed: true });
+check("YES with nothing kept still says YES was picked", exclusionLabel(yesNone, 2026, true).includes("closed stores included: 0"), exclusionLabel(yesNone, 2026, true));
 
 console.log(fails ? `\n${fails} FAILED` : "\nall passed");
 process.exit(fails ? 1 : 0);

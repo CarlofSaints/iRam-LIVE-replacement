@@ -983,7 +983,7 @@ export default function ReportsPage() {
               <option value="yes">YES</option>
             </select>
             <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-              YES adds closed stores that still have stock or sales this year. Numerical Distribution never counts closed stores.
+              YES adds closed stores that still have stock or sales this year. They are never counted as out of stock, Open to Order or Numerical Distribution.
             </p>
           </div>
         )}
