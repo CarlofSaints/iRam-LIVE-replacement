@@ -120,6 +120,21 @@ export const HEADER_ALIASES: Record<string, string> = {
   "abc indicator": "ABC",
   "exchange rate": "Exch. Rate",
 
+  // ── GAME export (Oct 2026) ────────────────────────────────────────────
+  // Game's DISPO names the same fields differently: "Material" for Article,
+  // "Location Hierarchy" for Site. Without these every Game row loaded with no
+  // Article and no Site. Game's own Category/Brand/Group columns are stored as
+  // passthrough only; reports take dimensions from the PMF.
+  material: "Article",
+  "material description": "Article Desc",
+  "location hierarchy": "Site",
+  "location hierarchy description": "Site Name",
+  "vendor material number": "Vendor Prod Code",
+  "material status": "Status",
+  "rp type": "RP",
+  "last recived": "Last Recv", // sic, as Game spells it
+  "last received": "Last Recv",
+
   // Source of supply arrives as "SS" in most exports and spelled out in the
   // verbose one. Aliased to a single canonical key from the start, so it can
   // never end up stored under two different names the way Vendor Number did.

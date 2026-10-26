@@ -266,6 +266,17 @@ export async function POST(req: NextRequest) {
           const norm = normalizeDateCol(dc);
           if (norm) fileMonths.add(norm);
         }
+        // A weekly DISPO (Game) speaks for the months its weeks fall in, so a
+        // wrong month stamp is still refused rather than freezing stock updates.
+        // shortcut: week N = days 7(N-1)..7N-1 of the year; Game's own week calendar is unknown, upgrade if a stamp is wrongly refused.
+        for (const wc of result.weekColumns) {
+          const m = wc.match(/^Wk(\d{2})-(\d{4})$/);
+          if (!m) continue;
+          const start = new Date(Date.UTC(Number(m[2]), 0, 1 + 7 * (Number(m[1]) - 1)));
+          for (const d of [start, new Date(start.getTime() + 6 * 86400000)]) {
+            fileMonths.add(`${String(d.getUTCMonth() + 1).padStart(2, "0")}-${d.getUTCFullYear()}`);
+          }
+        }
         const selected = `${String(reportMonth).padStart(2, "0")}-${reportYear}`;
         if (!fileMonths.has(selected)) {
           const MON = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -587,7 +598,7 @@ export async function POST(req: NextRequest) {
             uploadedBy: session.userId,
             uploadedByName: session.name,
             vendorNumber: g.vendor,
-            period: result.dateColumns.join(", "),
+            period: [...result.dateColumns, ...result.weekColumns].join(", "),
             rowCount: g.rows.length,
             dateColumns: result.dateColumns,
             reportYear,
@@ -661,6 +672,14 @@ export async function POST(req: NextRequest) {
          that ran after it — see lib/parserVersion.ts. */
       const parserSuffix = ` Parser v${PARSER_VERSION}.`;
 
+      /* Weekly sales (Game) are stored under their own "Wk" keys but feed no
+         monthly report yet, so the user must be told the numbers are not lost
+         and not counted. */
+      const weeklyNotice = result.weekColumns.length > 0
+        ? `Weekly sales (${result.weekColumns.join(", ")}) were stored but are not in the monthly reports. Stock, status and prices loaded as normal.`
+        : "";
+      const weeklySuffix = weeklyNotice ? ` ${weeklyNotice}` : "";
+
       /* How each row's vendor was decided. "guessed" is the number that
          matters: it is rows the PMF could not answer for, which in a
          multi-vendor file may be attributed to the wrong vendor. */
@@ -678,7 +697,7 @@ export async function POST(req: NextRequest) {
         userId: session.userId,
         userName: session.name,
         action: "upload_dispo",
-        details: `Uploaded DISPO for ${client.name} / ${mainChannelName} (${result.totalRows} rows, vendor(s) ${vendorLabel}). Ledger merge: ${mergeTotals.inserted} new, ${mergeTotals.updated} updated, ${mergeTotals.unchanged} unchanged.${splitSuffix}${repairSuffix}${thousandsSuffix}${parserSuffix}${vendorSuffix}${heldBackSuffix}${logSuffix}`,
+        details: `Uploaded DISPO for ${client.name} / ${mainChannelName} (${result.totalRows} rows, vendor(s) ${vendorLabel}). Ledger merge: ${mergeTotals.inserted} new, ${mergeTotals.updated} updated, ${mergeTotals.unchanged} unchanged.${splitSuffix}${repairSuffix}${thousandsSuffix}${parserSuffix}${weeklySuffix}${vendorSuffix}${heldBackSuffix}${logSuffix}`,
         status: "success",
         clientId: client.id,
         clientName: client.name,
@@ -803,6 +822,7 @@ export async function POST(req: NextRequest) {
           id: firstUploadId,
           rowCount: result.totalRows,
           merge: mergeTotals,
+          ...(weeklyNotice ? { weeklyNotice } : {}),
           ...(result.thousands.notes.length > 0
             ? { numberFormat: { notes: result.thousands.notes, cellsRescaled: result.thousands.cellsRescaled } }
             : {}),
