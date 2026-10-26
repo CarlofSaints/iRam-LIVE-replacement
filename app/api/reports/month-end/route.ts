@@ -108,6 +108,9 @@ export async function GET(req: NextRequest) {
     const ndMonthsRaw = parseInt(url.searchParams.get("ndMonths") || "", 10);
     const ndMonths = !isNaN(ndMonthsRaw) && ndMonthsRaw >= 1 && ndMonthsRaw <= 24 ? ndMonthsRaw : 6;
 
+    // "Include closed stores?" YES keeps closed-store lines with stock or sales
+    const includeClosed = url.searchParams.get("includeClosed") === "1";
+
     // Which sheets to include (empty = all)
     const includeSheets = (url.searchParams.get("sheets") || "")
       .split(",").map((s) => s.trim()).filter(Boolean);
@@ -228,7 +231,7 @@ export async function GET(req: NextRequest) {
     });
 
     // 4a. Leave out closed stores and dead discontinued lines (lib/reportExclusions.ts)
-    const excl = applyReportExclusions(enrichedRows, dateColumns, rYear);
+    const excl = applyReportExclusions(enrichedRows, dateColumns, rYear, { includeClosed });
 
     // 4b. Apply optional sub-channel / category / vendor filters (every sheet)
     const subSet = new Set(subChFilter);

@@ -91,6 +91,9 @@ export default function ReportsPage() {
   const [phLastSold, setPhLastSold] = useState<number | "">(3);
   const [phLastReceived, setPhLastReceived] = useState<number | "">(3);
 
+  // Month-End: include closed stores that still have stock or sales (default NO)
+  const [includeClosed, setIncludeClosed] = useState(false);
+
   // ND rolling window in months (1–24, default 6)
   const [ndMonths, setNdMonths] = useState<number>(6);
 
@@ -408,6 +411,7 @@ export default function ReportsPage() {
       if (phLastSold) params.set("phLastSold", String(phLastSold));
       if (phLastReceived) params.set("phLastReceived", String(phLastReceived));
       if (ndMonths) params.set("ndMonths", String(ndMonths));
+      if (includeClosed) params.set("includeClosed", "1");
       if (selectedSheets.length) params.set("sheets", selectedSheets.join(","));
 
       const startedAt = Date.now();
@@ -960,6 +964,27 @@ export default function ReportsPage() {
                 ))}
               </select>
             </div>
+          </div>
+        )}
+
+        {/* Closed stores: left out by default (lib/reportExclusions.ts) */}
+        {clientId && mainChannelIds.length > 0 && (
+          <div className="mb-4 rounded-lg border border-[var(--color-border)] bg-zinc-50 p-3">
+            <label htmlFor="me-include-closed" className="mb-1 block text-xs font-semibold text-[var(--color-text-muted)]">
+              Include closed stores?
+            </label>
+            <select
+              id="me-include-closed"
+              value={includeClosed ? "yes" : "no"}
+              onChange={(e) => setIncludeClosed(e.target.value === "yes")}
+              className="w-56 rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm"
+            >
+              <option value="no">NO</option>
+              <option value="yes">YES</option>
+            </select>
+            <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+              YES adds closed stores that still have stock or sales this year. Numerical Distribution never counts closed stores.
+            </p>
           </div>
         )}
 

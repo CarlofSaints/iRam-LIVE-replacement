@@ -44,25 +44,49 @@ export function isDeadDiscontinued(row: Row, dateColumns: string[], year: number
 export interface ExclusionResult<T> {
   rows: T[];
   closedStoreLines: number;
+  /** Closed-store lines kept because the report asked for them and they still have stock or sales. */
+  closedStoreLinesKept: number;
   deadDiscontinuedLines: number;
 }
 
-export function applyReportExclusions<T extends Row>(rows: T[], dateColumns: string[], year: number): ExclusionResult<T> {
+/** Any stock on hand or any sales in `year`'s month columns. */
+function hasStockOrSales(row: Row, dateColumns: string[], year: number): boolean {
+  if (num(row["SOH"]) > 0) return true;
+  for (const col of dateColumns) {
+    const m = col.match(/^(\d{2})-(\d{4})$/);
+    if (m && Number(m[2]) === year && num(row[col]) !== 0) return true;
+  }
+  return false;
+}
+
+/* includeClosed (Month-End "Include closed stores?" = YES, Carl 26 Oct 2026):
+   a closed store's line stays when it still has stock or sales this year. One
+   with neither stays out either way, or every empty closed store reads as OOS. */
+export function applyReportExclusions<T extends Row>(
+  rows: T[], dateColumns: string[], year: number, opts: { includeClosed?: boolean } = {},
+): ExclusionResult<T> {
   let closedStoreLines = 0;
+  let closedStoreLinesKept = 0;
   let deadDiscontinuedLines = 0;
   const kept: T[] = [];
   for (const r of rows) {
-    if (rowStoreClosed(r)) { closedStoreLines++; continue; }
+    if (rowStoreClosed(r)) {
+      if (!opts.includeClosed || !hasStockOrSales(r, dateColumns, year)) { closedStoreLines++; continue; }
+      closedStoreLinesKept++;
+    }
     if (isDeadDiscontinued(r, dateColumns, year)) { deadDiscontinuedLines++; continue; }
     kept.push(r);
   }
-  return { rows: kept, closedStoreLines, deadDiscontinuedLines };
+  return { rows: kept, closedStoreLines, closedStoreLinesKept, deadDiscontinuedLines };
 }
 
 /** One line for the report's Menu, or "" when nothing was left out. */
-export function exclusionLabel(x: { closedStoreLines: number; deadDiscontinuedLines: number }, year: number): string {
+export function exclusionLabel(x: { closedStoreLines: number; deadDiscontinuedLines: number; closedStoreLinesKept?: number }, year: number): string {
   const parts: string[] = [];
-  if (x.closedStoreLines) parts.push(`${x.closedStoreLines.toLocaleString("en-ZA")} lines at closed stores`);
+  if (x.closedStoreLines) parts.push(`${x.closedStoreLines.toLocaleString("en-ZA")} lines at closed stores` + (x.closedStoreLinesKept ? " with no stock and no sales" : ""));
   if (x.deadDiscontinuedLines) parts.push(`${x.deadDiscontinuedLines.toLocaleString("en-ZA")} discontinued lines with no stock and no ${year} sales`);
-  return parts.join("; ");
+  const left = parts.join("; ");
+  if (!x.closedStoreLinesKept) return left;
+  const kept = `closed stores included: ${x.closedStoreLinesKept.toLocaleString("en-ZA")} lines with stock or ${year} sales`;
+  return left ? `${left} (${kept})` : kept;
 }
