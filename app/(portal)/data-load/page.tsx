@@ -223,7 +223,7 @@ export default function DataLoadPage() {
       if (res.ok && data.success) {
         setResult({
           ok: true,
-          message: `${data.rowCount} rows processed`,
+          message: `${data.rowCount} rows processed${data.weeklyNotice ? `. ${data.weeklyNotice}` : ""}`,
           rowCount: data.rowCount,
           merge: data.merge,
           numberFormat: data.numberFormat,

@@ -260,7 +260,11 @@ export async function POST(req: NextRequest) {
       // file whose newest column is June, the checklist shows July loaded while
       // the report has no July data. Hard-block that mismatch here so the stamp
       // can never diverge from the data. (Only when a month is actually chosen.)
-      if (reportYear != null && !isNaN(reportYear) && reportMonth != null && !isNaN(reportMonth)) {
+      // A weekly-only DISPO (Game) has no month columns to check the stamp
+      // against, so it is let through; the result tells the user its weeks are
+      // stored but not in monthly reports.
+      const weeklyOnly = result.dateColumns.length === 0 && result.weekColumns.length > 0;
+      if (!weeklyOnly && reportYear != null && !isNaN(reportYear) && reportMonth != null && !isNaN(reportMonth)) {
         const fileMonths = new Set<string>();
         for (const dc of result.dateColumns) {
           const norm = normalizeDateCol(dc);
@@ -661,6 +665,14 @@ export async function POST(req: NextRequest) {
          that ran after it — see lib/parserVersion.ts. */
       const parserSuffix = ` Parser v${PARSER_VERSION}.`;
 
+      /* Weekly sales (Game) are stored under their own "Wk" keys but feed no
+         monthly report yet, so the user must be told the numbers are not lost
+         and not counted. */
+      const weeklyNotice = result.weekColumns.length > 0
+        ? `Weekly sales (${result.weekColumns.join(", ")}) were stored but are not in the monthly reports. Stock, status and prices loaded as normal.`
+        : "";
+      const weeklySuffix = weeklyNotice ? ` ${weeklyNotice}` : "";
+
       /* How each row's vendor was decided. "guessed" is the number that
          matters: it is rows the PMF could not answer for, which in a
          multi-vendor file may be attributed to the wrong vendor. */
@@ -678,7 +690,7 @@ export async function POST(req: NextRequest) {
         userId: session.userId,
         userName: session.name,
         action: "upload_dispo",
-        details: `Uploaded DISPO for ${client.name} / ${mainChannelName} (${result.totalRows} rows, vendor(s) ${vendorLabel}). Ledger merge: ${mergeTotals.inserted} new, ${mergeTotals.updated} updated, ${mergeTotals.unchanged} unchanged.${splitSuffix}${repairSuffix}${thousandsSuffix}${parserSuffix}${vendorSuffix}${heldBackSuffix}${logSuffix}`,
+        details: `Uploaded DISPO for ${client.name} / ${mainChannelName} (${result.totalRows} rows, vendor(s) ${vendorLabel}). Ledger merge: ${mergeTotals.inserted} new, ${mergeTotals.updated} updated, ${mergeTotals.unchanged} unchanged.${splitSuffix}${repairSuffix}${thousandsSuffix}${parserSuffix}${weeklySuffix}${vendorSuffix}${heldBackSuffix}${logSuffix}`,
         status: "success",
         clientId: client.id,
         clientName: client.name,
@@ -803,6 +815,7 @@ export async function POST(req: NextRequest) {
           id: firstUploadId,
           rowCount: result.totalRows,
           merge: mergeTotals,
+          ...(weeklyNotice ? { weeklyNotice } : {}),
           ...(result.thousands.notes.length > 0
             ? { numberFormat: { notes: result.thousands.notes, cellsRescaled: result.thousands.cellsRescaled } }
             : {}),

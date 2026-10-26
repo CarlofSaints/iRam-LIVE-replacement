@@ -18,7 +18,7 @@
      changed, because the number on its own tells nobody anything. Do NOT bump
      it for a change that cannot move a value (wording, styling, a report). */
 
-export const PARSER_VERSION = 4;
+export const PARSER_VERSION = 5;
 
 export interface ParserRelease {
   version: number;
@@ -31,6 +31,14 @@ export interface ParserRelease {
    at v4, so no row in the ledger will ever read 1, 2 or 3 — anything written
    before 25 Aug 2026 carries no stamp at all. */
 export const PARSER_HISTORY: ParserRelease[] = [
+  {
+    version: 5,
+    date: "2026-10-26",
+    commit: "feat/game-dispo",
+    summary:
+      "Reads Game's DISPO: \"Material\" as Article, \"Location Hierarchy\" as Site, and the other " +
+      "Game column names. Game's weekly sales (\"37-26\") are stored as \"Wk37-2026\", never as months.",
+  },
   {
     version: 4,
     date: "2026-08-25",

@@ -24,6 +24,8 @@ export interface DispoParseResult {
   vendorNumbers: string[];      // ALL distinct real (numeric) vendors in the file
   rows: Record<string, unknown>[];  // each row stamped with `_vendor` (its own resolved vendor)
   dateColumns: string[];
+  /** Weekly sales columns ("Wk37-2026"), stored as-is and kept out of monthly reports. */
+  weekColumns: string[];
   headerRow: number;
   totalRows: number;
   collisions: HeaderCollision[];
@@ -40,7 +42,14 @@ export interface DispoParseResult {
  * Returns the extracted vendor number, parsed rows, and detected date columns.
  */
 export function parseDispo(buffer: Buffer): DispoParseResult {
-  const workbook = XLSX.read(buffer, { type: "buffer", cellDates: true });
+  // Game sends a comma CSV whose cells the reader type-guesses: ISO "2026-08-27"
+  // would display as US "8/27/26", which parseDispoDate reads day-first as
+  // 8 Mar 2028. Only a Game-format text file gets ISO dates. NOT every text
+  // file: Makro's tab-text ".xls" writes "03.11.2025", and today's read of
+  // that (display "3/11/25", read day-first) lands on the right day.
+  const isTextFile = !(buffer[0] === 0x50 && buffer[1] === 0x4b) && !(buffer[0] === 0xd0 && buffer[1] === 0xcf);
+  const isGameCsv = isTextFile && buffer.subarray(0, 65536).toString("utf8").toLowerCase().includes("location hierarchy");
+  const workbook = XLSX.read(buffer, { type: "buffer", cellDates: true, ...(isGameCsv ? { dateNF: "yyyy-mm-dd" } : {}) });
 
   // Find the data sheet — prefer one with numeric-prefix name
   let sheetName = workbook.SheetNames[0];
@@ -91,7 +100,14 @@ export function parseDispo(buffer: Buffer): DispoParseResult {
     throw new Error("Could not find header row — expected 'Vendor' or 'Article' column");
   }
 
-  const rawHeaders = (aoa[headerRowIdx] as unknown[]).map((c) =>
+  // Its headers are type-guessed too: Game's week "05-27" comes back as a
+  // date. Take a Game CSV's header row as literal text.
+  const headerCells = isGameCsv
+    ? (XLSX.utils.sheet_to_json(XLSX.read(buffer, { type: "buffer", raw: true }).Sheets[sheetName], {
+        header: 1, defval: "", raw: false,
+      })[headerRowIdx] as unknown[]) ?? []
+    : (aoa[headerRowIdx] as unknown[]);
+  const rawHeaders = headerCells.map((c) =>
     String(c ?? "").trim()
   );
 
@@ -134,6 +150,26 @@ export function parseDispo(buffer: Buffer): DispoParseResult {
     return h;
   });
   const collisions = [...collisionByField.values()];
+
+  // Game sends WEEKLY sales: "37-26" is week 37 of 2026, not a month. Weeks do
+  // not fold into months cleanly, so they are stored under their own key
+  // ("Wk37-2026") that no month reader matches, and never reach a monthly report.
+  // A Game-format file (it has "Location Hierarchy") is weekly even when every
+  // week is <= 12; any NN-YY with NN > 12 is weekly in any file.
+  // shortcut: a Game file sent in numeric MONTHS ("09-26") would read as weeks; Sihle is asking Game for Mon-YY months.
+  const WEEK_COL = /^(\d{1,2})-(\d{2})$/;
+  const isGameFormat = rawHeaders.some((h) => h.toLowerCase() === "location hierarchy");
+  const isWeekly = isGameFormat ||
+    resolvedHeaders.some((h) => { const m = h.match(WEEK_COL); return !!m && Number(m[1]) > 12; });
+  const weekColumns: string[] = [];
+  if (isWeekly) {
+    for (let j = 0; j < resolvedHeaders.length; j++) {
+      const m = resolvedHeaders[j].match(WEEK_COL);
+      if (!m) continue;
+      resolvedHeaders[j] = `Wk${m[1].padStart(2, "0")}-20${m[2]}`;
+      weekColumns.push(resolvedHeaders[j]);
+    }
+  }
 
   // Detect date columns
   const dateColumns: string[] = [];
@@ -255,6 +291,7 @@ export function parseDispo(buffer: Buffer): DispoParseResult {
     vendorNumbers,
     rows: collapsed.rows,
     dateColumns,
+    weekColumns,
     headerRow: headerRowIdx,
     totalRows: collapsed.rows.length,
     collisions,
