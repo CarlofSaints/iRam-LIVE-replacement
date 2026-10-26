@@ -132,7 +132,6 @@ export const HEADER_ALIASES: Record<string, string> = {
   "vendor material number": "Vendor Prod Code",
   "material status": "Status",
   "rp type": "RP",
-  "rounding rule": "R. Profile",
   "last recived": "Last Recv", // sic, as Game spells it
   "last received": "Last Recv",
 

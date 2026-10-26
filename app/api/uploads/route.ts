@@ -260,15 +260,22 @@ export async function POST(req: NextRequest) {
       // file whose newest column is June, the checklist shows July loaded while
       // the report has no July data. Hard-block that mismatch here so the stamp
       // can never diverge from the data. (Only when a month is actually chosen.)
-      // A weekly-only DISPO (Game) has no month columns to check the stamp
-      // against, so it is let through; the result tells the user its weeks are
-      // stored but not in monthly reports.
-      const weeklyOnly = result.dateColumns.length === 0 && result.weekColumns.length > 0;
-      if (!weeklyOnly && reportYear != null && !isNaN(reportYear) && reportMonth != null && !isNaN(reportMonth)) {
+      if (reportYear != null && !isNaN(reportYear) && reportMonth != null && !isNaN(reportMonth)) {
         const fileMonths = new Set<string>();
         for (const dc of result.dateColumns) {
           const norm = normalizeDateCol(dc);
           if (norm) fileMonths.add(norm);
+        }
+        // A weekly DISPO (Game) speaks for the months its weeks fall in, so a
+        // wrong month stamp is still refused rather than freezing stock updates.
+        // shortcut: week N = days 7(N-1)..7N-1 of the year; Game's own week calendar is unknown, upgrade if a stamp is wrongly refused.
+        for (const wc of result.weekColumns) {
+          const m = wc.match(/^Wk(\d{2})-(\d{4})$/);
+          if (!m) continue;
+          const start = new Date(Date.UTC(Number(m[2]), 0, 1 + 7 * (Number(m[1]) - 1)));
+          for (const d of [start, new Date(start.getTime() + 6 * 86400000)]) {
+            fileMonths.add(`${String(d.getUTCMonth() + 1).padStart(2, "0")}-${d.getUTCFullYear()}`);
+          }
         }
         const selected = `${String(reportMonth).padStart(2, "0")}-${reportYear}`;
         if (!fileMonths.has(selected)) {
@@ -591,7 +598,7 @@ export async function POST(req: NextRequest) {
             uploadedBy: session.userId,
             uploadedByName: session.name,
             vendorNumber: g.vendor,
-            period: result.dateColumns.join(", "),
+            period: [...result.dateColumns, ...result.weekColumns].join(", "),
             rowCount: g.rows.length,
             dateColumns: result.dateColumns,
             reportYear,

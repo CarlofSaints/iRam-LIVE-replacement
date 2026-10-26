@@ -490,7 +490,8 @@ export async function mergeDispo(params: MergeDispoParams): Promise<MergeResult>
 
       for (const [col, newVal] of Object.entries(normalizedRow)) {
         const existingVal = existingRow[col];
-        const isDate = isDateColumn(col) || /^\d{2}-\d{4}$/.test(col);
+        // Weekly sales ("Wk37-2026", Game) are sales too: they merge from any period.
+        const isDate = isDateColumn(col) || /^\d{2}-\d{4}$/.test(col) || /^Wk\d{2}-\d{4}$/.test(col);
 
         if (!hasValue(newVal)) {
           // New value is empty — keep existing

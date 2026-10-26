@@ -36,7 +36,7 @@ check("Game: Location Hierarchy -> Site", g["Site"] === "G003", g["Site"]);
 check("Game: site name", g["Site Name"] === "GAME & GAME LIQ. BLOEMFONTEIN", g["Site Name"]);
 check("Game: Material Status -> Status", g["Status"] === "T", g["Status"]);
 check("Game: RP Type -> RP", g["RP"] === "Z4", g["RP"]);
-check("Game: Rounding Rule -> R. Profile", g["R. Profile"] === "RP30", g["R. Profile"]);
+check("Game: Rounding Rule kept as its own field, not R. Profile (a code, not a number)", g["Rounding Rule"] === "RP30" && !("R. Profile" in g), g);
 check("Game: Last Recived -> Last Recv", g["Last Recv"] === "2026-08-27", g["Last Recv"]);
 check("Game: Vendor Material Number -> Vendor Prod Code", g["Vendor Prod Code"] === "PPS-1", g["Vendor Prod Code"]);
 check("Game: vendor", game.vendorNumber === "101026", game.vendorNumber);

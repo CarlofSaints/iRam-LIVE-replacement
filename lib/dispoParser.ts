@@ -89,7 +89,8 @@ export function parseDispo(buffer: Buffer): DispoParseResult {
       cells.includes("vendor") ||
       cells.includes("article") ||
       cells.includes("article desc") ||
-      cells.includes("article description")
+      cells.includes("article description") ||
+      cells.includes("material") // Game
     ) {
       headerRowIdx = i;
       break;
@@ -267,7 +268,7 @@ export function parseDispo(buffer: Buffer): DispoParseResult {
   // verdict. MUST run before the UOM collapse, because the collapse reads and
   // compares those same values. Prices are deliberately excluded — they carry
   // real decimals.
-  const quantityColumns = [...dateColumns, FIXED_QUANTITY_COLUMN];
+  const quantityColumns = [...dateColumns, ...weekColumns, FIXED_QUANTITY_COLUMN];
   const detection = detectPeriodThousands(rows, quantityColumns);
   // The `**` verdict is about the file's number format, so it rewrites every
   // suspect. The totals-exceed-parts verdict is about individual cells, and
@@ -284,7 +285,7 @@ export function parseDispo(buffer: Buffer): DispoParseResult {
   // rows would otherwise overwrite the real stock and make every SKU look out of
   // stock. Collapse each Article|Site to its most meaningful row here. Files
   // with one row per Article|Site (e.g. Massbuild) are unchanged.
-  const collapsed = collapseUomRows(rows, dateColumns);
+  const collapsed = collapseUomRows(rows, [...dateColumns, ...weekColumns]);
 
   return {
     vendorNumber,
