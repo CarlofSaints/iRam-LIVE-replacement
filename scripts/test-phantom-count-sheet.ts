@@ -4,6 +4,7 @@
 import ExcelJS from "exceljs";
 import { effectiveDsc, NO_COVER, type StoreLine, type StoreLineFlags } from "../lib/storeReport";
 import { buildPhantomCountWorkbook, phantomSheetFileName, vendorLabelFor, type PhantomSheetMeta } from "../lib/phantomCountSheet";
+import { sendPhantomCountEmail } from "../lib/email";
 
 let pass = 0, fail = 0;
 function ok(label: string, cond: boolean, detail = "") {
@@ -254,6 +255,46 @@ async function main() {
       "Out of Stock - BWH RIVONIA-B50 - 1063 - 2026-08-11.xlsx");
     const empty = (await reopen(await buildPhantomCountWorkbook([], OOS_META, { oneSheet: false }))).worksheets[0];
     eq("empty selection still a sheet, named for OOS", empty.name, "Out of Stock");
+
+    // Fastest sellers first on OOS (the on-screen order); Article breaks ties.
+    const mixed = [
+      line({ article: "300", vendor: "1063", dros: 0.2 }),
+      line({ article: "100", vendor: "1063", dros: 4 }),
+      line({ article: "200", vendor: "1063", dros: 4 }),
+    ];
+    const sw = (await reopen(await buildPhantomCountWorkbook(mixed, OOS_META, { oneSheet: true }))).worksheets[0];
+    eq("OOS sorted by DROS desc, then Article", [6, 7, 8].map((r) => sw.getRow(r).getCell(at("Article")).value).join(","), "100,200,300");
+    const pw = (await reopen(await buildPhantomCountWorkbook(mixed, META, { oneSheet: true }))).worksheets[0];
+    eq("Phantom still sorted by Article", [6, 7, 8].map((r) => pw.getRow(r).getCell(3).value).join(","), "100,200,300");
+  }
+
+  // ── Email: every request/customer value is escaped (public endpoint) ──
+  {
+    console.log("\nEmail escaping");
+    process.env.RESEND_API_KEY = "re_test";
+    const sent: { html: string; subject: string }[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (_u: unknown, init?: { body?: string }) => {
+      const b = JSON.parse(init?.body ?? "{}");
+      sent.push({ html: String(b.html ?? ""), subject: String(b.subject ?? "") });
+      return new Response(JSON.stringify({ id: "x" }), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    const evil = '<a href="https://evil">Confirm</a>';
+    try {
+      for (const kind of ["oos", "phantom"] as const) {
+        await sendPhantomCountEmail({
+          to: ["a@b.co"], storeName: evil, siteCode: "M28", periodLabel: "Wk 1", vendorLabel: evil,
+          repName: evil, lineCount: 2, countedCount: 0, mode: "empty", kind, filename: "f.xlsx", content: Buffer.from("x"),
+        });
+      }
+    } finally { globalThis.fetch = realFetch; }
+    eq("two emails built", sent.length, 2);
+    sent.forEach((s, i) => {
+      ok(`${i ? "Phantom" : "OOS"}: no raw link in the HTML`, !s.html.includes("<a href"));
+      ok(`${i ? "Phantom" : "OOS"}: escaped text present`, s.html.includes("&lt;a href=&quot;https://evil&quot;&gt;"));
+    });
+    ok("OOS subject + wording", sent[0].subject.startsWith("Out of Stock:") && sent[0].html.includes("Order Qty"));
+    ok("Phantom wording kept", sent[1].subject.startsWith("Phantom Stock Count") && sent[1].html.includes("Count 1"));
   }
 
   console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"} — ${pass} passed, ${fail} failed\n`);

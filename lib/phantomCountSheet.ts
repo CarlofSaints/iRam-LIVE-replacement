@@ -118,6 +118,7 @@ const KIND = {
   phantom: { columns: COLUMNS, title: "PHANTOM STOCK COUNT", tab: "Stock Count", what: "to count", none: "No phantom lines for this selection.", file: "Phantom Stock Count" },
   oos: { columns: OOS_COLUMNS, title: "OUT OF STOCK", tab: "Out of Stock", what: "out of stock", none: "No out-of-stock lines for this selection.", file: "Out of Stock" },
 } as const;
+const kindOf = (meta: PhantomSheetMeta) => KIND[meta.kind ?? "phantom"];
 
 function countKey(l: StoreLine): string {
   return `${l.clientId}|${l.article}`;
@@ -137,7 +138,7 @@ function buildSheet(
   vendorLabel: string,
   counts: Record<string, number>,
 ): void {
-  const k = KIND[meta.kind ?? "phantom"];
+  const k = kindOf(meta);
   const COLUMNS = k.columns;
   const ws = wb.addWorksheet(safeSheetName(name), {
     views: [{ showGridLines: false, state: "frozen", ySplit: 5 }],
@@ -185,7 +186,7 @@ function buildSheet(
 
   ws.mergeCells(span(4));
   const r4 = ws.getCell("A4");
-  r4.value = meta.kind === "oos"
+  r4.value = k === KIND.oos
     ? "On hand at 0 or below on lines that normally sell here. Write the quantity to order in Order Qty; use Comment for anything unusual."
     : ((meta.mode === "counts"
     ? "Count 1 = what was captured on the report. Recount in Count 2 and note anything unusual in Comment."
@@ -206,9 +207,12 @@ function buildSheet(
   head.height = 28;
 
   // ── Data ──────────────────────────────────────────────────────
-  // Sorted by Article ascending, matching the sheet the teams use today.
+  // Phantom: by Article ascending, matching the sheet the teams use today.
+  // Out of Stock: fastest sellers first (DROS), the same order as the list on
+  // screen, so the most urgent orders head the page. Article breaks ties.
   // Numeric-aware so 620983 sorts before 850023056 rather than by string.
   const sorted = [...lines].sort((a, b) => {
+    if (k === KIND.oos && b.dros !== a.dros) return b.dros - a.dros;
     const na = Number(a.article), nb = Number(b.article);
     if (!isNaN(na) && !isNaN(nb) && na !== nb) return na - nb;
     return String(a.article).localeCompare(String(b.article));
@@ -255,7 +259,7 @@ export async function buildPhantomCountWorkbook(
   const counts = opts.counts ?? {};
 
   if (opts.oneSheet) {
-    buildSheet(wb, KIND[meta.kind ?? "phantom"].tab, lines, meta, meta.vendorLabel, counts);
+    buildSheet(wb, kindOf(meta).tab, lines, meta, meta.vendorLabel, counts);
   } else {
     // A tab per vendor, in vendor order. A line with no vendor still needs a home
     // — it goes to its own tab rather than being silently left out of the count.
@@ -273,7 +277,7 @@ export async function buildPhantomCountWorkbook(
     // An empty selection would produce a workbook with no sheets at all, which
     // Excel refuses to open — always emit at least one.
     if (vendors.length === 0) {
-      buildSheet(wb, KIND[meta.kind ?? "phantom"].tab, [], meta, meta.vendorLabel, counts);
+      buildSheet(wb, kindOf(meta).tab, [], meta, meta.vendorLabel, counts);
     } else {
       for (const v of vendors) {
         const group = byVendor.get(v)!;
@@ -293,5 +297,5 @@ export async function buildPhantomCountWorkbook(
 export function phantomSheetFileName(meta: PhantomSheetMeta, date: Date = new Date()): string {
   const day = date.toLocaleDateString("en-CA", { timeZone: "Africa/Johannesburg" });
   const store = (meta.storeName || meta.siteCode || "Store").replace(/[<>:"/\\|?*]/g, " ").trim();
-  return `${KIND[meta.kind ?? "phantom"].file} - ${store} - ${meta.vendorLabel} - ${day}.xlsx`;
+  return `${kindOf(meta).file} - ${store} - ${meta.vendorLabel} - ${day}.xlsx`;
 }

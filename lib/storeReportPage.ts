@@ -575,12 +575,13 @@ function renderExportPanel(){
   // rep out of the email box.
   var sig = xpList() + "|" + curClient();
   if(xpPanelFor === sig) { updatePanelCounted(); return; }
-  // A vendor picked on one list may not be on the other.
-  if(xpPanelFor && xpPanelFor.split("|")[0] !== xpList()) xpVendor = "all";
   xpPanelFor = sig;
   var isOos = xpList() === "oos";
 
   var vendors = phantomVendors();
+  // A vendor picked earlier (other list, other client) may not be on this one:
+  // fall back to all, or the picker reads "All" while the request sends the old vendor.
+  if(xpVendor !== "all" && !vendors.some(function(v){ return v.code === xpVendor; })) xpVendor = "all";
   var opts = '<option value="all">All vendors (' + phantomLines().length + ' lines)</option>';
   vendors.forEach(function(v){
     var label = v.name ? (v.code + " — " + v.name) : v.code;

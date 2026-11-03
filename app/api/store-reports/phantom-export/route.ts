@@ -55,6 +55,11 @@ export async function POST(req: NextRequest) {
 
     let lines = loaded.report.lines.filter((l) => l.flags[kind]);
     if (!allVendors) lines = lines.filter((l) => l.vendor === vendorSel);
+    // The vendor comes off a public request: only one actually on this list is
+    // accepted, so no made-up value reaches the sheet title or the email.
+    if (!allVendors && lines.length === 0) {
+      return Response.json({ error: "That vendor has no lines on this list. Pick another vendor or All vendors." }, { status: 400 });
+    }
 
     // Counts are read from OUR store, never from the request — the sheet has to
     // show what was actually captured, not what a caller says was captured.
