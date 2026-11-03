@@ -456,7 +456,8 @@ export default function ReportsPage() {
       }
       setMonthEndError("");
       const missing = res.headers.get("X-Missing-Fields");
-      setMonthEndMissing(missing ? JSON.parse(decodeURIComponent(missing)) : []);
+      // A mangled header must never stop a report that built from downloading.
+      try { setMonthEndMissing(missing ? JSON.parse(decodeURIComponent(missing)) : []); } catch { setMonthEndMissing([]); }
       const blob = await res.blob();
       const fileName = filenameFromContentDisposition(
         res.headers.get("Content-Disposition"), "Month_End.xlsx");
@@ -784,17 +785,20 @@ export default function ReportsPage() {
           </button>
         </div>
 
-        {/* A failed report stays put until it is dismissed — see downloadMonthEnd. */}
         {monthEndMissing.length > 0 && (
           <div role="status" className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3">
             <p className="text-sm font-semibold text-amber-900">
-              The report was built, but these fields were not in the DISPO, so their columns are blank:
+              The report was built, but some fields were not in the DISPO:
             </p>
             <ul className="mt-1 list-disc pl-5 text-sm text-amber-900">
               {monthEndMissing.map((m) => <li key={m}>{m}</li>)}
             </ul>
+            <p className="mt-1 text-sm text-amber-900">
+              The last tab of the report, Missing DISPO Fields, says what each one affects.
+            </p>
           </div>
         )}
+        {/* A failed report stays put until it is dismissed — see downloadMonthEnd. */}
         {monthEndError && (
           <div
             role="alert"

@@ -1626,7 +1626,7 @@ export function buildNumericalDistribution(opts: {
 
     if (article) bySiteArticle.set(`${site}|${article}`, p);
     if (cpid) bySiteCpid.set(`${site}|${cpid}`, p);
-    if (soh > 0) stockRows.push({ site, article, cpid, soh, prst, vendor, ...stoRp(row) });
+    if (soh > 0) stockRows.push({ site, article, cpid, soh, prst, vendor, sto: p.sto, rp: p.rp });
     if (vendor) {
       if (article && !vendorByArticle.has(article)) vendorByArticle.set(article, vendor);
       if (cpid && !vendorByCpid.has(cpid)) vendorByCpid.set(cpid, vendor);

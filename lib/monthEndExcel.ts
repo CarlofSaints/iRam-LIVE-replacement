@@ -1197,6 +1197,7 @@ async function buildStatusDetailSheet(wb: ExcelJS.Workbook, rows: StatusDetailRo
       cell.value = row[c.key];
       cell.font = bodyFont();
       cell.border = thinBorder();
+      if (c.key === "sto") { cell.numFmt = "#,##0"; cell.alignment = { horizontal: "right" }; }
     });
     r++;
   }
@@ -1230,7 +1231,7 @@ async function buildMarginDetailSheet(
     "Vendor", "Site", "Site Name", "Product Code", "Article", "Product Status", "PR ST",
     "SOH", "MAC", "Nett Cost", "Incl SP", "Prod. Margin", "STK Margin",
     "MAC vs Nett Cost", "Margin Status", "Margin Support (R)", "Free Stock Units", "Suggested SP (Incl VAT)",
-    // Range LAST: the live formulas above reference columns by letter.
+    // Range, RP, STO LAST: the live formulas above reference columns by letter.
     "Range", "RP", "STO",
   ];
   const widths = [10, 10, 22, 14, 12, 14, 10, 8, 10, 10, 10, 12, 11, 15, 14, 16, 14, 18, 10, 8, 8];
@@ -1510,7 +1511,7 @@ async function buildPhantomSheet(
      it has on OOS Detail, DSC Detail and Status Detail — a phantom line names
      a product someone has to go and find on a shelf, so the code alone is not
      enough to act on. */
-  // Range LAST: the grid below is written by column position.
+  // Range, RP, STO LAST: the grid below is written by column position.
   const detailHeaders =["Vendor", "Site", "Site Name", "Product Code", "Article", "Description", "PR ST", "Product Status", "SOH", "Date Last Sold", "Date Last Received", "Range", "RP", "STO"];
   const detailWidths = [10, 14, 22, 14, 12, 30, 10, 14, 8, 15, 17, 10, 8, 8];
 
@@ -1722,6 +1723,7 @@ async function buildNdDetailSheet(wb: ExcelJS.Workbook, nd: NDAnalysis): Promise
       const cell = sheet.getCell(r, i + 1);
       cell.value = row[c.key];
       cell.font = bodyFont(); cell.border = thinBorder();
+      if (c.key === "sto") { cell.numFmt = "#,##0"; cell.alignment = { horizontal: "right" }; }
     });
     const ndCell = sheet.getCell(r, ndCol);
     ndCell.value = row.nd; ndCell.numFmt = "0"; ndCell.font = bodyFont(); ndCell.border = thinBorder();
