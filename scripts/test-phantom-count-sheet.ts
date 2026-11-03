@@ -268,6 +268,24 @@ async function main() {
     eq("Phantom still sorted by Article", [6, 7, 8].map((r) => pw.getRow(r).getCell(3).value).join(","), "100,200,300");
   }
 
+  // ── SOO / SIT / STO after SOH, only where the DISPO has them (3 Nov 2026) ──
+  {
+    console.log("\nSOO / SIT / STO");
+    const heads = (ws: ExcelJS.Worksheet) => (ws.getRow(5).values as unknown[]).slice(1).map(String);
+    const mbLine = line({ article: "1", vendor: "1063", soh: 4, soo: 6, sit: 2, sto: 3 } as Partial<StoreLine> & { article: string; vendor: string });
+    const mmLine = line({ article: "2", vendor: "1063", soh: 1, soo: 0, sit: 5, sto: null } as Partial<StoreLine> & { article: string; vendor: string });
+    for (const [label, meta] of [["Phantom", META], ["OOS", { ...META, kind: "oos" as const }]] as const) {
+      const both = (await reopen(await buildPhantomCountWorkbook([mbLine, mmLine], meta, { oneSheet: true }))).worksheets[0];
+      const h = heads(both), i = h.indexOf("SOH");
+      eq(`${label}: SOH, SOO, SIT, STO in a row`, h.slice(i, i + 4).join(","), "SOH,SOO,SIT,STO");
+      const r = (art: string) => [6, 7].find((n) => String(both.getRow(n).getCell(h.indexOf("Article") + 1).value) === art)!;
+      eq(`${label}: Massbuild line values`, [1, 2, 3].map((d) => both.getRow(r("1")).getCell(i + 1 + d).value).join(","), "6,2,3");
+      ok(`${label}: Makro line STO blank, SOO 0 kept`, both.getRow(r("2")).getCell(i + 4).value == null && both.getRow(r("2")).getCell(i + 2).value === 0);
+      const makroOnly = heads((await reopen(await buildPhantomCountWorkbook([mmLine], meta, { oneSheet: true }))).worksheets[0]);
+      ok(`${label}: Makro-only sheet has SOO + SIT but no STO`, makroOnly.includes("SOO") && makroOnly.includes("SIT") && !makroOnly.includes("STO"), makroOnly.join(","));
+    }
+  }
+
   // ── Email: every request/customer value is escaped (public endpoint) ──
   {
     console.log("\nEmail escaping");

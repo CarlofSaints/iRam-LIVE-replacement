@@ -6,11 +6,13 @@
 
      Vendor · Article · Barcode · Vend. Prod. · Material Description ·
      Date Last Sold · Last Recpt Y/M · Act DSC · Stk Margin · PR ST · SOH ·
+     SOO · SIT · STO (each only when the DISPO sends it) ·
      Count 1 · Count 2 · Comment
 
    Two differences from the legacy sheet, both asked for:
      • VENDOR is a new first column so the sheet can be filtered per vendor.
-     • STO is dropped — we don't carry that column, and it was 0 on every line.
+     • SOO / SIT / STO follow SOH, but a column is left off when no line on the
+       sheet has it (Makro sends no STO). Carl, 3 Nov 2026.
 
    Count 1 is what the rep entered on the report ("Stock Found"); Count 2 and
    Comment are always blank — a recount and a note done on paper, in store.
@@ -64,6 +66,7 @@ interface Col {
   width: number;
   fmt?: string;
   entry?: boolean;                                  // a column the rep fills in
+  optional?: boolean;                               // dropped when no line on the sheet has a value
   get: (l: StoreLine, found: number | null) => string | number | null;
 }
 
@@ -73,6 +76,13 @@ function yearMonth(raw: string): string {
   if (!d) return raw || "";
   return `${d.getUTCFullYear()}/${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
 }
+
+// SOO / SIT / STO, straight after SOH on both sheets.
+const STOCK_EXTRA: Col[] = [
+  { header: "SOO", width: 8, fmt: "0.##", optional: true, get: (l) => l.soo },
+  { header: "SIT", width: 8, fmt: "0.##", optional: true, get: (l) => l.sit },
+  { header: "STO", width: 8, fmt: "0.##", optional: true, get: (l) => l.sto },
+];
 
 const COLUMNS: Col[] = [
   { header: "Vendor",               width: 10, get: (l) => l.vendor || "" },
@@ -94,6 +104,7 @@ const COLUMNS: Col[] = [
   // reads and writes by hand, and "1,250" invites being read as a decimal comma
   // in a locale that uses one. Decimals still show when there are any.
   { header: "SOH",                  width: 8,  fmt: "0.##", get: (l) => l.soh },
+  ...STOCK_EXTRA,
   // Decimals are real here — reps count metres of rope, not just whole units.
   { header: "Count 1", width: 10, fmt: "0.##", entry: true, get: (_l, found) => found },
   { header: "Count 2", width: 10, fmt: "0.##", entry: true, get: () => null },
@@ -108,6 +119,7 @@ const OOS_COLUMNS: Col[] = [
   { header: "PR ST",          width: 8,  get: (l) => l.prst === "(blank)" ? "" : l.prst },
   { header: "RP",             width: 7,  get: (l) => l.rpType || "" },
   { header: "SOH",            width: 8,  fmt: "0.##", get: (l) => l.soh },
+  ...STOCK_EXTRA,
   { header: "DROS",           width: 8,  fmt: "0.00", get: (l) => l.dros },
   { header: "Date Last Sold", width: 14, get: (l) => l.lastSold || "" },
   { header: "Last Recpt Y/M", width: 14, get: (l) => yearMonth(l.lastReceived) },
@@ -139,7 +151,7 @@ function buildSheet(
   counts: Record<string, number>,
 ): void {
   const k = kindOf(meta);
-  const COLUMNS = k.columns;
+  const COLUMNS = k.columns.filter((c) => !c.optional || lines.some((l) => c.get(l, null) != null));
   const ws = wb.addWorksheet(safeSheetName(name), {
     views: [{ showGridLines: false, state: "frozen", ySplit: 5 }],
     pageSetup: {

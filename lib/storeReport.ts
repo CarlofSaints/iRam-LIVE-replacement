@@ -33,6 +33,14 @@ import {
   LOW_COVER_DAYS as SHARED_LOW_COVER_DAYS,
   PHANTOM_MONTHS as SHARED_PHANTOM_MONTHS,
 } from "./stockFlags";
+import { qty } from "./vitalSigns";
+
+/* SOO / SIT / STO straight off the DISPO line, or null when the DISPO did not
+   send that field (Makro has no STO): shown only where we have it. */
+function optQty(row: Row, key: string): number | null {
+  const v = row[key];
+  return v === undefined || v === null || String(v).trim() === "" ? null : qty(v);
+}
 
 /* This report prints the PR ST code on every line rather than counting a
    "discontinued" measure, so it passes no code set to the shared rule. */
@@ -76,6 +84,9 @@ export interface StoreLine {
   category: string;             // product category (from PMF)
 
   soh: number;
+  soo: number | null;           // DISPO stock on order; null = not in this DISPO
+  sit: number | null;           // stock in transit
+  sto: number | null;           // stock transport order (Massbuild sends it, Makro does not)
   actDsc: number | null;        // DISPO "Act DSC" — actual days stock cover as the retailer states it
   stockMargin: number | null;   // DISPO "Stock Margin" as a fraction (their "Stk Margin" column)
   dros: number;                 // Daily Rate Of Sale = YTD units ÷ days elapsed
@@ -406,6 +417,9 @@ export function buildStoreReport(
         description: String(row["Article Desc"] || row["_productDescription"] || ""),
         category: String(row["_category"] || ""),
         soh,
+        soo: optQty(row, "SOO"),
+        sit: optQty(row, "SIT"),
+        sto: optQty(row, "STO"),
         actDsc: isNaN(actDsc) ? null : round2(actDsc),
         // Blank Stock Margin is genuinely absent, not 0% — marginFraction() maps a
         // blank to 0, so check for a value first and keep null when there isn't one.
