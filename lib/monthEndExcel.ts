@@ -23,7 +23,7 @@ import type {
   NDAnalysis,
   OTOAnalysis,
 } from "./monthEndReport";
-import { buildDateContext, dataRowExtras, rangeModeLabel, type RangeExceptionRow } from "./monthEndReport";
+import { buildDateContext, dataRowExtras, rangeModeLabel, stoRp, type RangeExceptionRow } from "./monthEndReport";
 import { rangeFlag, type RangeMode } from "./rangeState";
 import { analyzeCoverage, coverageMessageLines, formatMonth } from "./dataCoverage";
 import { applyStreamWriterOrderFix } from "./exceljsStreamOrder";
@@ -325,6 +325,8 @@ export async function buildMonthEndWorkbook(
   range?: { mode: RangeMode; exceptions: RangeExceptionRow[] },
   // "N lines at closed stores; M discontinued lines …" — see lib/reportExclusions.ts.
   leftOutLabel = "",
+  // "MAKRO DISPO does not include: STO, Buyer" — see lib/dispoFieldCheck.ts.
+  missingFieldLines: string[] = [],
 ): Promise<Buffer> {
   // Collect the streamed output into a Buffer — the caller needs bytes for
   // both the download response and the SharePoint save.
@@ -405,6 +407,7 @@ export async function buildMonthEndWorkbook(
       : "",
     rangeLine: range ? rangeModeLabel(range.mode) : "",
     leftOutLabel,
+    missingFieldLines,
     sheetNames: MENU_SHEET_ORDER.filter((s) => has[s.key]).map((s) => s.name),
   });
   await commitSheet(menuSheet, false);   // the Menu needs no 🏠 button
@@ -633,9 +636,11 @@ async function buildOosDetailSheet(
     { header: "Site", width: 10, key: "site" as const },
     { header: "Site Name", width: 22, key: "siteName" as const },
     { header: "Range", width: 10, key: "range" as const },
+    { header: "RP", width: 8, key: "rp" as const },
     { header: "SOH", width: 8, key: "soh" as const },
     { header: "SOO", width: 8, key: "soo" as const },
     { header: "SIT", width: 8, key: "sit" as const },
+    { header: "STO", width: 8, key: "sto" as const },
     { header: "Status", width: 10, key: "status" as const },
     { header: "Product Status", width: 14, key: "productStatus" as const },
     { header: "DSC Alert", width: 12, key: "dscAlert" as const },
@@ -661,7 +666,7 @@ async function buildOosDetailSheet(
       cell.value = d[col.key] as string | number;
       cell.font = bodyFont();
       cell.border = thinBorder();
-      if (["soh", "soo", "sit"].includes(col.key)) {
+      if (["soh", "soo", "sit", "sto"].includes(col.key)) {
         cell.numFmt = "#,##0";
       }
     });
@@ -723,11 +728,13 @@ async function buildDataSheet(
     { header: "Site", width: 10, get: (r) => String(r["Site"] ?? "") },
     { header: "Site Name", width: 22, get: (r) => String(r["_storeName"] || r["Site Name"] || "") },
     { header: "Range", width: 10, get: (r) => rangeFlag(r) },
+    { header: "RP", width: 8, get: (r) => stoRp(r).rp },
     { header: "Status", width: 10, get: (r) => String(r["Status"] ?? r["PR ST"] ?? "") },
     { header: "Product Status", width: 14, get: (r) => String(r["_productStatus"] || "") },
     { header: "SOH", width: 8, get: (r) => toNum(r["SOH"]) },
     { header: "SOO", width: 8, get: (r) => toNum(r["SOO"]) },
     { header: "SIT", width: 8, get: (r) => toNum(r["SIT"]) },
+    { header: "STO", width: 8, get: (r) => stoRp(r).sto },
   ];
   const tailCols: { header: string; width: number; fmt: string; get: (r: Record<string, unknown>) => string | number }[] = [
     { header: "Incl SP", width: 10, fmt: RAND_FMT, get: (r) => toNum(r["Incl SP"]) },
@@ -1014,9 +1021,11 @@ async function buildDscDetailSheet(wb: ExcelJS.Workbook, rows: DscDetailRow[]): 
     { header: "Site", width: 10, key: "site" },
     { header: "Site Name", width: 22, key: "siteName" },
     { header: "Range", width: 10, key: "range" },
+    { header: "RP", width: 8, key: "rp" },
     { header: "SOH", width: 8, key: "soh", num: true },
     { header: "SOO", width: 8, key: "soo", num: true },
     { header: "SIT", width: 8, key: "sit", num: true },
+    { header: "STO", width: 8, key: "sto", num: true },
     { header: "Act DSC", width: 9, key: "actDsc", num: true },
     { header: "DSC Bracket", width: 14, key: "bracket" },
     { header: "Date Last Sold", width: 14, key: "dateLastSold" },
@@ -1163,6 +1172,8 @@ async function buildStatusDetailSheet(wb: ExcelJS.Workbook, rows: StatusDetailRo
     { header: "PR ST", width: 10, key: "prst" },
     { header: "Product Status", width: 14, key: "productStatus" },
     { header: "Range", width: 10, key: "ranging" },
+    { header: "RP", width: 8, key: "rp" },
+    { header: "STO", width: 8, key: "sto" },
   ];
 
   cols.forEach((c, i) => {
@@ -1215,9 +1226,9 @@ async function buildMarginDetailSheet(
     "SOH", "MAC", "Nett Cost", "Incl SP", "Prod. Margin", "STK Margin",
     "MAC vs Nett Cost", "Margin Status", "Margin Support (R)", "Free Stock Units", "Suggested SP (Incl VAT)",
     // Range LAST: the live formulas above reference columns by letter.
-    "Range",
+    "Range", "RP", "STO",
   ];
-  const widths = [10, 10, 22, 14, 12, 14, 10, 8, 10, 10, 10, 12, 11, 15, 14, 16, 14, 18, 10];
+  const widths = [10, 10, 22, 14, 12, 14, 10, 8, 10, 10, 10, 12, 11, 15, 14, 16, 14, 18, 10, 8, 8];
 
   let cur = 1;
   // Title
@@ -1319,6 +1330,8 @@ async function buildMarginDetailSheet(
     // Suggested SP (Incl VAT) = OPPORTUNITY: MAC / (1 − Prod. Margin) × 1.15
     formula(18, `IF(AND(O${r}="OPPORTUNITY",(1-L${r})<>0),I${r}/(1-L${r})*1.15,"")`, dr.suggestedSP === null ? "" : dr.suggestedSP, RAND_FMT);
     text(19, dr.range);
+    text(20, dr.rp);
+    const mSto = sheet.getCell(r, 21); mSto.value = dr.sto; mSto.numFmt = "#,##0"; mSto.font = bodyFont(); mSto.border = thinBorder(); mSto.alignment = { horizontal: "right" };
     r++;
   }
 
@@ -1493,8 +1506,8 @@ async function buildPhantomSheet(
      a product someone has to go and find on a shelf, so the code alone is not
      enough to act on. */
   // Range LAST: the grid below is written by column position.
-  const detailHeaders =["Vendor", "Site", "Site Name", "Product Code", "Article", "Description", "PR ST", "Product Status", "SOH", "Date Last Sold", "Date Last Received", "Range"];
-  const detailWidths = [10, 14, 22, 14, 12, 30, 10, 14, 8, 15, 17, 10];
+  const detailHeaders =["Vendor", "Site", "Site Name", "Product Code", "Article", "Description", "PR ST", "Product Status", "SOH", "Date Last Sold", "Date Last Received", "Range", "RP", "STO"];
+  const detailWidths = [10, 14, 22, 14, 12, 30, 10, 14, 8, 15, 17, 10, 8, 8];
 
   let cur = 1;
   // Title
@@ -1578,6 +1591,8 @@ async function buildPhantomSheet(
     if (d.lastReceived) { lr.value = d.lastReceived; lr.numFmt = "dd/mm/yyyy"; } else { lr.value = d.lastReceivedRaw; }
     lr.font = bodyFont(); lr.border = thinBorder(); lr.alignment = { horizontal: "center" };
     text(12, d.range);
+    text(13, d.rp);
+    const pSto = sheet.getCell(r, 14); pSto.value = d.sto; pSto.numFmt = "#,##0"; pSto.font = bodyFont(); pSto.border = thinBorder(); pSto.alignment = { horizontal: "right" };
     r++;
   }
 
@@ -1678,6 +1693,8 @@ async function buildNdDetailSheet(wb: ExcelJS.Workbook, nd: NDAnalysis): Promise
     { header: "PR ST", width: 9, key: "prst" },
     { header: "PMF Status", width: 13, key: "pmfStatus" },
     { header: "Range", width: 10, key: "ranging" },
+    { header: "RP", width: 8, key: "rp" },
+    { header: "STO", width: 8, key: "sto" },
   ];
   cols.forEach((c, i) => {
     const cell = sheet.getCell(1, i + 1);
@@ -1723,6 +1740,7 @@ async function buildNdFalseSheet(wb: ExcelJS.Workbook, nd: NDAnalysis): Promise<
     { header: "Site", width: 10, key: "site" },
     { header: "Site Name", width: 22, key: "siteName" },
     { header: "Range", width: 10, key: "range" },
+    { header: "RP", width: 8, key: "rp" },
     { header: "Product Code", width: 14, key: "productCode" },
     { header: "Article", width: 12, key: "article" },
     { header: "Description", width: 30, key: "description" },
@@ -1742,6 +1760,12 @@ async function buildNdFalseSheet(wb: ExcelJS.Workbook, nd: NDAnalysis): Promise<
   sohHdr.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_BG } };
   sohHdr.border = thinBorder(); sohHdr.alignment = { horizontal: "center" };
   sheet.getColumn(sohCol).width = 9;
+  // STO after the stock column (ND False has no SIT)
+  const stoHdr = sheet.getCell(1, sohCol + 1);
+  stoHdr.value = "STO"; stoHdr.font = headerFont();
+  stoHdr.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_BG } };
+  stoHdr.border = thinBorder(); stoHdr.alignment = { horizontal: "center" };
+  sheet.getColumn(sohCol + 1).width = 8;
 
   let r = 2;
   for (const row of nd.falseDetail) {
@@ -1753,10 +1777,13 @@ async function buildNdFalseSheet(wb: ExcelJS.Workbook, nd: NDAnalysis): Promise<
     const sohCell = sheet.getCell(r, sohCol);
     sohCell.value = row.soh; sohCell.numFmt = "#,##0"; sohCell.font = bodyFont(); sohCell.border = thinBorder();
     sohCell.alignment = { horizontal: "right" };
+    const stoCell = sheet.getCell(r, sohCol + 1);
+    stoCell.value = row.sto; stoCell.numFmt = "#,##0"; stoCell.font = bodyFont(); stoCell.border = thinBorder();
+    stoCell.alignment = { horizontal: "right" };
     r++;
   }
   if (nd.falseDetail.length > 0) {
-    sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: nd.falseDetail.length + 1, column: sohCol } };
+    sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: nd.falseDetail.length + 1, column: sohCol + 1 } };
   }
   await commitSheet(sheet);
 }
@@ -1775,9 +1802,11 @@ async function buildRangeExceptionsSheet(wb: ExcelJS.Workbook, rows: RangeExcept
     { header: "Article", width: 12, key: "article" },
     { header: "Description", width: 30, key: "description" },
     { header: "Product Status", width: 14, key: "productStatus" },
+    { header: "RP", width: 8, key: "rp" },
     { header: "SOH", width: 9, key: "soh", num: true },
     { header: "SOO", width: 9, key: "soo", num: true },
     { header: "SIT", width: 9, key: "sit", num: true },
+    { header: "STO", width: 9, key: "sto", num: true },
   ];
   const note = sheet.getCell(1, 1);
   note.value =
@@ -1807,8 +1836,8 @@ async function buildRangeExceptionsSheet(wb: ExcelJS.Workbook, rows: RangeExcept
 }
 
 // Helper alias types for keyof access (string-valued columns only)
-type NDDetailRowLite = { vendor: string; subChannel: string; province: string; site: string; siteName: string; productCode: string; article: string; description: string; prst: string; pmfStatus: string; ranging: string };
-type NDFalseRowLite = { vendor: string; subChannel: string; province: string; site: string; siteName: string; range: string; productCode: string; article: string; description: string; prst: string; pmfStatus: string };
+type NDDetailRowLite = { vendor: string; subChannel: string; province: string; site: string; siteName: string; productCode: string; article: string; description: string; prst: string; pmfStatus: string; ranging: string; rp: string; sto: number | "" };
+type NDFalseRowLite = { vendor: string; subChannel: string; province: string; site: string; siteName: string; range: string; rp: string; sto: number | ""; productCode: string; article: string; description: string; prst: string; pmfStatus: string };
 
 // ── Open to Order (OTO) sheets ──────────────────────────────────
 const OTO_NOTE =
@@ -1963,11 +1992,13 @@ async function buildOtoDetailSheet(
     { header: "Product Code", width: 14, key: "productCode" },
     { header: "Article", width: 12, key: "article" },
     { header: "Range", width: 10, key: "rangeIndicator" },
+    { header: "RP", width: 8, key: "rp" },
     { header: "Product Description", width: 32, key: "description" },
     // For reference: the stock position each line qualified on.
     { header: "SOH", width: 9, key: "soh", fmt: "#,##0", align: "right" },
     { header: "SOO", width: 9, key: "soo", fmt: "#,##0", align: "right" },
     { header: "SIT", width: 9, key: "sit", fmt: "#,##0", align: "right" },
+    { header: "STO", width: 9, key: "sto", fmt: "#,##0", align: "right" },
     { header: "OTO Units", width: 12, key: "units", fmt: "#,##0", align: "right" },
     { header: "OTO Value", width: 14, key: "value", fmt: RAND_FMT, align: "right" },
   ];
@@ -2036,6 +2067,7 @@ function buildMenuSheet(
     excludedLabel?: string;
     rangeLine?: string;
     leftOutLabel?: string;
+    missingFieldLines?: string[];
     // Tab names in order. Passed in rather than read off wb.worksheets, because
     // this sheet is now written before any of the others exist.
     sheetNames: string[];
@@ -2070,6 +2102,7 @@ function buildMenuSheet(
   if (meta.excludedLabel) meanLine("Months excluded", meta.excludedLabel);
   if (meta.rangeLine) meanLine("Range file", meta.rangeLine);
   if (meta.leftOutLabel) meanLine("Left out", meta.leftOutLabel);
+  for (const l of meta.missingFieldLines ?? []) meanLine("Missing DISPO fields", l);
   row += 2;
 
   // Data-coverage warning block (only when the monthly series has gaps).

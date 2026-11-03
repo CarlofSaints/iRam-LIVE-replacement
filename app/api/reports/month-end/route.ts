@@ -37,6 +37,7 @@ import { parseVendorParam, rowVendor } from "@/lib/vendorScope";
 import { getChannels } from "@/lib/channelData";
 import { expandToChannelGroups, scopeRowsToSelection, pickedMetas } from "@/lib/channelGroup";
 import { contentDisposition } from "@/lib/contentDisposition";
+import { missingFieldLines } from "@/lib/dispoFieldCheck";
 
 /* This report is an order of magnitude heavier than Vital Signs: it reads the
    whole store master, the product lookup and the ranging file on top of the
@@ -153,6 +154,17 @@ export async function GET(req: NextRequest) {
         if (meta.clientName) clientName = meta.clientName;
       }
     }
+
+    /* Fields the report reads that a DISPO did not send (Makro has no STO or
+       Buyer). Never fatal: named on the Menu sheet and on the Reports page. */
+    const missingFields = missingFieldLines(
+      ledgerResults
+        .filter((l) => l.rows.length > 0)
+        .map((l) => ({
+          channelName: l.meta?.channelName || allChannelsForGroup.find((c) => c.id === l.channelId)?.name || l.channelId,
+          rows: l.rows,
+        })),
+    );
 
     if (allRows.length === 0) {
       return Response.json(
@@ -368,6 +380,7 @@ export async function GET(req: NextRequest) {
           rangingRows: ndRanging.length,
           sheetsRequested: includeSheets.length || "all",
           ndBuilt: !!ndAnalysis,
+          missingFields,
           timings,
         },
         { headers: noCacheHeaders() },
@@ -397,6 +410,7 @@ export async function GET(req: NextRequest) {
       { year: rYear, month: rMonth, excludedMonths },
       { mode: enriched.rangeMode, exceptions: buildRangeExceptions(reportRows, enriched.rangeMode) },
       exclusionLabel(excl, rYear, includeClosed),
+      missingFields,
     );
 
     // 9. Log activity
@@ -433,6 +447,7 @@ export async function GET(req: NextRequest) {
         "Content-Disposition": contentDisposition(fileName),
         "Cache-Control": "no-store",
         ...spHeaders,
+        ...(missingFields.length ? { "X-Missing-Fields": encodeURIComponent(JSON.stringify(missingFields)) } : {}),
       },
     });
   } catch (err) {
