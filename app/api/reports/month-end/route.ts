@@ -155,18 +155,6 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    /* Fields the report reads that a DISPO did not send (Makro has no STO or
-       Buyer). Never fatal: named on the Menu sheet and on the Reports page. */
-    const missingGroups = missingFieldGroups(
-      ledgerResults
-        .filter((l) => l.rows.length > 0)
-        .map((l) => ({
-          channelName: l.meta?.channelName || allChannelsForGroup.find((c) => c.id === l.channelId)?.name || l.channelId,
-          rows: l.rows,
-        })),
-    );
-    const missingFields = missingGroups.map(missingFieldLine);
-
     if (allRows.length === 0) {
       return Response.json(
         { error: "No sales data found for the selected channels" },
@@ -210,6 +198,25 @@ export async function GET(req: NextRequest) {
       ledgerResults, channelIds, allChannelsForGroup, await getMergedStores(), dateColumns,
     );
     const channelNames = deduped.channelNames;
+
+    /* Fields the report reads that a DISPO did not send (Makro has no STO or
+       Buyer). Never fatal: named on the Reports page, the Menu and a last tab.
+       Checked on the rows the report is BUILT from, each under the channel whose
+       DISPO it was loaded from, so frozen companion copies and channels not
+       picked are never named. */
+    const ledgerOf = new Map<Record<string, unknown>, string>();
+    for (const l of ledgerResults) {
+      const name = l.meta?.channelName || allChannelsForGroup.find((c) => c.id === l.channelId)?.name || l.channelId;
+      for (const r of l.rows) ledgerOf.set(r, name);
+    }
+    const rowsByLedger = new Map<string, Record<string, unknown>[]>();
+    for (const r of deduped.rows) {
+      const name = ledgerOf.get(r) ?? "";
+      const list = rowsByLedger.get(name);
+      if (list) list.push(r); else rowsByLedger.set(name, [r]);
+    }
+    const missingGroups = missingFieldGroups([...rowsByLedger].map(([channelName, rows]) => ({ channelName, rows })));
+    const missingFields = missingGroups.map(missingFieldLine);
     if (deduped.supersededRows > 0 || deduped.droppedOtherChannel > 0 || deduped.droppedSubChannel > 0) {
       console.log(
         `[month-end] ${clientName}: dropped ${deduped.supersededRows} duplicate row(s) ` +
