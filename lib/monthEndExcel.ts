@@ -24,6 +24,7 @@ import type {
   OTOAnalysis,
 } from "./monthEndReport";
 import { buildDateContext, dataRowExtras, rangeModeLabel, stoRp, type RangeExceptionRow } from "./monthEndReport";
+import { fieldEffect, missingFieldLine, type MissingFieldGroup } from "./dispoFieldCheck";
 import { rangeFlag, type RangeMode } from "./rangeState";
 import { analyzeCoverage, coverageMessageLines, formatMonth } from "./dataCoverage";
 import { applyStreamWriterOrderFix } from "./exceljsStreamOrder";
@@ -141,6 +142,7 @@ const MENU_SHEET_ORDER: { key: string; name: string }[] = [
   { key: "ndFalse", name: "ND False" },
   { key: "rangeExceptions", name: "Range Exceptions" },
   { key: "data", name: "Data" },
+  { key: "missingFields", name: "Missing DISPO Fields" },
 ];
 
 /* Finish a sheet and flush it. This is the old whole-workbook post-pass scoped
@@ -325,8 +327,8 @@ export async function buildMonthEndWorkbook(
   range?: { mode: RangeMode; exceptions: RangeExceptionRow[] },
   // "N lines at closed stores; M discontinued lines …" — see lib/reportExclusions.ts.
   leftOutLabel = "",
-  // "MAKRO DISPO does not include: STO, Buyer" — see lib/dispoFieldCheck.ts.
-  missingFieldLines: string[] = [],
+  // Fields a channel's DISPO did not send — see lib/dispoFieldCheck.ts.
+  missingFields: MissingFieldGroup[] = [],
 ): Promise<Buffer> {
   // Collect the streamed output into a Buffer — the caller needs bytes for
   // both the download response and the SharePoint save.
@@ -380,6 +382,8 @@ export async function buildMonthEndWorkbook(
     ndFalse: !!ndAnalysis && ndAnalysis.hasRanging && ndAnalysis.falseDetail.length > 0 && want("ndFalse"),
     rangeExceptions: range?.mode === "full" && range.exceptions.length > 0 && want("rangeExceptions"),
     data: dataRows.length > 0 && want("data"),
+    // Not in the sheet picker: whenever a DISPO lacked a field, the reader is told.
+    missingFields: missingFields.length > 0,
   };
 
   // Sheets are written in creation order and can't be reordered or removed
@@ -407,7 +411,7 @@ export async function buildMonthEndWorkbook(
       : "",
     rangeLine: range ? rangeModeLabel(range.mode) : "",
     leftOutLabel,
-    missingFieldLines,
+    missingFieldLines: missingFields.map(missingFieldLine),
     sheetNames: MENU_SHEET_ORDER.filter((s) => has[s.key]).map((s) => s.name),
   });
   await commitSheet(menuSheet, false);   // the Menu needs no 🏠 button
@@ -476,6 +480,7 @@ export async function buildMonthEndWorkbook(
   if (has.ndFalse) await buildNdFalseSheet(wb, ndAnalysis!);
   if (has.rangeExceptions) await buildRangeExceptionsSheet(wb, range!.exceptions);
   if (has.data) await buildDataSheet(wb, dataRows, dateColumns, period);
+  if (has.missingFields) await buildMissingFieldsSheet(wb, missingFields);
 
   await wb.commit();
   return collected;
@@ -1785,6 +1790,37 @@ async function buildNdFalseSheet(wb: ExcelJS.Workbook, nd: NDAnalysis): Promise<
   if (nd.falseDetail.length > 0) {
     sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: nd.falseDetail.length + 1, column: sohCol + 1 } };
   }
+  await commitSheet(sheet);
+}
+
+// Missing DISPO Fields — what each channel's DISPO did not send, and what that
+// does to this report. One row per channel group x field.
+async function buildMissingFieldsSheet(wb: ExcelJS.Workbook, groups: MissingFieldGroup[]): Promise<void> {
+  const sheet = wb.addWorksheet("Missing DISPO Fields", sheetOpts({ state: "frozen", ySplit: 2 }));
+  const headers = ["DISPO (Channel)", "Missing Field", "Effect on this report"];
+  const widths = [28, 18, 80];
+  const note = sheet.getCell(1, 1);
+  note.value = "These fields were not in the DISPO(s) this report was built from. The report still ran; the affected columns are blank or fall back as described.";
+  note.font = { name: "Calibri", size: 10, italic: true };
+  sheet.mergeCells(1, 1, 1, headers.length);
+  headers.forEach((h, i) => {
+    const c = sheet.getCell(2, i + 1);
+    c.value = h; c.font = headerFont();
+    c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_BG } };
+    c.border = thinBorder(); c.alignment = { horizontal: "center", wrapText: true };
+    sheet.getColumn(i + 1).width = widths[i];
+  });
+  let r = 3;
+  for (const g of groups) {
+    for (const f of g.fields) {
+      [g.channels.join(" / "), f, fieldEffect(f)].forEach((v, i) => {
+        const c = sheet.getCell(r, i + 1);
+        c.value = v; c.font = bodyFont(); c.border = thinBorder(); c.alignment = { wrapText: true, vertical: "top" };
+      });
+      r++;
+    }
+  }
+  sheet.autoFilter = { from: { row: 2, column: 1 }, to: { row: r - 1, column: headers.length } };
   await commitSheet(sheet);
 }
 

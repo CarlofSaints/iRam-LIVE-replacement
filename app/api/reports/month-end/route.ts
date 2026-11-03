@@ -37,7 +37,7 @@ import { parseVendorParam, rowVendor } from "@/lib/vendorScope";
 import { getChannels } from "@/lib/channelData";
 import { expandToChannelGroups, scopeRowsToSelection, pickedMetas } from "@/lib/channelGroup";
 import { contentDisposition } from "@/lib/contentDisposition";
-import { missingFieldLines } from "@/lib/dispoFieldCheck";
+import { missingFieldGroups, missingFieldLine } from "@/lib/dispoFieldCheck";
 
 /* This report is an order of magnitude heavier than Vital Signs: it reads the
    whole store master, the product lookup and the ranging file on top of the
@@ -157,7 +157,7 @@ export async function GET(req: NextRequest) {
 
     /* Fields the report reads that a DISPO did not send (Makro has no STO or
        Buyer). Never fatal: named on the Menu sheet and on the Reports page. */
-    const missingFields = missingFieldLines(
+    const missingGroups = missingFieldGroups(
       ledgerResults
         .filter((l) => l.rows.length > 0)
         .map((l) => ({
@@ -165,6 +165,7 @@ export async function GET(req: NextRequest) {
           rows: l.rows,
         })),
     );
+    const missingFields = missingGroups.map(missingFieldLine);
 
     if (allRows.length === 0) {
       return Response.json(
@@ -410,7 +411,7 @@ export async function GET(req: NextRequest) {
       { year: rYear, month: rMonth, excludedMonths },
       { mode: enriched.rangeMode, exceptions: buildRangeExceptions(reportRows, enriched.rangeMode) },
       exclusionLabel(excl, rYear, includeClosed),
-      missingFields,
+      missingGroups,
     );
 
     // 9. Log activity

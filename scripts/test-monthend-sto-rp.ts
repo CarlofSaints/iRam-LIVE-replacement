@@ -16,7 +16,7 @@ import {
   buildOOSDetail, buildDscDetail, buildStatusDetail, buildMarginAnalysis, buildPhantomAnalysis,
   buildOpenToOrder, buildNumericalDistribution, type OOSSummary,
 } from "../lib/monthEndReport";
-import { missingDispoFields, missingFieldLines } from "../lib/dispoFieldCheck";
+import { missingDispoFields, missingFieldGroups, missingFieldLine } from "../lib/dispoFieldCheck";
 import type { StatusDefinition } from "../lib/types";
 
 let failures = 0;
@@ -33,9 +33,10 @@ const mm = parseDispo(fs.readFileSync(mmPath)).rows;
 const mbGap = missingDispoFields(mb), mmGap = missingDispoFields(mm);
 assert("Massbuild DISPO has STO, RP, Buyer", !mbGap.includes("STO") && !mbGap.includes("RP") && !mbGap.includes("Buyer"), mbGap.join(", "));
 assert("Makro DISPO is missing STO and Buyer", mmGap.includes("STO") && mmGap.includes("Buyer"), mmGap.join(", "));
-const lines = missingFieldLines([
+const groups = missingFieldGroups([
   { channelName: "MAKRO", rows: mm }, { channelName: "WALMART", rows: mm }, { channelName: "MASSBUILD", rows: mb },
 ]);
+const lines = groups.map(missingFieldLine);
 assert("identical gaps grouped into one line", lines.some((l) => l.startsWith("MAKRO / WALMART DISPO does not include:")), lines.join(" | "));
 console.log("      " + lines.join("\n      "));
 
@@ -64,7 +65,7 @@ async function main() {
     buildNumericalDistribution({ rows: [line], dateColumns: dc, refYear: 2026, refMonth: 1, rollingMonths: 6, hasRanging: false, rangingRows: [], stores, products, channelNames: ["BWH"] }),
     buildOpenToOrder({ rows: [oosLine], statusDefs: defs, statusScenarios: [], otoMultipliers: {}, hasRanging: false, rangingRows: [] }),
     undefined, buildDscDetail([line], dc),
-    { year: 2026, month: 1 }, undefined, "", lines,
+    { year: 2026, month: 1 }, undefined, "", groups,
   );
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(buf as unknown as ArrayBuffer);
@@ -93,6 +94,26 @@ async function main() {
   let found = 0;
   menu.eachRow((r) => { if (String(r.getCell(1).value) === "Missing DISPO fields") found++; });
   assert("Menu names each missing-fields line", found === lines.length, `${found}/${lines.length}`);
+
+  // Last tab: one row per channel group x field, each with its effect
+  const names = wb.worksheets.map((w) => w.name);
+  assert("Missing DISPO Fields is the last sheet", names[names.length - 1] === "Missing DISPO Fields", names.join(", "));
+  const mf = wb.getWorksheet("Missing DISPO Fields")!;
+  const want = groups.reduce((n, g) => n + g.fields.length, 0);
+  const got: string[] = [];
+  for (let r = 3; r <= mf.rowCount; r++) if (mf.getCell(r, 2).value) got.push(`${mf.getCell(r, 1).value}|${mf.getCell(r, 2).value}|${mf.getCell(r, 3).value}`);
+  assert("one row per channel x field", got.length === want, `${got.length}/${want}`);
+  assert("STO row names MAKRO / WALMART and its effect", got.some((g) => g.startsWith("MAKRO / WALMART|STO|STO column is blank")), got.join(" ; "));
+  assert("every row states an effect", got.every((g) => g.split("|")[2].length > 0));
+  let linked = false;
+  menu.eachRow((r) => r.eachCell((c) => { if (JSON.stringify(c.value).includes("Missing DISPO Fields")) linked = true; }));
+  assert("Menu links to the sheet", linked);
+
+  // No gap: no sheet
+  const clean = await buildMonthEndWorkbook([], oos, [], "TEST", "MASSBUILD", "Jan 2026", [line], dc);
+  const wb2 = new ExcelJS.Workbook();
+  await wb2.xlsx.load(clean as unknown as ArrayBuffer);
+  assert("no missing fields: no sheet", !wb2.getWorksheet("Missing DISPO Fields"));
 
   console.log(failures ? `\n${failures} FAILED` : "\nALL PASS");
   process.exit(failures ? 1 : 0);
