@@ -149,9 +149,9 @@ function buildSheet(
   meta: PhantomSheetMeta,
   vendorLabel: string,
   counts: Record<string, number>,
+  COLUMNS: Col[],                  // decided once per workbook, so every tab matches
 ): void {
   const k = kindOf(meta);
-  const COLUMNS = k.columns.filter((c) => !c.optional || lines.some((l) => c.get(l, null) != null));
   const ws = wb.addWorksheet(safeSheetName(name), {
     views: [{ showGridLines: false, state: "frozen", ySplit: 5 }],
     pageSetup: {
@@ -269,9 +269,12 @@ export async function buildPhantomCountWorkbook(
   wb.created = new Date();
 
   const counts = opts.counts ?? {};
+  // Optional columns (SOO / SIT / STO) kept when ANY line in the workbook has
+  // them, so a tab per vendor never shifts Count 1 / Order Qty between tabs.
+  const cols = kindOf(meta).columns.filter((c) => !c.optional || lines.some((l) => c.get(l, null) != null));
 
   if (opts.oneSheet) {
-    buildSheet(wb, kindOf(meta).tab, lines, meta, meta.vendorLabel, counts);
+    buildSheet(wb, kindOf(meta).tab, lines, meta, meta.vendorLabel, counts, cols);
   } else {
     // A tab per vendor, in vendor order. A line with no vendor still needs a home
     // — it goes to its own tab rather than being silently left out of the count.
@@ -289,14 +292,14 @@ export async function buildPhantomCountWorkbook(
     // An empty selection would produce a workbook with no sheets at all, which
     // Excel refuses to open — always emit at least one.
     if (vendors.length === 0) {
-      buildSheet(wb, kindOf(meta).tab, [], meta, meta.vendorLabel, counts);
+      buildSheet(wb, kindOf(meta).tab, [], meta, meta.vendorLabel, counts, cols);
     } else {
       for (const v of vendors) {
         const group = byVendor.get(v)!;
         // Tab named for the vendor AND its name — a row of bare numbers along
         // the bottom of Excel tells nobody which vendor they are looking at.
         const label = v === "No vendor" ? "No vendor" : vendorLabelFor(v, group[0]?.vendorName || "");
-        buildSheet(wb, label, group, meta, label, counts);
+        buildSheet(wb, label, group, meta, label, counts, cols);
       }
     }
   }

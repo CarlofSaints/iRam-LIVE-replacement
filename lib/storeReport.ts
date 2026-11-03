@@ -26,21 +26,13 @@
    ────────────────────────────────────────────────────────────── */
 
 import type { StatusDefinition, StatusScenario } from "./types";
-import { classifyRowStatus, parseDispoDate, marginFraction, VAT_RATE } from "./monthEndReport";
+import { classifyRowStatus, parseDispoDate, marginFraction, optQty, VAT_RATE } from "./monthEndReport";
 import {
   computeStockFlags,
   daysElapsedInYear,
   LOW_COVER_DAYS as SHARED_LOW_COVER_DAYS,
   PHANTOM_MONTHS as SHARED_PHANTOM_MONTHS,
 } from "./stockFlags";
-import { qty } from "./vitalSigns";
-
-/* SOO / SIT / STO straight off the DISPO line, or null when the DISPO did not
-   send that field (Makro has no STO): shown only where we have it. */
-function optQty(row: Row, key: string): number | null {
-  const v = row[key];
-  return v === undefined || v === null || String(v).trim() === "" ? null : qty(v);
-}
 
 /* This report prints the PR ST code on every line rather than counting a
    "discontinued" measure, so it passes no code set to the shared rule. */
@@ -417,6 +409,7 @@ export function buildStoreReport(
         description: String(row["Article Desc"] || row["_productDescription"] || ""),
         category: String(row["_category"] || ""),
         soh,
+        // SOO / SIT / STO only where the DISPO sends the field (Makro has no STO).
         soo: optQty(row, "SOO"),
         sit: optQty(row, "SIT"),
         sto: optQty(row, "STO"),

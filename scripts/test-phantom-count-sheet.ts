@@ -5,6 +5,7 @@ import ExcelJS from "exceljs";
 import { effectiveDsc, NO_COVER, type StoreLine, type StoreLineFlags } from "../lib/storeReport";
 import { buildPhantomCountWorkbook, phantomSheetFileName, vendorLabelFor, type PhantomSheetMeta } from "../lib/phantomCountSheet";
 import { sendPhantomCountEmail } from "../lib/email";
+import { optQty, stoRp } from "../lib/monthEndReport";
 
 let pass = 0, fail = 0;
 function ok(label: string, cond: boolean, detail = "") {
@@ -284,6 +285,21 @@ async function main() {
       const makroOnly = heads((await reopen(await buildPhantomCountWorkbook([mmLine], meta, { oneSheet: true }))).worksheets[0]);
       ok(`${label}: Makro-only sheet has SOO + SIT but no STO`, makroOnly.includes("SOO") && makroOnly.includes("SIT") && !makroOnly.includes("STO"), makroOnly.join(","));
     }
+
+    // Tab per vendor: every tab gets the same columns, even a vendor whose lines
+    // have no STO, so Count 1 / Order Qty never move between tabs.
+    const tabs = (await reopen(await buildPhantomCountWorkbook(
+      [mbLine, { ...mmLine, vendor: "1449", vendorName: "RUSTOLEUM" }], META, { oneSheet: false }))).worksheets;
+    eq("two vendor tabs", tabs.length, 2);
+    eq("tabs share one column layout", heads(tabs[0]).join(","), heads(tabs[1]).join(","));
+    ok("STO kept on the tab with no STO values", heads(tabs[1]).includes("STO"));
+
+    // The rule itself: a blank cell in a column the DISPO sends is 0; only a
+    // column the DISPO does not have is null.
+    eq("optQty: blank cell in a sent column = 0", optQty({ SOO: "" }, "SOO"), 0);
+    eq("optQty: thousands parsed", optQty({ SOO: "1,250" }, "SOO"), 1250);
+    eq("optQty: column not in DISPO = null", optQty({ SOH: 3 }, "STO"), null);
+    eq("stoRp keeps STO blank only when absent", JSON.stringify([stoRp({ STO: "" }).sto, stoRp({}).sto]), JSON.stringify([0, ""]));
   }
 
   // ── Email: every request/customer value is escaped (public endpoint) ──
