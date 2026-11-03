@@ -26,7 +26,7 @@
    ────────────────────────────────────────────────────────────── */
 
 import type { StatusDefinition, StatusScenario } from "./types";
-import { classifyRowStatus, parseDispoDate, marginFraction, VAT_RATE } from "./monthEndReport";
+import { classifyRowStatus, parseDispoDate, marginFraction, optQty, VAT_RATE } from "./monthEndReport";
 import {
   computeStockFlags,
   daysElapsedInYear,
@@ -76,6 +76,9 @@ export interface StoreLine {
   category: string;             // product category (from PMF)
 
   soh: number;
+  soo: number | null;           // DISPO stock on order; null = not in this DISPO
+  sit: number | null;           // stock in transit
+  sto: number | null;           // stock transport order (Massbuild sends it, Makro does not)
   actDsc: number | null;        // DISPO "Act DSC" — actual days stock cover as the retailer states it
   stockMargin: number | null;   // DISPO "Stock Margin" as a fraction (their "Stk Margin" column)
   dros: number;                 // Daily Rate Of Sale = YTD units ÷ days elapsed
@@ -406,6 +409,10 @@ export function buildStoreReport(
         description: String(row["Article Desc"] || row["_productDescription"] || ""),
         category: String(row["_category"] || ""),
         soh,
+        // SOO / SIT / STO only where the DISPO sends the field (Makro has no STO).
+        soo: optQty(row, "SOO"),
+        sit: optQty(row, "SIT"),
+        sto: optQty(row, "STO"),
         actDsc: isNaN(actDsc) ? null : round2(actDsc),
         // Blank Stock Margin is genuinely absent, not 0% — marginFraction() maps a
         // blank to 0, so check for a value first and keep null when there isn't one.

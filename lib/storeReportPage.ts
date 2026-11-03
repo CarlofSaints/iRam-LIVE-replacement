@@ -333,7 +333,10 @@ function itemHtml(l){
     + '<div class="detail">'
       + alert
       + '<div class="grid">'
-        + g("SOH", fmt(l.soh)) + g("DROS", fmt(l.dros)+" /day") + g("Days cover", l.daysCover==null?"—":fmt(l.daysCover))
+        + g("SOH", fmt(l.soh))
+        // Only where the DISPO has the field (Makro sends no STO).
+        + (l.soo==null?"":g("SOO", fmt(l.soo))) + (l.sit==null?"":g("SIT", fmt(l.sit))) + (l.sto==null?"":g("STO", fmt(l.sto)))
+        + g("DROS", fmt(l.dros)+" /day") + g("Days cover", l.daysCover==null?"—":fmt(l.daysCover))
         + g("Last sold", (l.lastSold||"—")+age(l.lastSoldDays)) + g("Last received", (l.lastReceived||"—")+age(l.lastReceivedDays))
         + g("Channel Status", statusVal) + g("Vendor Status", esc(l.vendorStatus||"—")) + g("Ranging", l.ranging||"—")
         + g("RP type", esc(l.rpType||"—"))

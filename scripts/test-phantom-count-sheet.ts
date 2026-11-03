@@ -5,6 +5,7 @@ import ExcelJS from "exceljs";
 import { effectiveDsc, NO_COVER, type StoreLine, type StoreLineFlags } from "../lib/storeReport";
 import { buildPhantomCountWorkbook, phantomSheetFileName, vendorLabelFor, type PhantomSheetMeta } from "../lib/phantomCountSheet";
 import { sendPhantomCountEmail } from "../lib/email";
+import { optQty, stoRp } from "../lib/monthEndReport";
 
 let pass = 0, fail = 0;
 function ok(label: string, cond: boolean, detail = "") {
@@ -266,6 +267,39 @@ async function main() {
     eq("OOS sorted by DROS desc, then Article", [6, 7, 8].map((r) => sw.getRow(r).getCell(at("Article")).value).join(","), "100,200,300");
     const pw = (await reopen(await buildPhantomCountWorkbook(mixed, META, { oneSheet: true }))).worksheets[0];
     eq("Phantom still sorted by Article", [6, 7, 8].map((r) => pw.getRow(r).getCell(3).value).join(","), "100,200,300");
+  }
+
+  // ── SOO / SIT / STO after SOH, only where the DISPO has them (3 Nov 2026) ──
+  {
+    console.log("\nSOO / SIT / STO");
+    const heads = (ws: ExcelJS.Worksheet) => (ws.getRow(5).values as unknown[]).slice(1).map(String);
+    const mbLine = line({ article: "1", vendor: "1063", soh: 4, soo: 6, sit: 2, sto: 3 } as Partial<StoreLine> & { article: string; vendor: string });
+    const mmLine = line({ article: "2", vendor: "1063", soh: 1, soo: 0, sit: 5, sto: null } as Partial<StoreLine> & { article: string; vendor: string });
+    for (const [label, meta] of [["Phantom", META], ["OOS", { ...META, kind: "oos" as const }]] as const) {
+      const both = (await reopen(await buildPhantomCountWorkbook([mbLine, mmLine], meta, { oneSheet: true }))).worksheets[0];
+      const h = heads(both), i = h.indexOf("SOH");
+      eq(`${label}: SOH, SOO, SIT, STO in a row`, h.slice(i, i + 4).join(","), "SOH,SOO,SIT,STO");
+      const r = (art: string) => [6, 7].find((n) => String(both.getRow(n).getCell(h.indexOf("Article") + 1).value) === art)!;
+      eq(`${label}: Massbuild line values`, [1, 2, 3].map((d) => both.getRow(r("1")).getCell(i + 1 + d).value).join(","), "6,2,3");
+      ok(`${label}: Makro line STO blank, SOO 0 kept`, both.getRow(r("2")).getCell(i + 4).value == null && both.getRow(r("2")).getCell(i + 2).value === 0);
+      const makroOnly = heads((await reopen(await buildPhantomCountWorkbook([mmLine], meta, { oneSheet: true }))).worksheets[0]);
+      ok(`${label}: Makro-only sheet has SOO + SIT but no STO`, makroOnly.includes("SOO") && makroOnly.includes("SIT") && !makroOnly.includes("STO"), makroOnly.join(","));
+    }
+
+    // Tab per vendor: every tab gets the same columns, even a vendor whose lines
+    // have no STO, so Count 1 / Order Qty never move between tabs.
+    const tabs = (await reopen(await buildPhantomCountWorkbook(
+      [mbLine, { ...mmLine, vendor: "1449", vendorName: "RUSTOLEUM" }], META, { oneSheet: false }))).worksheets;
+    eq("two vendor tabs", tabs.length, 2);
+    eq("tabs share one column layout", heads(tabs[0]).join(","), heads(tabs[1]).join(","));
+    ok("STO kept on the tab with no STO values", heads(tabs[1]).includes("STO"));
+
+    // The rule itself: a blank cell in a column the DISPO sends is 0; only a
+    // column the DISPO does not have is null.
+    eq("optQty: blank cell in a sent column = 0", optQty({ SOO: "" }, "SOO"), 0);
+    eq("optQty: thousands parsed", optQty({ SOO: "1,250" }, "SOO"), 1250);
+    eq("optQty: column not in DISPO = null", optQty({ SOH: 3 }, "STO"), null);
+    eq("stoRp keeps STO blank only when absent", JSON.stringify([stoRp({ STO: "" }).sto, stoRp({}).sto]), JSON.stringify([0, ""]));
   }
 
   // ── Email: every request/customer value is escaped (public endpoint) ──

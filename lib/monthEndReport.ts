@@ -22,13 +22,19 @@ import { isClosedStore } from "./reportExclusions";
 
 type Row = Record<string, unknown>;
 
+/* A stock quantity off the DISPO line, or null when the DISPO has no such
+   COLUMN (Makro sends no STO). A blank cell in a column the DISPO does send
+   reads 0, the way qty() reads it everywhere else; only a missing field is
+   blank. One rule for Month-End and the store reports. */
+export function optQty(row: Row | null | undefined, key: string): number | null {
+  return row && key in row ? qty(row[key]) : null;
+}
+
 /* STO and RP straight off the DISPO line, for the Site x SKU detail sheets.
    Massbuild sends both, Makro sends RP only: a missing field stays BLANK, never
    0, and the route names it in the missing-fields notice (lib/dispoFieldCheck). */
 export function stoRp(row: Row | null | undefined): { sto: number | ""; rp: string } {
-  const raw = row?.["STO"];
-  const sto = raw === undefined || raw === null || String(raw).trim() === "" ? "" : qty(raw);
-  return { sto, rp: String(row?.["RP"] ?? "").trim() };
+  return { sto: optQty(row, "STO") ?? "", rp: String(row?.["RP"] ?? "").trim() };
 }
 
 export const VAT_RATE = 0.15;
