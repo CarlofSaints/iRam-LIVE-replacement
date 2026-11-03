@@ -232,6 +232,30 @@ async function main() {
     ok("filename is safe + descriptive", f === "Phantom Stock Count - BWH RIVONIA-B50 - 1063 - 2026-08-11.xlsx", f);
   }
 
+  // ── Out of Stock sheet (3 Nov 2026): same builder, kind "oos" ──
+  {
+    console.log("\nOut of Stock sheet");
+    const OOS_META: PhantomSheetMeta = { ...META, kind: "oos", mode: "counts" };   // mode must be ignored for OOS
+    const oosLines = [line({ article: "5", vendor: "1063", soh: -2, dros: 1.5, rpType: "ZB" })];
+    const ws = (await reopen(await buildPhantomCountWorkbook(oosLines, OOS_META, { oneSheet: true, counts: { "c1|5": 9 } }))).worksheets[0];
+    eq("tab name", ws.name, "Out of Stock");
+    ok("title says OUT OF STOCK", String(ws.getCell("A1").value).startsWith("OUT OF STOCK"));
+    const heads = (ws.getRow(5).values as unknown[]).slice(1).map(String);
+    eq("columns", heads.join(" | "),
+      "Vendor | Vendor Name | Article | Barcode | Vend. Prod. | Material Description | PR ST | RP | SOH | DROS | Date Last Sold | Last Recpt Y/M | Order Qty | Comment");
+    const at = (h: string) => heads.indexOf(h) + 1;
+    eq("SOH", ws.getRow(6).getCell(at("SOH")).value, -2);
+    eq("DROS", ws.getRow(6).getCell(at("DROS")).value, 1.5);
+    eq("RP", ws.getRow(6).getCell(at("RP")).value, "ZB");
+    ok("Order Qty blank (no count leaks in)", ws.getRow(6).getCell(at("Order Qty")).value == null);
+    ok("no Count columns", !heads.includes("Count 1"));
+    ok("note tells them to write the order", /Order Qty/.test(String(ws.getCell("A4").value)));
+    eq("filename", phantomSheetFileName({ ...OOS_META, vendorLabel: "1063" }, new Date("2026-08-11T10:00:00Z")),
+      "Out of Stock - BWH RIVONIA-B50 - 1063 - 2026-08-11.xlsx");
+    const empty = (await reopen(await buildPhantomCountWorkbook([], OOS_META, { oneSheet: false }))).worksheets[0];
+    eq("empty selection still a sheet, named for OOS", empty.name, "Out of Stock");
+  }
+
   console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"} — ${pass} passed, ${fail} failed\n`);
   if (fail) process.exit(1);
 }

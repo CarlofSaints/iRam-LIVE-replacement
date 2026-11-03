@@ -537,12 +537,14 @@ function foundHtml(l){
   + '</div>';
 }
 
-/* ── Phantom export panel ──────────────────────────────────────────────────── */
+/* ── Export panel: Phantom count sheet, or the Out of Stock list ──────────────────────────────────────────────────── */
 var xpVendor = "all", xpMode = "empty", xpOneSheet = true, xpBusy = false, xpPanelFor = null;
 
+// The list the panel exports: whichever of Phantom / Out of Stock is open.
+function xpList(){ return active === "oos" ? "oos" : "phantom"; }
 function phantomLines(){
-  var cl = curClient();
-  return R.lines.filter(function(l){ return l.flags.phantom && (cl === "all" || l.clientId === cl); });
+  var cl = curClient(), k = xpList();
+  return R.lines.filter(function(l){ return l.flags[k] && (cl === "all" || l.clientId === cl); });
 }
 // Distinct vendors on the phantom list, each with its name — reps do not know
 // every vendor number by heart, and the number alone makes the picker a guess.
@@ -566,14 +568,17 @@ function phantomVendors(){
 function renderExportPanel(){
   var host = document.getElementById("exportPanel");
   if(!host) return;
-  // Only on the Phantom list, and only when the server gave us the endpoints.
-  var show = active === "phantom" && M.api && M.api.exportUrl;
+  // Only on the Phantom and Out of Stock lists, and only when the server gave us the endpoints.
+  var show = (active === "phantom" || active === "oos") && M.api && M.api.exportUrl;
   if(!show){ host.innerHTML = ""; xpPanelFor = null; return; }
   // Rebuild only when the context changes — a rebuild mid-typing would throw the
   // rep out of the email box.
-  var sig = "phantom|" + curClient();
+  var sig = xpList() + "|" + curClient();
   if(xpPanelFor === sig) { updatePanelCounted(); return; }
+  // A vendor picked on one list may not be on the other.
+  if(xpPanelFor && xpPanelFor.split("|")[0] !== xpList()) xpVendor = "all";
   xpPanelFor = sig;
+  var isOos = xpList() === "oos";
 
   var vendors = phantomVendors();
   var opts = '<option value="all">All vendors (' + phantomLines().length + ' lines)</option>';
@@ -584,13 +589,14 @@ function renderExportPanel(){
 
   host.innerHTML =
     '<div class="xp">'
-    + '<h3>Stock count sheet</h3>'
-    + '<div class="hint">Export these phantom lines to Excel to count them in store, or email the sheet out.</div>'
+    + '<h3>' + (isOos ? 'Out of stock sheet' : 'Stock count sheet') + '</h3>'
+    + '<div class="hint">' + (isOos ? 'Export these out-of-stock lines to Excel to raise orders, or email the sheet to the store.' : 'Export these phantom lines to Excel to count them in store, or email the sheet out.') + '</div>'
     + '<div class="fld"><span>Vendor</span><select id="xpVendor" onchange="xpSetVendor(this.value)">' + opts + '</select></div>'
-    + '<div class="fld"><span>What to send</span><div class="seg">'
+    // Counts exist only on Phantom; an OOS sheet is always blank to write on.
+    + (isOos ? '<div class="hint" id="xpCounted" style="margin:0 0 12px"></div>' : '<div class="fld"><span>What to send</span><div class="seg">'
       + '<button id="xpModeEmpty" class="' + (xpMode === "empty" ? "on" : "") + '" onclick="xpSetMode(\\'empty\\')">Download empty</button>'
       + '<button id="xpModeCounts" class="' + (xpMode === "counts" ? "on" : "") + '" onclick="xpSetMode(\\'counts\\')">With count submissions</button>'
-    + '</div><div class="hint" id="xpCounted" style="margin:6px 0 0"></div></div>'
+    + '</div><div class="hint" id="xpCounted" style="margin:6px 0 0"></div></div>')
     + '<label class="cb" id="xpOneWrap"><input type="checkbox" id="xpOne"' + (xpOneSheet ? " checked" : "") + ' onchange="xpOneSheet=this.checked">'
       + '<span>All vendors on one sheet<br><span style="color:var(--grey)">Untick to get a separate tab per vendor.</span></span></label>'
     // The "multiple" attribute lets the browser accept a comma-separated list in
@@ -632,6 +638,7 @@ function updatePanelCounted(){
   // how many lines the sheet will hold, or a rep who picked one vendor wonders
   // why they got fewer rows than they can see.
   var lead = "Sheet will have " + scoped.length + " line" + (scoped.length === 1 ? "" : "s") + ". ";
+  if(xpList() === "oos"){ el.textContent = lead + "Order Qty is blank to write in."; return; }
   el.textContent = lead + (xpMode === "counts"
     ? (counted ? counted + " already counted — these fill Count 1." : "No counts captured yet, so Count 1 will be blank.")
     : "Count 1 blank for writing in store.");
@@ -660,21 +667,21 @@ function xpRun(action){
   // Flush any pending counts first so "with count submissions" can't export a
   // count the server hasn't been told about yet.
   if(syncTimer){ clearTimeout(syncTimer); syncTimer = null; }
-  var pre = (xpMode === "counts") ? new Promise(function(res){ syncCounts(); setTimeout(res, 600); }) : Promise.resolve();
+  var pre = (xpList() === "phantom" && xpMode === "counts") ? new Promise(function(res){ syncCounts(); setTimeout(res, 600); }) : Promise.resolve();
 
   pre.then(function(){
     return fetch(M.api.exportUrl, {
       method: "POST", headers: {"Content-Type": "application/json"},
       body: JSON.stringify({
         r: M.api.token, t: M.track && M.track.token, d: M.track && M.track.day,
-        vendor: xpVendor, mode: xpMode, oneSheet: (xpVendor !== "all") ? true : xpOneSheet,
+        list: xpList(), vendor: xpVendor, mode: xpMode, oneSheet: (xpVendor !== "all") ? true : xpOneSheet,
         action: action, to: to
       })
     });
   }).then(function(res){
     if(action === "download"){
       if(!res.ok) return res.json().catch(function(){ return {}; }).then(function(j){ throw new Error(j.error || "Could not build the sheet."); });
-      var name = "Phantom Stock Count.xlsx";
+      var name = xpList() === "oos" ? "Out of Stock.xlsx" : "Phantom Stock Count.xlsx";
       var cd = res.headers.get("Content-Disposition") || "";
       // filename* (RFC 5987) carries the real UTF-8 name and MUST win over the
       // plain filename=, which is only an ASCII fallback for old clients — read
@@ -735,7 +742,7 @@ function logos(){
 }
 
 const INFO = [
-  ["#df332c","Out of Stock","A line that normally sells or holds stock here but is now at 0 or below on hand. Shelf's empty — raise an order. Ranked by DROS so the fastest sellers surface first."],
+  ["#df332c","Out of Stock","A line that normally sells or holds stock here but is now at 0 or below on hand. Shelf's empty — raise an order. Ranked by DROS so the fastest sellers surface first. From this list you can download or email it as a sheet to order from."],
   ["#df332c","Low Stock Cover","Still selling (DROS &gt; 0) with 14 days cover or less left (days cover = on hand ÷ DROS). About to run out — reorder now."],
   ["#df332c","Phantom","On hand above 0 but no sale and no receipt in the last 3 months (blank/old dates count as stale). The system shows stock that may not be on the shelf — verify with a physical count."],
   ["#df332c","Status","Any SKU carrying a status flag on its store record (PR ST) — open the line to see whether that status is Positive or Negative (shown when we have a rule for it). Action anything negative; query the block or delist."],

@@ -32,6 +32,9 @@ export function vendorLabelFor(vendor: string, name: string): string {
 }
 
 export type CountMode = "empty" | "counts";
+// Which store-report list the sheet is for: the Phantom count, or the Out of
+// Stock list sent to the store to raise orders (3 Nov 2026, Carl).
+export type SheetKind = "phantom" | "oos";
 
 export interface PhantomSheetMeta {
   storeName: string;
@@ -43,6 +46,7 @@ export interface PhantomSheetMeta {
   vendorLabel: string;             // "ALL" or the vendor number
   repName?: string;
   mode: CountMode;
+  kind?: SheetKind;                // default "phantom"
 }
 
 export interface PhantomSheetOpts {
@@ -96,6 +100,25 @@ const COLUMNS: Col[] = [
   { header: "Comment", width: 30, entry: true, get: () => null },
 ];
 
+/* Out of Stock: what the store needs to raise an order — the fastest sellers
+   first in mind (DROS), RP for how the line is replenished, and blank Order Qty
+   and Comment columns to write in. */
+const OOS_COLUMNS: Col[] = [
+  ...COLUMNS.slice(0, 6),                               // Vendor .. Material Description
+  { header: "PR ST",          width: 8,  get: (l) => l.prst === "(blank)" ? "" : l.prst },
+  { header: "RP",             width: 7,  get: (l) => l.rpType || "" },
+  { header: "SOH",            width: 8,  fmt: "0.##", get: (l) => l.soh },
+  { header: "DROS",           width: 8,  fmt: "0.00", get: (l) => l.dros },
+  { header: "Date Last Sold", width: 14, get: (l) => l.lastSold || "" },
+  { header: "Last Recpt Y/M", width: 14, get: (l) => yearMonth(l.lastReceived) },
+  { header: "Order Qty",      width: 10, fmt: "0.##", entry: true, get: () => null },
+  { header: "Comment",        width: 30, entry: true, get: () => null },
+];
+const KIND = {
+  phantom: { columns: COLUMNS, title: "PHANTOM STOCK COUNT", tab: "Stock Count", what: "to count", none: "No phantom lines for this selection.", file: "Phantom Stock Count" },
+  oos: { columns: OOS_COLUMNS, title: "OUT OF STOCK", tab: "Out of Stock", what: "out of stock", none: "No out-of-stock lines for this selection.", file: "Out of Stock" },
+} as const;
+
 function countKey(l: StoreLine): string {
   return `${l.clientId}|${l.article}`;
 }
@@ -114,6 +137,8 @@ function buildSheet(
   vendorLabel: string,
   counts: Record<string, number>,
 ): void {
+  const k = KIND[meta.kind ?? "phantom"];
+  const COLUMNS = k.columns;
   const ws = wb.addWorksheet(safeSheetName(name), {
     views: [{ showGridLines: false, state: "frozen", ySplit: 5 }],
     pageSetup: {
@@ -135,7 +160,7 @@ function buildSheet(
   // ── Header block ──────────────────────────────────────────────
   ws.mergeCells(span(1));
   const r1 = ws.getCell("A1");
-  r1.value = `PHANTOM STOCK COUNT  ·  ${meta.generatedAt}`;
+  r1.value = `${k.title}  ·  ${meta.generatedAt}`;
   r1.font = { bold: true, size: 11, color: { argb: HEAD_TEXT } };
   r1.fill = { type: "pattern", pattern: "solid", fgColor: { argb: NAVY } };
   r1.alignment = { vertical: "middle" };
@@ -153,17 +178,19 @@ function buildSheet(
     meta.subChannel, meta.province, meta.periodLabel,
     `Vendor: ${vendorLabel}`,
     meta.repName ? `Rep: ${meta.repName}` : "",
-    `${lines.length} line${lines.length === 1 ? "" : "s"} to count`,
+    `${lines.length} line${lines.length === 1 ? "" : "s"} ${k.what}`,
   ].filter(Boolean);
   r3.value = bits.join("  ·  ");
   r3.font = { size: 10, color: { argb: SUBTLE } };
 
   ws.mergeCells(span(4));
   const r4 = ws.getCell("A4");
-  r4.value = (meta.mode === "counts"
+  r4.value = meta.kind === "oos"
+    ? "On hand at 0 or below on lines that normally sell here. Write the quantity to order in Order Qty; use Comment for anything unusual."
+    : ((meta.mode === "counts"
     ? "Count 1 = what was captured on the report. Recount in Count 2 and note anything unusual in Comment."
     : "Write what you physically find in Count 1. Count 2 is for a recount; use Comment for anything unusual.")
-    + `   ·   Act DSC ${NO_COVER} = nothing is selling, so cover is effectively endless.`;
+    + `   ·   Act DSC ${NO_COVER} = nothing is selling, so cover is effectively endless.`);
   r4.font = { size: 10, italic: true, color: { argb: SUBTLE } };
 
   // ── Column headings ───────────────────────────────────────────
@@ -209,7 +236,7 @@ function buildSheet(
   if (sorted.length === 0) {
     ws.mergeCells(span(6));
     const none = ws.getCell("A6");
-    none.value = "No phantom lines for this selection.";
+    none.value = k.none;
     none.font = { italic: true, color: { argb: SUBTLE } };
   } else {
     ws.autoFilter = { from: { row: 5, column: 1 }, to: { row: 5 + sorted.length, column: lastCol } };
@@ -228,7 +255,7 @@ export async function buildPhantomCountWorkbook(
   const counts = opts.counts ?? {};
 
   if (opts.oneSheet) {
-    buildSheet(wb, "Stock Count", lines, meta, meta.vendorLabel, counts);
+    buildSheet(wb, KIND[meta.kind ?? "phantom"].tab, lines, meta, meta.vendorLabel, counts);
   } else {
     // A tab per vendor, in vendor order. A line with no vendor still needs a home
     // — it goes to its own tab rather than being silently left out of the count.
@@ -246,7 +273,7 @@ export async function buildPhantomCountWorkbook(
     // An empty selection would produce a workbook with no sheets at all, which
     // Excel refuses to open — always emit at least one.
     if (vendors.length === 0) {
-      buildSheet(wb, "Stock Count", [], meta, meta.vendorLabel, counts);
+      buildSheet(wb, KIND[meta.kind ?? "phantom"].tab, [], meta, meta.vendorLabel, counts);
     } else {
       for (const v of vendors) {
         const group = byVendor.get(v)!;
@@ -266,5 +293,5 @@ export async function buildPhantomCountWorkbook(
 export function phantomSheetFileName(meta: PhantomSheetMeta, date: Date = new Date()): string {
   const day = date.toLocaleDateString("en-CA", { timeZone: "Africa/Johannesburg" });
   const store = (meta.storeName || meta.siteCode || "Store").replace(/[<>:"/\\|?*]/g, " ").trim();
-  return `Phantom Stock Count - ${store} - ${meta.vendorLabel} - ${day}.xlsx`;
+  return `${KIND[meta.kind ?? "phantom"].file} - ${store} - ${meta.vendorLabel} - ${day}.xlsx`;
 }

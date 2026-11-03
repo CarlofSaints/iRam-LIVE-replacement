@@ -2,14 +2,15 @@ import { NextRequest } from "next/server";
 import { resolvePublicContext } from "@/lib/storeReportPublicAuth";
 import { loadStoreReport, formatGeneratedAt } from "@/lib/storeReportLoad";
 import { getPhantomCounts, countsForLines } from "@/lib/phantomCounts";
-import { buildPhantomCountWorkbook, phantomSheetFileName, vendorLabelFor, type CountMode } from "@/lib/phantomCountSheet";
+import { buildPhantomCountWorkbook, phantomSheetFileName, vendorLabelFor, type CountMode, type SheetKind } from "@/lib/phantomCountSheet";
 import { getClients } from "@/lib/clientData";
 import { getCamById } from "@/lib/camData";
 import { sendPhantomCountEmail } from "@/lib/email";
 import { parseEmailList, isEmail } from "@/lib/emailList";
 import { contentDisposition } from "@/lib/contentDisposition";
 
-/* PUBLIC endpoint — "Download" / "Email" on the Phantom list of the hosted /r page.
+/* PUBLIC endpoint — "Download" / "Email" on the Phantom AND Out of Stock lists
+   of the hosted /r page (`list`: "phantom" default, or "oos").
 
    The workbook is built from a SERVER-SIDE rebuild of the report (the same
    loadStoreReport the page itself is rendered from), not from lines posted by
@@ -36,7 +37,9 @@ export async function POST(req: NextRequest) {
     const ctx = resolved.ctx;
 
     const action = body.action === "email" ? "email" : "download";
-    const mode: CountMode = body.mode === "counts" ? "counts" : "empty";
+    const kind: SheetKind = body.list === "oos" ? "oos" : "phantom";
+    // Counts are a Phantom thing; an OOS sheet is always blank to write on.
+    const mode: CountMode = kind === "phantom" && body.mode === "counts" ? "counts" : "empty";
     const oneSheet = body.oneSheet !== false;          // default: everything on one sheet
     const vendorSel = String(body.vendor ?? "all").trim();
     const allVendors = !vendorSel || vendorSel.toLowerCase() === "all";
@@ -50,7 +53,7 @@ export async function POST(req: NextRequest) {
       week: ctx.week,
     });
 
-    let lines = loaded.report.lines.filter((l) => l.flags.phantom);
+    let lines = loaded.report.lines.filter((l) => l.flags[kind]);
     if (!allVendors) lines = lines.filter((l) => l.vendor === vendorSel);
 
     // Counts are read from OUR store, never from the request — the sheet has to
@@ -77,6 +80,7 @@ export async function POST(req: NextRequest) {
       vendorLabel: allVendors ? "ALL" : vendorLabelFor(vendorSel, lines[0]?.vendorName || ""),
       repName: ctx.repName || undefined,
       mode,
+      kind,
     };
 
     const buffer = await buildPhantomCountWorkbook(lines, meta, { oneSheet, counts });
@@ -141,6 +145,7 @@ export async function POST(req: NextRequest) {
       lineCount: lines.length,
       countedCount: Object.keys(counts).length,
       mode,
+      kind,
       filename,
       content: buffer,
     });
