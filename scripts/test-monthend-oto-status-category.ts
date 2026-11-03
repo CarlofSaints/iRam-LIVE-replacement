@@ -122,8 +122,9 @@ async function main() {
   const hdr: string[] = [];
   od.getRow(4).eachCell((c) => hdr.push(text(c)));
   const at = (h: string) => hdr.findIndex((x) => x.endsWith(h)) + 1;
-  assert("OTO Detail has SOH, SOO, SIT before OTO Units",
-    at("SOH") > 0 && at("SOO") === at("SOH") + 1 && at("SIT") === at("SOO") + 1 && at("OTO Units") === at("SIT") + 1, hdr.join(" | "));
+  // STO sits after SIT since 3 Nov 2026 (test-monthend-sto-rp.ts)
+  assert("OTO Detail has SOH, SOO, SIT, STO before OTO Units",
+    at("SOH") > 0 && at("SOO") === at("SOH") + 1 && at("SIT") === at("SOO") + 1 && at("STO") === at("SIT") + 1 && at("OTO Units") === at("STO") + 1, hdr.join(" | "));
   assert("OTO engine produced the line", oto.detail.length === 1, String(oto.detail.length));
   assert("OTO Detail SOH parsed from \"-1,234.000\"", od.getCell(5, at("SOH")).value === -1234, String(od.getCell(5, at("SOH")).value));
   assert("OTO Detail SOO / SIT = 5 / -5", od.getCell(5, at("SOO")).value === 5 && od.getCell(5, at("SIT")).value === -5);

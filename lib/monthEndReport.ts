@@ -22,6 +22,15 @@ import { isClosedStore } from "./reportExclusions";
 
 type Row = Record<string, unknown>;
 
+/* STO and RP straight off the DISPO line, for the Site x SKU detail sheets.
+   Massbuild sends both, Makro sends RP only: a missing field stays BLANK, never
+   0, and the route names it in the missing-fields notice (lib/dispoFieldCheck). */
+export function stoRp(row: Row | null | undefined): { sto: number | ""; rp: string } {
+  const raw = row?.["STO"];
+  const sto = raw === undefined || raw === null || String(raw).trim() === "" ? "" : qty(raw);
+  return { sto, rp: String(row?.["RP"] ?? "").trim() };
+}
+
 export const VAT_RATE = 0.15;
 const DATE_RE = /^(\d{2})-(\d{4})$/;
 
@@ -709,6 +718,8 @@ export interface OOSDetailRow {
   soh: number;
   soo: number;
   sit: number;
+  sto: number | "";
+  rp: string;
   status: string;
   productStatus: string;
   dscAlert: string;
@@ -739,6 +750,7 @@ export function buildOOSDetail(rows: Row[], dateColumns: string[]): OOSDetailRow
       soh: isNaN(soh) ? 0 : soh,
       soo: parseNum(row["SOO"], 0) || 0,
       sit: parseNum(row["SIT"], 0) || 0,
+      ...stoRp(row),
       status: String(row["Status"] ?? row["PR ST"] ?? ""),
       productStatus: String(row["_productStatus"] || ""),
       dscAlert: String(row["_dscAlert"] || ""),
@@ -933,6 +945,8 @@ export interface DscDetailRow {
   soh: number;
   soo: number;
   sit: number;
+  sto: number | "";
+  rp: string;
   actDsc: number;
   bracket: string;
   dateLastSold: string;
@@ -960,6 +974,7 @@ export function buildDscDetail(rows: Row[], dateColumns: string[]): DscDetailRow
       soh: isNaN(soh) ? 0 : soh,
       soo: parseNum(row["SOO"], 0) || 0,
       sit: parseNum(row["SIT"], 0) || 0,
+      ...stoRp(row),
       actDsc: isNaN(actDsc) ? 0 : actDsc,
       bracket: dscBracketOf(row),
       dateLastSold: String(row["_dateLastSold"] || ""),
@@ -1097,6 +1112,8 @@ export interface StatusDetailRow {
   prst: string;
   productStatus: string;
   ranging: string;
+  rp: string;
+  sto: number | "";
 }
 
 export function buildStatusDetail(
@@ -1124,6 +1141,7 @@ export function buildStatusDetail(
       siteName: String(row["_storeName"] || row["Site Name"] || ""),
       prst: prstDisplay(row),
       productStatus: pmfStatusDisplay(row),
+      ...stoRp(row),
       ranging: rangeFlag(row),   // per store (lib/rangeState.ts), not "anywhere in the file"
     });
   }
@@ -1149,6 +1167,8 @@ export function buildStatusDetail(
 // Product Margin (not in DISPO) = ((Incl SP / 1.15) âˆ’ Nett Cost) / (Incl SP / 1.15)
 
 export interface MarginRow {
+  sto: number | "";
+  rp: string;
   range: string;       // TRUE / FALSE at this store, blank = can't judge (lib/rangeState.ts)
   site: string;
   siteName: string;
@@ -1282,6 +1302,7 @@ export function buildMarginAnalysis(rows: Row[]): MarginAnalysis {
       site: String(row["Site"] ?? ""),
       siteName: String(row["_storeName"] || row["Site Name"] || ""),
       range: rangeFlag(row),
+      ...stoRp(row),
       productCode: String(row["_clientProductId"] || ""),
       article: String(row["Article"] ?? ""),
       productStatus: String(row["_productStatus"] || ""),
@@ -1375,6 +1396,8 @@ export interface PhantomStatusRow {
 }
 
 export interface PhantomDetailRow {
+  sto: number | "";
+  rp: string;
   range: string;       // TRUE / FALSE at this store, blank = can't judge (lib/rangeState.ts)
   site: string;
   siteName: string;
@@ -1435,6 +1458,7 @@ export function buildPhantomAnalysis(
       site: String(row["Site"] ?? ""),
       siteName: String(row["_storeName"] || row["Site Name"] || ""),
       range: rangeFlag(row),
+      ...stoRp(row),
       productCode: String(row["_clientProductId"] || ""),
       article: String(row["Article"] ?? ""),
       // Same source and same order as Store Reports: the DISPO's own wording
@@ -1499,10 +1523,14 @@ export interface NDDetailRow {
   prst: string;
   pmfStatus: string;
   ranging: string;    // "TRUE" | "FALSE" | "N/A"
+  rp: string;         // blank when the line has no DISPO row
+  sto: number | "";
   nd: number;         // 1 | 0
 }
 
 export interface NDFalseRow {
+  sto: number | "";
+  rp: string;
   range: string;       // TRUE / FALSE at this store, blank = can't judge (lib/rangeState.ts)
   subChannel: string;
   province: string;
@@ -1564,10 +1592,10 @@ export function buildNumericalDistribution(opts: {
     : `${rollingMonths} months`;
 
   // DISPO presence lookup, keyed by site|article and site|cpid.
-  interface Presence { present: boolean; prst: string; article: string; soh: number; vendor: string; }
+  interface Presence { present: boolean; prst: string; article: string; soh: number; vendor: string; sto: number | ""; rp: string; }
   const bySiteArticle = new Map<string, Presence>();
   const bySiteCpid = new Map<string, Presence>();
-  const stockRows: { site: string; article: string; cpid: string; soh: number; prst: string; vendor: string }[] = [];
+  const stockRows: { site: string; article: string; cpid: string; soh: number; prst: string; vendor: string; sto: number | ""; rp: string }[] = [];
 
   /* ND's universe is the ranging file / PMF, not the ledger, so a
      not-distributed combination has no DISPO row to read a vendor off. The
@@ -1594,11 +1622,11 @@ export function buildNumericalDistribution(opts: {
     const present = windowSales > 0 || hasStock;
     const prst = String(row["Status"] ?? row["PR ST"] ?? "").trim();
     const vendor = rowVendor(row);
-    const p: Presence = { present, prst, article, soh: isNaN(soh) ? 0 : soh, vendor };
+    const p: Presence = { present, prst, article, soh: isNaN(soh) ? 0 : soh, vendor, ...stoRp(row) };
 
     if (article) bySiteArticle.set(`${site}|${article}`, p);
     if (cpid) bySiteCpid.set(`${site}|${cpid}`, p);
-    if (soh > 0) stockRows.push({ site, article, cpid, soh, prst, vendor });
+    if (soh > 0) stockRows.push({ site, article, cpid, soh, prst, vendor, ...stoRp(row) });
     if (vendor) {
       if (article && !vendorByArticle.has(article)) vendorByArticle.set(article, vendor);
       if (cpid && !vendorByCpid.has(cpid)) vendorByCpid.set(cpid, vendor);
@@ -1655,7 +1683,7 @@ export function buildNumericalDistribution(opts: {
         subChannel: subCh, province: prov, site, siteName,
         productCode: cpid.toUpperCase(), article: (p?.article || article).toUpperCase(),
         description: desc || products.get(cpid)?.description || "",
-        prst: p?.prst ?? "", pmfStatus: pmf, ranging: "TRUE", nd,
+        prst: p?.prst ?? "", pmfStatus: pmf, ranging: "TRUE", rp: p?.rp ?? "", sto: p?.sto ?? "", nd,
       });
 
       bump(subAcc, subCh, subCh, nd);
@@ -1673,7 +1701,7 @@ export function buildNumericalDistribution(opts: {
       falseDetail.push({
         vendor: s.vendor,
         subChannel: store?.subChannel || "", province: store?.province || "",
-        site: s.site.toUpperCase(), siteName: store?.storeName || "", range: "FALSE",
+        site: s.site.toUpperCase(), siteName: store?.storeName || "", range: "FALSE", rp: s.rp, sto: s.sto,
         productCode: s.cpid.toUpperCase(), article: s.article.toUpperCase(),
         description: prod?.description || "", prst: s.prst, pmfStatus: prod?.status || "", soh: s.soh,
       });
@@ -1713,7 +1741,7 @@ export function buildNumericalDistribution(opts: {
           subChannel: subCh, province: prov, site: st.siteNum, siteName: st.storeName,
           productCode: prod.clientProductId, article: (p?.article || "").toUpperCase(),
           description: prod.description || "", prst: p?.prst ?? "",
-          pmfStatus: prod.status || "", ranging: "N/A", nd,
+          pmfStatus: prod.status || "", ranging: "N/A", rp: p?.rp ?? "", sto: p?.sto ?? "", nd,
         });
 
         bump(subAcc, subCh, subCh, nd);
@@ -1769,6 +1797,8 @@ export interface OTODetailRow {
   article: string;
   vendor: string;
   rangeIndicator: string; // "TRUE" | "FALSE" | "N/A" (when no ranging file)
+  rp: string;
+  sto: number | "";
   description: string;
   // Stock position the line qualified on, parsed the same way the rule reads
   // it: SOH is 0 or below, SOO + SIT nets to 0.
@@ -1846,7 +1876,7 @@ export function buildOpenToOrder(opts: {
 
     detail.push({
       vendor: rowVendor(row), site, siteName, productCode: cpid, article, rangeIndicator, description: desc,
-      soh: qty(row["SOH"]), soo: qty(row["SOO"]), sit: qty(row["SIT"]),
+      soh: qty(row["SOH"]), soo: qty(row["SOO"]), sit: qty(row["SIT"]), ...stoRp(row),
       units: oto, value: otoValue,
     });
 
@@ -2104,9 +2134,11 @@ export interface RangeExceptionRow {
   article: string;
   description: string;
   productStatus: string;
+  rp: string;
   soh: number;
   soo: number;
   sit: number;
+  sto: number | "";
 }
 
 export function buildRangeExceptions(rows: Row[], mode: RangeMode): RangeExceptionRow[] {
@@ -2128,6 +2160,7 @@ export function buildRangeExceptions(rows: Row[], mode: RangeMode): RangeExcepti
       soh: n(row["SOH"]),
       soo: n(row["SOO"]),
       sit: n(row["SIT"]),
+      ...stoRp(row),
     });
   }
   out.sort((a, b) => a.site.localeCompare(b.site) || a.article.localeCompare(b.article, undefined, { numeric: true }));

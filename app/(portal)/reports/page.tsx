@@ -56,6 +56,8 @@ export default function ReportsPage() {
   const [downloading, setDownloading] = useState(false);
   const [downloadingMonthEnd, setDownloadingMonthEnd] = useState(false);
   const [monthEndError, setMonthEndError] = useState("");
+  // DISPO fields the report needed but a channel's DISPO did not send (never fatal)
+  const [monthEndMissing, setMonthEndMissing] = useState<string[]>([]);
   const [toast, setToast] = useState("");
 
   // Stats
@@ -398,6 +400,7 @@ export default function ReportsPage() {
   async function downloadMonthEnd() {
     if (!clientId || effectiveChannelIds.length === 0) return;
     setDownloadingMonthEnd(true);
+    setMonthEndMissing([]);
     try {
       const params = new URLSearchParams({
         clientId,
@@ -452,6 +455,8 @@ export default function ReportsPage() {
         return;
       }
       setMonthEndError("");
+      const missing = res.headers.get("X-Missing-Fields");
+      setMonthEndMissing(missing ? JSON.parse(decodeURIComponent(missing)) : []);
       const blob = await res.blob();
       const fileName = filenameFromContentDisposition(
         res.headers.get("Content-Disposition"), "Month_End.xlsx");
@@ -780,6 +785,16 @@ export default function ReportsPage() {
         </div>
 
         {/* A failed report stays put until it is dismissed — see downloadMonthEnd. */}
+        {monthEndMissing.length > 0 && (
+          <div role="status" className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3">
+            <p className="text-sm font-semibold text-amber-900">
+              The report was built, but these fields were not in the DISPO, so their columns are blank:
+            </p>
+            <ul className="mt-1 list-disc pl-5 text-sm text-amber-900">
+              {monthEndMissing.map((m) => <li key={m}>{m}</li>)}
+            </ul>
+          </div>
+        )}
         {monthEndError && (
           <div
             role="alert"
