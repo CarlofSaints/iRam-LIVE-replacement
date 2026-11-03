@@ -4,6 +4,7 @@
 import ExcelJS from "exceljs";
 import { effectiveDsc, NO_COVER, type StoreLine, type StoreLineFlags } from "../lib/storeReport";
 import { buildPhantomCountWorkbook, phantomSheetFileName, vendorLabelFor, type PhantomSheetMeta } from "../lib/phantomCountSheet";
+import { sendPhantomCountEmail } from "../lib/email";
 
 let pass = 0, fail = 0;
 function ok(label: string, cond: boolean, detail = "") {
@@ -230,6 +231,70 @@ async function main() {
 
     const f = phantomSheetFileName({ ...META, vendorLabel: "1063" }, new Date("2026-08-11T10:00:00Z"));
     ok("filename is safe + descriptive", f === "Phantom Stock Count - BWH RIVONIA-B50 - 1063 - 2026-08-11.xlsx", f);
+  }
+
+  // ── Out of Stock sheet (3 Nov 2026): same builder, kind "oos" ──
+  {
+    console.log("\nOut of Stock sheet");
+    const OOS_META: PhantomSheetMeta = { ...META, kind: "oos", mode: "counts" };   // mode must be ignored for OOS
+    const oosLines = [line({ article: "5", vendor: "1063", soh: -2, dros: 1.5, rpType: "ZB" })];
+    const ws = (await reopen(await buildPhantomCountWorkbook(oosLines, OOS_META, { oneSheet: true, counts: { "c1|5": 9 } }))).worksheets[0];
+    eq("tab name", ws.name, "Out of Stock");
+    ok("title says OUT OF STOCK", String(ws.getCell("A1").value).startsWith("OUT OF STOCK"));
+    const heads = (ws.getRow(5).values as unknown[]).slice(1).map(String);
+    eq("columns", heads.join(" | "),
+      "Vendor | Vendor Name | Article | Barcode | Vend. Prod. | Material Description | PR ST | RP | SOH | DROS | Date Last Sold | Last Recpt Y/M | Order Qty | Comment");
+    const at = (h: string) => heads.indexOf(h) + 1;
+    eq("SOH", ws.getRow(6).getCell(at("SOH")).value, -2);
+    eq("DROS", ws.getRow(6).getCell(at("DROS")).value, 1.5);
+    eq("RP", ws.getRow(6).getCell(at("RP")).value, "ZB");
+    ok("Order Qty blank (no count leaks in)", ws.getRow(6).getCell(at("Order Qty")).value == null);
+    ok("no Count columns", !heads.includes("Count 1"));
+    ok("note tells them to write the order", /Order Qty/.test(String(ws.getCell("A4").value)));
+    eq("filename", phantomSheetFileName({ ...OOS_META, vendorLabel: "1063" }, new Date("2026-08-11T10:00:00Z")),
+      "Out of Stock - BWH RIVONIA-B50 - 1063 - 2026-08-11.xlsx");
+    const empty = (await reopen(await buildPhantomCountWorkbook([], OOS_META, { oneSheet: false }))).worksheets[0];
+    eq("empty selection still a sheet, named for OOS", empty.name, "Out of Stock");
+
+    // Fastest sellers first on OOS (the on-screen order); Article breaks ties.
+    const mixed = [
+      line({ article: "300", vendor: "1063", dros: 0.2 }),
+      line({ article: "100", vendor: "1063", dros: 4 }),
+      line({ article: "200", vendor: "1063", dros: 4 }),
+    ];
+    const sw = (await reopen(await buildPhantomCountWorkbook(mixed, OOS_META, { oneSheet: true }))).worksheets[0];
+    eq("OOS sorted by DROS desc, then Article", [6, 7, 8].map((r) => sw.getRow(r).getCell(at("Article")).value).join(","), "100,200,300");
+    const pw = (await reopen(await buildPhantomCountWorkbook(mixed, META, { oneSheet: true }))).worksheets[0];
+    eq("Phantom still sorted by Article", [6, 7, 8].map((r) => pw.getRow(r).getCell(3).value).join(","), "100,200,300");
+  }
+
+  // ── Email: every request/customer value is escaped (public endpoint) ──
+  {
+    console.log("\nEmail escaping");
+    process.env.RESEND_API_KEY = "re_test";
+    const sent: { html: string; subject: string }[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (_u: unknown, init?: { body?: string }) => {
+      const b = JSON.parse(init?.body ?? "{}");
+      sent.push({ html: String(b.html ?? ""), subject: String(b.subject ?? "") });
+      return new Response(JSON.stringify({ id: "x" }), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    const evil = '<a href="https://evil">Confirm</a>';
+    try {
+      for (const kind of ["oos", "phantom"] as const) {
+        await sendPhantomCountEmail({
+          to: ["a@b.co"], storeName: evil, siteCode: "M28", periodLabel: "Wk 1", vendorLabel: evil,
+          repName: evil, lineCount: 2, countedCount: 0, mode: "empty", kind, filename: "f.xlsx", content: Buffer.from("x"),
+        });
+      }
+    } finally { globalThis.fetch = realFetch; }
+    eq("two emails built", sent.length, 2);
+    sent.forEach((s, i) => {
+      ok(`${i ? "Phantom" : "OOS"}: no raw link in the HTML`, !s.html.includes("<a href"));
+      ok(`${i ? "Phantom" : "OOS"}: escaped text present`, s.html.includes("&lt;a href=&quot;https://evil&quot;&gt;"));
+    });
+    ok("OOS subject + wording", sent[0].subject.startsWith("Out of Stock:") && sent[0].html.includes("Order Qty"));
+    ok("Phantom wording kept", sent[1].subject.startsWith("Phantom Stock Count") && sent[1].html.includes("Count 1"));
   }
 
   console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"} — ${pass} passed, ${fail} failed\n`);
