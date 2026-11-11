@@ -1118,8 +1118,8 @@ async function buildStatusSheet(
   };
 
   // Table 1 — PR ST Breakdown
-  titleBar("PR ST Breakdown", 3);
-  headerRow(["PR ST", "Count", "% Cont"]);
+  titleBar("PR ST Breakdown", 4);
+  headerRow(["PR ST", "Count", "% Cont", "SOH"]);
   sheet.getColumn(1).width = 18;
   sheet.getColumn(2).width = 12;
   sheet.getColumn(3).width = 12;
@@ -1129,15 +1129,17 @@ async function buildStatusSheet(
     const pct = sheet.getCell(row, 3);
     pct.value = { formula: `IF($B$${baseRow}=0,0,B${row}/$B$${baseRow})`, result: r.contributionPct / 100 };
     pct.numFmt = "0.0%"; pct.font = bodyFont(); pct.border = thinBorder(); pct.alignment = { horizontal: "center" };
+    const soh = sheet.getCell(row, 4); soh.value = r.soh; soh.numFmt = "#,##0"; soh.font = bodyFont(); soh.border = thinBorder(); soh.alignment = { horizontal: "center" };
     row++;
   }
   row += 2;
 
   // Table 2 — PR ST by Product Status (with classification colour)
-  titleBar("PR ST by Product Status", 5);
-  headerRow(["Product Status", "PR ST", "Count", "% Cont", "Classification"]);
+  titleBar("PR ST by Product Status", 6);
+  headerRow(["Product Status", "PR ST", "Count", "% Cont", "Classification", "SOH"]);
   sheet.getColumn(4).width = 12;
   sheet.getColumn(5).width = 16;
+  sheet.getColumn(6).width = 12;
   for (const r of s.prstByPmf) {
     const a = sheet.getCell(row, 1); a.value = r.pmfStatus; a.font = bodyFont(); a.border = thinBorder();
     const b = sheet.getCell(row, 2); b.value = r.prst; b.font = bodyFont(); b.border = thinBorder();
@@ -1153,6 +1155,7 @@ async function buildStatusSheet(
       r.classification === "NEGATIVE" ? GROWTH_RED :
       r.classification === "MIXED" ? MIXED_BG : UNCLASS_BG;
     cls.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
+    const soh = sheet.getCell(row, 6); soh.value = r.soh; soh.numFmt = "#,##0"; soh.font = bodyFont(); soh.border = thinBorder(); soh.alignment = { horizontal: "center" };
     row++;
   }
 

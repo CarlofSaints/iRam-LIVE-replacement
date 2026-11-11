@@ -1026,6 +1026,7 @@ export interface StatusCountRow {
   prst: string;
   count: number;
   contributionPct: number;
+  soh: number;
 }
 
 export interface StatusPmfRow {
@@ -1033,6 +1034,7 @@ export interface StatusPmfRow {
   prst: string;
   count: number;
   contributionPct: number;
+  soh: number;
   classification: StatusClassification | "MIXED";
 }
 
@@ -1049,34 +1051,40 @@ export function buildStatusSummary(
   scenarios: StatusScenario[],
 ): StatusSummary {
   let baseCount = 0;
-  const prstMap = new Map<string, number>();
-  const comboMap = new Map<string, { pmf: string; prst: string; count: number; pos: number; neg: number; unc: number }>();
+  const prstMap = new Map<string, { count: number; soh: number }>();
+  const comboMap = new Map<string, { pmf: string; prst: string; count: number; soh: number; pos: number; neg: number; unc: number }>();
 
   for (const row of rows) {
     const { inBase } = classifyOOS(row, dateColumns, false);
     if (!inBase) continue; // same SKUÃ—store base as OOS
     baseCount++;
 
+    const sohRaw = parseNum(row["SOH"], 0);
+    const soh = isNaN(sohRaw) ? 0 : sohRaw;
     const prst = prstDisplay(row);
-    prstMap.set(prst, (prstMap.get(prst) ?? 0) + 1);
+    const p = prstMap.get(prst) ?? { count: 0, soh: 0 };
+    p.count++;
+    p.soh += soh;
+    prstMap.set(prst, p);
 
     const pmf = pmfStatusDisplay(row);
     const cls = classifyRowStatus(row, statusDefs, scenarios);
     const key = `${pmf}|||${prst}`;
     let c = comboMap.get(key);
     if (!c) {
-      c = { pmf, prst, count: 0, pos: 0, neg: 0, unc: 0 };
+      c = { pmf, prst, count: 0, soh: 0, pos: 0, neg: 0, unc: 0 };
       comboMap.set(key, c);
     }
     c.count++;
+    c.soh += soh;
     if (cls === "POSITIVE") c.pos++;
     else if (cls === "NEGATIVE") c.neg++;
     else c.unc++;
   }
 
   const prst: StatusCountRow[] = [];
-  for (const [code, count] of prstMap) {
-    prst.push({ prst: code, count, contributionPct: baseCount > 0 ? r2((count / baseCount) * 100) : 0 });
+  for (const [code, { count, soh }] of prstMap) {
+    prst.push({ prst: code, count, contributionPct: baseCount > 0 ? r2((count / baseCount) * 100) : 0, soh: r2(soh) });
   }
   prst.sort((a, b) => b.count - a.count);
 
@@ -1093,6 +1101,7 @@ export function buildStatusSummary(
       prst: c.prst,
       count: c.count,
       contributionPct: baseCount > 0 ? r2((c.count / baseCount) * 100) : 0,
+      soh: r2(c.soh),
       classification,
     });
   }
