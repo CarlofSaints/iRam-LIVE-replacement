@@ -12,6 +12,7 @@ const DATE_COLS = ["01-2026", "02-2026"];
 const rows = [
   { Site: "A", Status: "N", _productStatus: "ACTIVE", "01-2026": 1, "02-2026": 1, SOH: 10 },
   { Site: "B", Status: "N", _productStatus: "ACTIVE", "01-2026": 1, "02-2026": 1, SOH: 5 },
+  { Site: "E", Status: "N", _productStatus: "ACTIVE", "01-2026": 3, "02-2026": 0, SOH: -4 }, // sold, negative book stock: floored to 0
   { Site: "C", Status: "D", _productStatus: "DELISTED", "01-2026": 0, "02-2026": 2, SOH: "" },
 ];
 const s = buildStatusSummary(rows as any, DATE_COLS, [], []);

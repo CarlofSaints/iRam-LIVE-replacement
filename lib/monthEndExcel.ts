@@ -1080,7 +1080,7 @@ async function buildStatusSheet(
   const title = sheet.getCell(row, 1);
   title.value = `Status — PMF Product Status vs DISPO PR ST — ${clientName} — ${channelLabel} — ${periodLabel}`;
   title.font = { name: "Calibri", size: 14, bold: true, color: { argb: HEADER_BG } };
-  sheet.mergeCells(row, 1, row, 5);
+  sheet.mergeCells(row, 1, row, 6);
   row += 2;
 
   // Base stat (referenced by % Cont formulas)
