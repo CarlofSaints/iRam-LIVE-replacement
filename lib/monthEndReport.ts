@@ -1060,8 +1060,8 @@ export function buildStatusSummary(
     baseCount++;
 
     const sohRaw = parseNum(row["SOH"], 0);
-    // Negative book stock floored at 0, same as the DSC summary.
-    const soh = isNaN(sohRaw) ? 0 : Math.max(sohRaw, 0);
+    // Negative SOH kept as-is (Carl): it must be fixed at the store, a 0 would hide it.
+    const soh = isNaN(sohRaw) ? 0 : sohRaw;
     const prst = prstDisplay(row);
     const p = prstMap.get(prst) ?? { count: 0, soh: 0 };
     p.count++;

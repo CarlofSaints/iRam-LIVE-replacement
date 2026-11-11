@@ -12,14 +12,14 @@ const DATE_COLS = ["01-2026", "02-2026"];
 const rows = [
   { Site: "A", Status: "N", _productStatus: "ACTIVE", "01-2026": 1, "02-2026": 1, SOH: 10 },
   { Site: "B", Status: "N", _productStatus: "ACTIVE", "01-2026": 1, "02-2026": 1, SOH: 5 },
-  { Site: "E", Status: "N", _productStatus: "ACTIVE", "01-2026": 3, "02-2026": 0, SOH: -4 }, // sold, negative book stock: floored to 0
+  { Site: "E", Status: "N", _productStatus: "ACTIVE", "01-2026": 3, "02-2026": 0, SOH: -4 }, // sold, negative SOH: kept negative so the store sees it
   { Site: "C", Status: "D", _productStatus: "DELISTED", "01-2026": 0, "02-2026": 2, SOH: "" },
 ];
 const s = buildStatusSummary(rows as any, DATE_COLS, [], []);
 const n = s.prst.find((r) => r.prst === "N");
-assert("PR ST N sums SOH", n?.soh === 15, String(n?.soh));
+assert("PR ST N sums SOH", n?.soh === 11, String(n?.soh));
 assert("blank SOH counts as 0", s.prst.find((r) => r.prst === "D")?.soh === 0);
-assert("combo row sums SOH", s.prstByPmf.find((r) => r.prst === "N" && r.pmfStatus === "ACTIVE")?.soh === 15);
+assert("combo row sums SOH", s.prstByPmf.find((r) => r.prst === "N" && r.pmfStatus === "ACTIVE")?.soh === 11);
 
 (async () => {
   const buf = await buildMonthEndWorkbook([], { stores: [], skus: [] } as any, [], "T", "C", "P", [], DATE_COLS, s, [], undefined, undefined, ["status"]);
