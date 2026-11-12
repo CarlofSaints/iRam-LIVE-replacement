@@ -28,5 +28,15 @@ assert("combo row sums SOH", s.prstByPmf.find((r) => r.prst === "N" && r.pmfStat
   const found: string[] = [];
   sh.eachRow((r, i) => r.eachCell((c, col) => { if (String(c.value).endsWith("SOH")) found.push(`${i}:${col}`); }));
   assert("SOH header in both tables (cols D and F)", found.length === 2 && found[0].endsWith(":4") && found[1].endsWith(":6"), found.join(","));
+
+  // Status Detail: SOH is the last column, negative stays negative, missing stays blank
+  const det = [{ soh: -3 }, { soh: "" }].map((x) => ({ vendor: "", subChannel: "", province: "", category: "", brand: "", article: "", description: "", site: "", siteName: "", prst: "N", productStatus: "", ranging: "", rp: "", sto: "", ...x }));
+  const buf2 = await buildMonthEndWorkbook([], { stores: [], skus: [] } as any, [], "T", "C", "P", [], DATE_COLS, s, det as any, undefined, undefined, ["statusDetail"]);
+  const wb2 = new ExcelJS.Workbook(); await wb2.xlsx.load(buf2 as any);
+  const sd = wb2.getWorksheet("Status Detail")!;
+  let last = 0; sd.getRow(1).eachCell((c, col) => { if (String(c.value).endsWith("SOH")) last = col; });
+  assert("Status Detail SOH right after STO", last > 0 && String(sd.getCell(1, last - 1).value).endsWith("STO"), String(last));
+  assert("Status Detail negative SOH kept", sd.getCell(2, last).value === -3, String(sd.getCell(2, last).value));
+  assert("Status Detail missing SOH blank", !sd.getCell(3, last).value, String(sd.getCell(3, last).value));
   process.exit(failures ? 1 : 0);
 })();

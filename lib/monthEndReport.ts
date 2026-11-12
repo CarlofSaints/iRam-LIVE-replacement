@@ -1130,6 +1130,7 @@ export interface StatusDetailRow {
   ranging: string;
   rp: string;
   sto: number | "";
+  soh: number | ""; // negative kept (store must fix it), blank when the DISPO has no SOH
 }
 
 export function buildStatusDetail(
@@ -1159,6 +1160,7 @@ export function buildStatusDetail(
       productStatus: pmfStatusDisplay(row),
       ...stoRp(row),
       ranging: rangeFlag(row),   // per store (lib/rangeState.ts), not "anywhere in the file"
+      soh: optQty(row, "SOH") ?? "",
     });
   }
 
