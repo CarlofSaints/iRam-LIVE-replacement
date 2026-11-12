@@ -1182,6 +1182,7 @@ async function buildStatusDetailSheet(wb: ExcelJS.Workbook, rows: StatusDetailRo
     { header: "Range", width: 10, key: "ranging" },
     { header: "RP", width: 8, key: "rp" },
     { header: "STO", width: 8, key: "sto" },
+    { header: "SOH", width: 8, key: "soh" },
   ];
 
   cols.forEach((c, i) => {
@@ -1200,7 +1201,7 @@ async function buildStatusDetailSheet(wb: ExcelJS.Workbook, rows: StatusDetailRo
       cell.value = row[c.key];
       cell.font = bodyFont();
       cell.border = thinBorder();
-      if (c.key === "sto") { cell.numFmt = "#,##0"; cell.alignment = { horizontal: "right" }; }
+      if (c.key === "sto" || c.key === "soh") { cell.numFmt = "#,##0"; cell.alignment = { horizontal: "right" }; }
     });
     r++;
   }
